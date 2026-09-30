@@ -44,8 +44,12 @@ class SpotifyLibraryExtrasService {
       }, body: jsonEncode({'variables':variables,'operationName':operation,'extensions':{'persistedQuery':{'version':1,'sha256Hash':hash}}}));
       Map<String,dynamic>? body;
       try { final parsed=jsonDecode(response.body); if(parsed is Map) body=Map<String,dynamic>.from(parsed); } catch (_) {}
-      final errors=body?['errors'];
-      final error=errors is List && errors.isNotEmpty ? _map(errors.first)?['message']?.toString() : null;
+      final errors = body?['errors'];
+      String? error;
+      if (errors is List && errors.isNotEmpty) {
+        final firstError = _map(errors.first);
+        error = firstError == null ? null : firstError['message']?.toString();
+      }
       if(response.statusCode==200 && body!=null && !(error?.contains('PersistedQueryNotFound') ?? false)) return body;
     }
     throw SpotifyAccountException('Spotify $operation request failed. The private web API may have changed.');
