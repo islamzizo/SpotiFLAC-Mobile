@@ -231,49 +231,175 @@ fn apply_tags(
     result["trackName"] = if tags.title.is_empty() {
         filename(if hint.is_empty() { path } else { hint }).into()
     } else {
-        tags.title.clone().into()
+        tags.title.into()
     };
     result["artistName"] = if tags.artist.is_empty() {
         "Unknown Artist".into()
     } else {
-        tags.artist.clone().into()
+        tags.artist.into()
     };
     result["albumName"] = if tags.album.is_empty() {
         "Unknown Album".into()
     } else {
-        tags.album.clone().into()
+        tags.album.into()
     };
     result["hasLyrics"] = has_usable_content(&tags.lyrics).into();
-    let tags = serde_json::to_value(tags).map_err(|error| error.to_string())?;
-    for (source, target) in [
-        ("album_artist", "albumArtist"),
-        ("isrc", "isrc"),
-        ("track_number", "trackNumber"),
-        ("total_tracks", "totalTracks"),
-        ("disc_number", "discNumber"),
-        ("total_discs", "totalDiscs"),
-        ("date", "releaseDate"),
-        ("genre", "genre"),
-        ("composer", "composer"),
-        ("label", "label"),
-        ("copyright", "copyright"),
-        ("comment", "comment"),
-        ("album_type", "albumType"),
-        ("explicit", "explicit"),
-        ("upc", "upc"),
-        ("replay_gain_track_gain", "replaygain_track_gain"),
-        ("replay_gain_track_peak", "replaygain_track_peak"),
-        ("replay_gain_album_gain", "replaygain_album_gain"),
-        ("replay_gain_album_peak", "replaygain_album_peak"),
+    // Move owned fields directly instead of serializing the whole struct
+    // (including lyrics) per scanned file. Empty strings, zero numbers and
+    // `false` stay omitted exactly as before.
+    for (target, value) in [
+        ("albumArtist", tags.album_artist),
+        ("isrc", tags.isrc),
+        ("releaseDate", tags.date),
+        ("genre", tags.genre),
+        ("composer", tags.composer),
+        ("label", tags.label),
+        ("copyright", tags.copyright),
+        ("comment", tags.comment),
+        ("albumType", tags.album_type),
+        ("upc", tags.upc),
+        ("replaygain_track_gain", tags.replay_gain_track_gain),
+        ("replaygain_track_peak", tags.replay_gain_track_peak),
+        ("replaygain_album_gain", tags.replay_gain_album_gain),
+        ("replaygain_album_peak", tags.replay_gain_album_peak),
     ] {
-        let value = &tags[source];
-        if !matches!(value, Value::Null)
-            && value != ""
-            && value != &json!(0)
-            && value != &json!(false)
-        {
-            result[target] = value.clone();
+        if !value.is_empty() {
+            result[target] = value.into();
         }
     }
+    for (target, value) in [
+        ("trackNumber", tags.track_number),
+        ("totalTracks", tags.total_tracks),
+        ("discNumber", tags.disc_number),
+        ("totalDiscs", tags.total_discs),
+    ] {
+        if value != 0 {
+            result[target] = value.into();
+        }
+    }
+    if tags.explicit {
+        result["explicit"] = true.into();
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The previous serialize-then-filter implementation, kept as the oracle.
+    fn serialized_apply_tags(
+        result: &mut Value,
+        mut tags: AudioMetadata,
+        format: &str,
+        path: &str,
+        hint: &str,
+    ) {
+        if format != "flac" && tags.date.is_empty() {
+            tags.date = tags.year.clone();
+        }
+        result
+            .as_object_mut()
+            .unwrap()
+            .remove("metadataFromFilename");
+        result["trackName"] = if tags.title.is_empty() {
+            filename(if hint.is_empty() { path } else { hint }).into()
+        } else {
+            tags.title.clone().into()
+        };
+        result["artistName"] = if tags.artist.is_empty() {
+            "Unknown Artist".into()
+        } else {
+            tags.artist.clone().into()
+        };
+        result["albumName"] = if tags.album.is_empty() {
+            "Unknown Album".into()
+        } else {
+            tags.album.clone().into()
+        };
+        result["hasLyrics"] = has_usable_content(&tags.lyrics).into();
+        let tags = serde_json::to_value(tags).unwrap();
+        for (source, target) in [
+            ("album_artist", "albumArtist"),
+            ("isrc", "isrc"),
+            ("track_number", "trackNumber"),
+            ("total_tracks", "totalTracks"),
+            ("disc_number", "discNumber"),
+            ("total_discs", "totalDiscs"),
+            ("date", "releaseDate"),
+            ("genre", "genre"),
+            ("composer", "composer"),
+            ("label", "label"),
+            ("copyright", "copyright"),
+            ("comment", "comment"),
+            ("album_type", "albumType"),
+            ("explicit", "explicit"),
+            ("upc", "upc"),
+            ("replay_gain_track_gain", "replaygain_track_gain"),
+            ("replay_gain_track_peak", "replaygain_track_peak"),
+            ("replay_gain_album_gain", "replaygain_album_gain"),
+            ("replay_gain_album_peak", "replaygain_album_peak"),
+        ] {
+            let value = &tags[source];
+            if !matches!(value, Value::Null)
+                && value != ""
+                && value != &json!(0)
+                && value != &json!(false)
+            {
+                result[target] = value.clone();
+            }
+        }
+    }
+
+    #[test]
+    fn direct_tag_mapping_matches_serialized_mapping() {
+        let full = AudioMetadata {
+            title: "Title".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+            album_artist: "Album Artist".into(),
+            genre: "Genre".into(),
+            year: "2001".into(),
+            date: String::new(),
+            track_number: 3,
+            total_tracks: -1,
+            disc_number: 0,
+            total_discs: 2,
+            isrc: "XX0000000000".into(),
+            lyrics: "[00:01.00]line".into(),
+            label: "Label".into(),
+            copyright: "(c)".into(),
+            composer: "Composer".into(),
+            comment: "Comment".into(),
+            album_type: "album".into(),
+            explicit: true,
+            upc: "0000".into(),
+            replay_gain_track_gain: "-6.5 dB".into(),
+            replay_gain_track_peak: "0.98".into(),
+            replay_gain_album_gain: "-7 dB".into(),
+            replay_gain_album_peak: "0.99".into(),
+        };
+        let dated = AudioMetadata {
+            date: "2001-02-03".into(),
+            explicit: false,
+            lyrics: " ".into(),
+            ..full.clone()
+        };
+        for tags in [AudioMetadata::default(), full, dated] {
+            for format in ["flac", "mp3", "m4a"] {
+                for (path, hint) in [("/music/a.flac", ""), ("/proc/self/fd/9", "b.mp3")] {
+                    let base = library_metadata(path, hint, "scan", 7);
+                    let mut expected = base.clone();
+                    serialized_apply_tags(&mut expected, tags.clone(), format, path, hint);
+                    let mut actual = base;
+                    apply_tags(&mut actual, tags.clone(), format, path, hint).unwrap();
+                    assert_eq!(
+                        serde_json::to_string(&actual).unwrap(),
+                        serde_json::to_string(&expected).unwrap(),
+                        "{format} {path} {hint}"
+                    );
+                }
+            }
+        }
+    }
 }
