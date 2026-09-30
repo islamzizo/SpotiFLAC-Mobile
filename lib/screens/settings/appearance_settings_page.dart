@@ -3,6 +3,7 @@ import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/constants/language_choices.dart';
+import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/providers/theme_provider.dart';
 import 'package:spotiflac_android/models/theme_settings.dart';
@@ -493,6 +494,10 @@ class _MornyeGlassClaritySlider extends ConsumerWidget {
     final notifier = ref.read(themeProvider.notifier);
     final theme = Theme.of(context);
     final l10n = context.l10n;
+    // Flat devices and high contrast draw every glass surface opaque, so the
+    // slider would change nothing visible. Keep the stored value untouched.
+    final highContrast = MediaQuery.highContrastOf(context);
+    final adjustable = !highContrast && ref.watch(mornyeBlurEnabledProvider);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Column(
@@ -504,6 +509,20 @@ class _MornyeGlassClaritySlider extends ConsumerWidget {
             l10n.appearanceGlassClaritySubtitle,
             style: theme.textTheme.bodySmall,
           ),
+          if (!adjustable) ...[
+            const SizedBox(height: 8),
+            Text(
+              highContrast
+                  ? l10n.appearanceGlassClarityHighContrast
+                  : l10n.appearanceGlassClarityBlurOff(
+                      l10n.appearanceForceBlur,
+                    ),
+              key: const ValueKey('mornye-glass-clarity-unavailable'),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           ExcludeSemantics(
             child: ClipRRect(
@@ -553,9 +572,11 @@ class _MornyeGlassClaritySlider extends ConsumerWidget {
               value: clarity,
               divisions: 20,
               label: '${(clarity * 100).round()}%',
-              onChanged: (value) =>
-                  notifier.setMornyeGlassClarity(value, persist: false),
-              onChangeEnd: notifier.setMornyeGlassClarity,
+              onChanged: adjustable
+                  ? (value) =>
+                        notifier.setMornyeGlassClarity(value, persist: false)
+                  : null,
+              onChangeEnd: adjustable ? notifier.setMornyeGlassClarity : null,
             ),
           ),
           Row(

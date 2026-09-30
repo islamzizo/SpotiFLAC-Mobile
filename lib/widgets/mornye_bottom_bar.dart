@@ -88,11 +88,11 @@ class MornyeBottomBar extends ConsumerWidget {
     );
     final liquidGlass = ref.watch(mornyeLiquidGlassProvider);
     // Animated glass tabs already reserve 8px above their visible capsule.
-    final glassTabs =
-        blurEnabled &&
-        liquidGlass &&
-        !MediaQuery.disableAnimationsOf(context) &&
-        !MediaQuery.highContrastOf(context);
+    final glassTabs = MornyeTabBar.usesLiquidGlass(
+      context,
+      blurEnabled: blurEnabled,
+      liquidGlass: liquidGlass,
+    );
     final tabGap = glassTabs ? 0.0 : 8.0;
     // These contents do not depend on animation progress. Retain their widget
     // instances so folding only updates size/opacity wrappers each frame.

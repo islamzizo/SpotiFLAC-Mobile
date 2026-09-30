@@ -114,6 +114,75 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final clarity in [0.0, 0.5]) {
+    testWidgets('liquid tab and segment pills follow clarity ($clarity)', (
+      tester,
+    ) async {
+      late BuildContext context;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            theme: MornyeTheme.build(Brightness.dark, glassClarity: clarity),
+            home: Scaffold(
+              body: Builder(
+                builder: (builderContext) {
+                  context = builderContext;
+                  return Column(
+                    children: [
+                      MornyeSegmentedControl(
+                        labels: const ['One', 'Two'],
+                        selectedIndex: 0,
+                        onChanged: (_) {},
+                      ),
+                      MornyeTabBar(
+                        destinations: const [
+                          NavigationDestination(
+                            icon: Icon(Icons.home),
+                            label: 'Home',
+                          ),
+                          NavigationDestination(
+                            icon: Icon(Icons.music_note),
+                            label: 'Library',
+                          ),
+                        ],
+                        selectedIndex: 0,
+                        onSelected: (_) {},
+                        blurEnabled: true,
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final liquid = clarity > 0;
+      // Overlays aligned with the bar share this decision.
+      expect(
+        MornyeTabBar.usesLiquidGlass(
+          context,
+          blurEnabled: true,
+          liquidGlass: true,
+        ),
+        liquid,
+      );
+      // At 0% the opaque material drops the shader pills, like MornyeGlass
+      // drops its lens; the resting segments and tabs remain usable.
+      expect(find.byType(LiquidGlassTabBar), findsNWidgets(liquid ? 2 : 0));
+      expect(
+        find.byType(LiquidGlassLens),
+        liquid ? findsWidgets : findsNothing,
+      );
+      // The shader bar paints its labels in more than one layer.
+      expect(find.text('Two'), findsWidgets);
+      expect(find.text('Library'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('liquid level keeps the shader glass', (tester) async {
     await tester.pumpWidget(
       ProviderScope(

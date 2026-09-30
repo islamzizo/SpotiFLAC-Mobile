@@ -27,8 +27,11 @@ class MornyeSegmentedControl extends ConsumerWidget {
         !MediaQuery.highContrastOf(context) &&
         ref.watch(mornyeBlurEnabledProvider);
     final animate = !MediaQuery.disableAnimationsOf(context);
+    // At 0% clarity the material is opaque; drop the shader pill as
+    // MornyeGlass drops its lens.
+    final clear = MornyeTheme.glassClarityOf(context) > 0;
     final height = MediaQuery.textScalerOf(context).scale(15) + 36;
-    if (!blur || !animate || !ref.watch(mornyeLiquidGlassProvider)) {
+    if (!blur || !animate || !clear || !ref.watch(mornyeLiquidGlassProvider)) {
       // The Impeller tab bar ignores its pill mode and always runs its shader
       // passes. Without blur or motion, draw the resting segments directly.
       return _plainSegments(context, blur: blur, height: height);
@@ -614,6 +617,20 @@ class MornyeTabBar extends StatelessWidget {
   /// Shader capsule and travelling pill; otherwise the frosted row below.
   final bool liquidGlass;
 
+  /// Whether the bar renders the shader capsule. Overlays aligned with its
+  /// icons must use the same decision. At 0% clarity the material is opaque,
+  /// so the shader pill is dropped as MornyeGlass drops its lens.
+  static bool usesLiquidGlass(
+    BuildContext context, {
+    required bool blurEnabled,
+    required bool liquidGlass,
+  }) =>
+      blurEnabled &&
+      liquidGlass &&
+      MornyeTheme.glassClarityOf(context) > 0 &&
+      !MediaQuery.disableAnimationsOf(context) &&
+      !MediaQuery.highContrastOf(context);
+
   final List<NavigationDestination> destinations;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
@@ -628,10 +645,11 @@ class MornyeTabBar extends StatelessWidget {
       alpha: scheme.brightness == Brightness.dark ? 0.12 : 0.08,
     );
     final inactiveIconColor = scheme.onSurface;
-    if (blurEnabled &&
-        liquidGlass &&
-        !MediaQuery.disableAnimationsOf(context) &&
-        !MediaQuery.highContrastOf(context)) {
+    if (usesLiquidGlass(
+      context,
+      blurEnabled: blurEnabled,
+      liquidGlass: liquidGlass,
+    )) {
       return LayoutBuilder(
         builder: (context, constraints) => SizedBox(
           // Leave room above and below for the travelling pill to lift and
