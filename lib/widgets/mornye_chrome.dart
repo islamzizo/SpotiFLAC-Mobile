@@ -25,10 +25,14 @@ class MornyeSegmentedControl extends ConsumerWidget {
     final scheme = theme.colorScheme;
     final blur =
         !MediaQuery.highContrastOf(context) &&
-        (!ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider));
+        ref.watch(mornyeBlurEnabledProvider);
     final animate = !MediaQuery.disableAnimationsOf(context);
     final height = MediaQuery.textScalerOf(context).scale(15) + 36;
+    if (!blur || !animate || !ref.watch(mornyeLiquidGlassProvider)) {
+      // The Impeller tab bar ignores its pill mode and always runs its shader
+      // passes. Without blur or motion, draw the resting segments directly.
+      return _plainSegments(context, blur: blur, height: height);
+    }
     final rtl = Directionality.of(context) == TextDirection.rtl;
     final visualLabels = rtl ? labels.reversed.toList() : labels;
     int logicalIndex(int index) => rtl ? labels.length - 1 - index : index;
@@ -74,11 +78,9 @@ class MornyeSegmentedControl extends ConsumerWidget {
                         chromaticAberration: 0,
                       ),
                     ),
-                    pillStyle: LiquidGlassTabPillStyle(
-                      mode: blur && animate
-                          ? LiquidGlassPillMode.impellerOnly
-                          : LiquidGlassPillMode.none,
-                      animated: animate,
+                    pillStyle: const LiquidGlassTabPillStyle(
+                      mode: LiquidGlassPillMode.impellerOnly,
+                      animated: true,
                     ),
                     itemStyle: LiquidGlassTabItemStyle(
                       selectedColor: scheme.onSurface,
@@ -110,6 +112,66 @@ class MornyeSegmentedControl extends ConsumerWidget {
                     ],
                   ),
                 ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _plainSegments(
+    BuildContext context, {
+    required bool blur,
+    required double height,
+  }) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final selectionFill = scheme.onSurface.withValues(
+      alpha: scheme.brightness == Brightness.dark ? 0.12 : 0.08,
+    );
+    final radius = BorderRadius.circular(height / 2);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: SizedBox(
+        height: height,
+        child: _MornyeGlassSurface(
+          blurEnabled: blur,
+          radius: height / 2,
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                for (var index = 0; index < labels.length; index++)
+                  Expanded(
+                    child: Semantics(
+                      button: true,
+                      selected: index == selectedIndex,
+                      child: Material(
+                        color: index == selectedIndex
+                            ? selectionFill
+                            : Colors.transparent,
+                        borderRadius: radius,
+                        child: InkWell(
+                          borderRadius: radius,
+                          onTap: () => onChanged(index),
+                          child: Center(
+                            child: Text(
+                              labels[index],
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onSurface,
+                                fontWeight: index == selectedIndex
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -165,8 +227,7 @@ class MornyeGlassPanel extends ConsumerWidget {
     final blur =
         blurEnabled &&
         !MediaQuery.highContrastOf(context) &&
-        (!ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider));
+        ref.watch(mornyeBlurEnabledProvider);
     return MornyeGlass.navigation(
       radius: radius,
       firstInGroup: firstInGroup,
@@ -231,10 +292,14 @@ class MornyeGlass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final dark = scheme.brightness == Brightness.dark;
     final useGlass =
         _useLens && blurEnabled && !MediaQuery.highContrastOf(context);
+    Widget lens(Widget child) => Consumer(
+      // Mid-range Android keeps the frosted surface but not the shader lens.
+      builder: (context, ref, child) =>
+          ref.watch(mornyeLiquidGlassProvider) ? _liquidLens(child!) : child!,
+      child: child,
+    );
     return _MornyeGlassSurface(
       blurEnabled: blurEnabled,
       radius: radius,
@@ -244,41 +309,45 @@ class MornyeGlass extends StatelessWidget {
       tintOpacity: tintOpacity,
       tintColor: tintColor,
       backdropFilter: backdropFilter,
-      child: useGlass
-          ? NativeGlassMetrics(
-              child: LiquidGlassLens(
-                style: LiquidGlassStyle(
-                  shape: LiquidGlassShape.continuousRoundedRectangle(
-                    cornerRadius: radius,
-                    borderWidth: dark && tintOpacity == null ? 0 : 0.6,
-                    lightIntensity: dark && tintOpacity == null ? 0 : 0.18,
-                  ),
-                  appearance: LiquidGlassAppearance(
-                    color: tintOpacity != null
-                        ? Colors.transparent
-                        : dark
-                        ? scheme.surfaceContainerHigh.withValues(alpha: 0.28)
-                        : Colors.white.withValues(
-                            alpha: strongTint ? 0.20 : 0.55,
-                          ),
-                    // The surface already blurs the backdrop. Refracting that
-                    // frosted result needs no second Gaussian blur pass.
-                    blur: const LiquidGlassBlur(),
-                  ),
-                  refraction: const LiquidGlassRefraction(
-                    distortion: 0.02,
-                    distortionWidth: 8,
-                    chromaticAberration: 0,
-                  ),
-                ),
-                // Only the shader uses window metrics; responsive content and
-                // decoded artwork retain the surrounding tablet layout scale.
-                child: MediaQuery(data: MediaQuery.of(context), child: child),
-              ),
-            )
-          : child,
+      child: useGlass ? lens(child) : child,
     );
   }
+
+  Widget _liquidLens(Widget child) => Builder(
+    builder: (context) {
+      final scheme = Theme.of(context).colorScheme;
+      final dark = scheme.brightness == Brightness.dark;
+      return NativeGlassMetrics(
+        child: LiquidGlassLens(
+          style: LiquidGlassStyle(
+            shape: LiquidGlassShape.continuousRoundedRectangle(
+              cornerRadius: radius,
+              borderWidth: dark && tintOpacity == null ? 0 : 0.6,
+              lightIntensity: dark && tintOpacity == null ? 0 : 0.18,
+            ),
+            appearance: LiquidGlassAppearance(
+              color: tintOpacity != null
+                  ? Colors.transparent
+                  : dark
+                  ? scheme.surfaceContainerHigh.withValues(alpha: 0.28)
+                  : Colors.white.withValues(alpha: strongTint ? 0.20 : 0.55),
+              // The surface already blurs the backdrop. Refracting that
+              // frosted result needs no second Gaussian blur pass.
+              blur: const LiquidGlassBlur(),
+            ),
+            refraction: const LiquidGlassRefraction(
+              distortion: 0.02,
+              distortionWidth: 8,
+              chromaticAberration: 0,
+            ),
+          ),
+          // Only the shader uses window metrics; responsive content and
+          // decoded artwork retain the surrounding tablet layout scale.
+          child: MediaQuery(data: MediaQuery.of(context), child: child),
+        ),
+      );
+    },
+  );
 }
 
 /// Keep the capsule legible independently of the shader renderer. The liquid
@@ -464,10 +533,7 @@ class MornyeFilterChip extends ConsumerWidget {
     }
     return MornyeGlass.navigation(
       radius: 24,
-      blurEnabled:
-          blurEnabled &&
-          (!ref.watch(lowEndDeviceProvider) ||
-              ref.watch(backdropBlurEnabledProvider)),
+      blurEnabled: blurEnabled && ref.watch(mornyeBlurEnabledProvider),
       child: content,
     );
   }
@@ -480,8 +546,12 @@ class MornyeTabBar extends StatelessWidget {
     required this.selectedIndex,
     required this.onSelected,
     required this.blurEnabled,
+    this.liquidGlass = true,
     this.hiddenIconIndices = const {},
   });
+
+  /// Shader capsule and travelling pill; otherwise the frosted row below.
+  final bool liquidGlass;
 
   final List<NavigationDestination> destinations;
   final int selectedIndex;
@@ -498,6 +568,7 @@ class MornyeTabBar extends StatelessWidget {
     );
     final inactiveIconColor = scheme.onSurface;
     if (blurEnabled &&
+        liquidGlass &&
         !MediaQuery.disableAnimationsOf(context) &&
         !MediaQuery.highContrastOf(context)) {
       return LayoutBuilder(

@@ -106,9 +106,7 @@ class AppSearchField extends StatelessWidget {
     return Consumer(
       builder: (context, ref, child) => MornyeGlass.navigation(
         radius: 28,
-        blurEnabled:
-            !ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider),
+        blurEnabled: ref.watch(mornyeBlurEnabledProvider),
         child: child!,
       ),
       child: field,

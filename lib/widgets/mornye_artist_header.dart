@@ -359,8 +359,8 @@ class _ArtistCollapsingArtwork extends ConsumerWidget {
     final blur = 18 * Curves.easeOut.transform(collapse);
     final blurEnabled =
         !MediaQuery.disableAnimationsOf(context) &&
-        (!ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider));
+        // The collapse blur and masked backdrop re-filter on every scroll frame.
+        ref.watch(mornyeLiquidGlassProvider);
 
     return ClipRect(
       child: Stack(

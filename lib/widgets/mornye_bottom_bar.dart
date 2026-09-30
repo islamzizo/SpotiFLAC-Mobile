@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
+import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/mini_player.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
@@ -85,9 +86,11 @@ class MornyeBottomBar extends ConsumerWidget {
     final hasPlayer = ref.watch(
       currentMediaItemProvider.select((item) => item.value != null),
     );
+    final liquidGlass = ref.watch(mornyeLiquidGlassProvider);
     // Animated glass tabs already reserve 8px above their visible capsule.
     final glassTabs =
         blurEnabled &&
+        liquidGlass &&
         !MediaQuery.disableAnimationsOf(context) &&
         !MediaQuery.highContrastOf(context);
     final tabGap = glassTabs ? 0.0 : 8.0;
@@ -118,6 +121,7 @@ class MornyeBottomBar extends ConsumerWidget {
           onSelected: (index) =>
               index == destinations.length - 1 ? onSearch() : onSelected(index),
           blurEnabled: blurEnabled,
+          liquidGlass: liquidGlass,
           hiddenIconIndices: hideMovingIcons
               ? {leadingIndex, destinations.length - 1}
               : const {},

@@ -29,8 +29,7 @@ class MornyePlayerDetailsSheet extends ConsumerWidget {
     final item = mediaItem;
     final blur =
         !MediaQuery.highContrastOf(context) &&
-        (!ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider));
+        ref.watch(mornyeBlurEnabledProvider);
     return MornyeGlass.navigation(
       blurEnabled: blur,
       child: SafeArea(

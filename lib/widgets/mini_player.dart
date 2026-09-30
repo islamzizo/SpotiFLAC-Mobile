@@ -63,7 +63,13 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
     final colorScheme = Theme.of(context).colorScheme;
     final mornye = context.isMornye;
     final compact = mornye && widget.compact;
-    if (mornye && !MediaQuery.disableAnimationsOf(context)) {
+    // Frosted and flat glass levels run on constrained Android hardware. They
+    // skip keeping a paused video decoder for the full player's motion cover,
+    // and stop the title marquee after a few passes: every marquee frame
+    // re-filters the blurred chrome around it.
+    final fullEffects = !mornye || ref.watch(mornyeLiquidGlassProvider);
+    final marqueeCycles = fullEffects ? null : 2;
+    if (mornye && fullEffects && !MediaQuery.disableAnimationsOf(context)) {
       final artwork = ref
           .watch(
             playerMotionArtworkProvider((
@@ -156,6 +162,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                           children: [
                             OverflowMarquee(
                               resetKey: (mediaItem.id, mediaItem.title),
+                              maxCycles: marqueeCycles,
                               child: ExplicitTrackTitle(
                                 title: mediaItem.title,
                                 explicit:
@@ -171,6 +178,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
                             ),
                             OverflowMarquee(
                               resetKey: (mediaItem.id, mediaItem.artist),
+                              maxCycles: marqueeCycles,
                               child: Text(
                                 mediaItem.artist ?? '',
                                 style: Theme.of(context).textTheme.bodySmall
@@ -244,9 +252,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
             child: MornyeGlass.navigation(
               strongTint: true,
               tintOpacity: MornyeTheme.chromeOpacity(context),
-              blurEnabled:
-                  !ref.watch(lowEndDeviceProvider) ||
-                  ref.watch(backdropBlurEnabledProvider),
+              blurEnabled: ref.watch(mornyeBlurEnabledProvider),
               child: player,
             ),
           )

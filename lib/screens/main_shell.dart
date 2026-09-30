@@ -1078,9 +1078,7 @@ class _MainShellState extends ConsumerState<MainShell>
                               onSelected: _onNavTap,
                               onHome: () => _onNavTap(0),
                               onSearch: ShellNavigationService.requestSearch,
-                              blurEnabled:
-                                  !ref.watch(lowEndDeviceProvider) ||
-                                  ref.watch(backdropBlurEnabledProvider),
+                              blurEnabled: ref.watch(mornyeBlurEnabledProvider),
                             ),
                           ),
                   ),

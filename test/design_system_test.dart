@@ -8,6 +8,8 @@ import 'package:analyzer/source/line_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart'
+    show LiquidGlassTabBar;
 import 'package:spotiflac_android/l10n/app_localizations.dart';
 import 'package:spotiflac_android/theme/app_theme.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
@@ -263,6 +265,41 @@ void main() {
       );
     }
 
+    testWidgets('theme selector skips the glass tab bar with reduced motion', (
+      tester,
+    ) async {
+      var selected = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            theme: MornyeTheme.build(Brightness.dark),
+            home: MediaQuery(
+              data: const MediaQueryData(disableAnimations: true),
+              child: Scaffold(
+                body: StatefulBuilder(
+                  builder: (context, setState) => MornyeSegmentedControl(
+                    labels: const ['System', 'Light', 'Dark'],
+                    selectedIndex: selected,
+                    onChanged: (index) => setState(() => selected = index),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(LiquidGlassTabBar), findsNothing);
+      expect(find.text('Dark'), findsOneWidget);
+      await tester.tap(find.text('Dark'));
+      await tester.pump();
+      expect(selected, 2);
+      expect(
+        tester.getCenter(find.text('System')).dx <
+            tester.getCenter(find.text('Dark')).dx,
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+    });
     testWidgets('glass search keeps text editing, submit and clear usable', (
       tester,
     ) async {

@@ -316,10 +316,10 @@ class _LandscapeLyricsViewport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Three stacked backdrop passes re-filter the moving lyrics every frame.
     final blur =
         !MediaQuery.highContrastOf(context) &&
-        (!ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider));
+        ref.watch(mornyeLiquidGlassProvider);
     return ClipRect(
       key: const ValueKey('landscape-lyrics-viewport'),
       child: TweenAnimationBuilder<double>(

@@ -3496,8 +3496,8 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
     final blurLyrics =
         mornye &&
         !highContrast &&
-        (!ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider));
+        // Every defocused line is filtered again on each playback frame.
+        ref.watch(mornyeLiquidGlassProvider);
     final motion = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 280);

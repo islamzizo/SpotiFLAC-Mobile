@@ -1,14 +1,20 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
+import 'package:spotiflac_android/providers/player_artwork_video_provider.dart';
+import 'package:spotiflac_android/providers/player_motion_artwork_provider.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
+import 'package:spotiflac_android/services/motion_artwork_store.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
 import 'package:spotiflac_android/widgets/mini_player.dart';
 import 'package:spotiflac_android/widgets/overflow_marquee.dart';
+import 'package:video_player/video_player.dart';
 
 void main() {
   const longTitle = 'A long song title with enough words to leave the viewport';
@@ -168,6 +174,66 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('bounded marquee rests at the start after its passes', (
+    tester,
+  ) async {
+    Future<void> pumpBounded(String title, {int? maxCycles = 2}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: SizedBox(
+              width: 160,
+              child: OverflowMarquee(
+                resetKey: title,
+                maxCycles: maxCycles,
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  style: const TextStyle(fontSize: 16),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+    }
+
+    await pumpBounded(longTitle);
+    final scroll = controller(tester);
+    final distance = scroll.position.maxScrollExtent;
+    expect(distance, greaterThan(0));
+    // Two passes of pause + travel, then nothing else is scheduled.
+    var passes = 0;
+    var moving = false;
+    for (var i = 0; i < 600; i++) {
+      await tester.pump(const Duration(milliseconds: 250));
+      if (scroll.offset > 0) {
+        moving = true;
+      } else if (moving) {
+        moving = false;
+        passes++;
+      }
+    }
+    expect(passes, 2);
+    expect(controller(tester).offset, 0);
+    expect(tester.binding.transientCallbackCount, 0);
+    await tester.pump(const Duration(seconds: 10));
+    expect(controller(tester).offset, 0);
+
+    // Restoring full effects restarts a resting title without changing tracks.
+    await pumpBounded(longTitle, maxCycles: null);
+    await startScrolling(tester);
+    expect(controller(tester).offset, greaterThan(0));
+
+    // A new track starts a fresh count.
+    await pumpBounded('$longTitle again');
+    await startScrolling(tester);
+    expect(controller(tester).offset, greaterThan(0));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('RTL titles scroll from the reading direction', (tester) async {
     await pumpTitle(tester, direction: TextDirection.rtl);
     expect(controller(tester).position.axisDirection, AxisDirection.left);
@@ -176,6 +242,58 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  for (final liquid in [false, true]) {
+    testWidgets(
+      'Mornye mini player prepares the motion cover only with liquid glass '
+      '(liquid: $liquid)',
+      (tester) async {
+        final prepared = <String>[];
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              currentMediaItemProvider.overrideWith(
+                (ref) => Stream.value(
+                  const MediaItem(
+                    id: 'track',
+                    title: 'Song',
+                    album: 'Album',
+                    artist: 'Artist',
+                  ),
+                ),
+              ),
+              playbackStateProvider.overrideWith((ref) => const Stream.empty()),
+              deviceSupportsLiquidGlassProvider.overrideWithValue(liquid),
+              backdropBlurEnabledProvider.overrideWithValue(false),
+              playerMotionArtworkProvider.overrideWith(
+                (ref, album) async =>
+                    const MotionArtwork('file:///cover.mp4', aspectRatio: 1),
+              ),
+              playerArtworkVideoProvider.overrideWith((ref, source) {
+                prepared.add(source);
+                return Completer<VideoPlayerController>().future;
+              }),
+            ],
+            child: MaterialApp(
+              theme: MornyeTheme.build(Brightness.dark),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: const Scaffold(
+                body: Center(child: SizedBox(width: 320, child: MiniPlayer())),
+              ),
+            ),
+          ),
+        );
+        for (var i = 0; i < 4; i++) {
+          await tester.pump();
+        }
+        expect(find.text('Song'), findsWidgets);
+        expect(prepared, liquid ? ['file:///cover.mp4'] : isEmpty);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
 
   for (final mornye in [false, true]) {
     for (final compact in [false, true]) {

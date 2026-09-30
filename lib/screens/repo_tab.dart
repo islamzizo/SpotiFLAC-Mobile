@@ -659,9 +659,7 @@ class _CategoryChip extends ConsumerWidget {
         excludeSemantics: true,
         child: MornyeGlass.navigation(
           radius: 24,
-          blurEnabled:
-              !ref.watch(lowEndDeviceProvider) ||
-              ref.watch(backdropBlurEnabledProvider),
+          blurEnabled: ref.watch(mornyeBlurEnabledProvider),
           child: Material(
             color: Colors.transparent,
             child: InkWell(

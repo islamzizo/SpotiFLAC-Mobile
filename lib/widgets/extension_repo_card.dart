@@ -36,9 +36,7 @@ class ExtensionRepoCard extends ConsumerWidget {
       padding: margin,
       child: MornyeGlass.navigation(
         radius: 24,
-        blurEnabled:
-            !ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider),
+        blurEnabled: ref.watch(mornyeBlurEnabledProvider),
         child: Material(color: Colors.transparent, child: child),
       ),
     );

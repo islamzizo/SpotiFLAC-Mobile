@@ -106,9 +106,7 @@ class _FilterChip extends ConsumerWidget {
         onTap: onTap,
         child: MornyeGlass(
           radius: 22,
-          blurEnabled:
-              !ref.watch(lowEndDeviceProvider) ||
-              ref.watch(backdropBlurEnabledProvider),
+          blurEnabled: ref.watch(mornyeBlurEnabledProvider),
           child: Material(
             color: Colors.transparent,
             child: InkWell(

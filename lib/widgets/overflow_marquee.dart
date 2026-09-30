@@ -8,10 +8,15 @@ class OverflowMarquee extends StatefulWidget {
     super.key,
     required this.resetKey,
     required this.child,
+    this.maxCycles,
   });
 
   final Object resetKey;
   final Widget child;
+
+  /// Stops at the start after this many passes; null scrolls indefinitely.
+  /// A new [resetKey], width or lifecycle resume starts a fresh count.
+  final int? maxCycles;
 
   @override
   State<OverflowMarquee> createState() => _OverflowMarqueeState();
@@ -25,6 +30,7 @@ class _OverflowMarqueeState extends State<OverflowMarquee>
   final _contentKey = GlobalKey();
   Timer? _pause;
   int _generation = 0;
+  int _cycles = 0;
   bool _restartQueued = false;
   bool _motionEnabled = false;
   bool _appActive = true;
@@ -53,7 +59,8 @@ class _OverflowMarqueeState extends State<OverflowMarquee>
   @override
   void didUpdateWidget(OverflowMarquee oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.resetKey != oldWidget.resetKey) {
+    if (widget.resetKey != oldWidget.resetKey ||
+        widget.maxCycles != oldWidget.maxCycles) {
       _queueRestart();
     }
   }
@@ -67,6 +74,7 @@ class _OverflowMarqueeState extends State<OverflowMarquee>
   void _queueRestart() {
     _pause?.cancel();
     _generation++;
+    _cycles = 0;
     if (_restartQueued) return;
     _restartQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -113,6 +121,9 @@ class _OverflowMarqueeState extends State<OverflowMarquee>
       // The next copy is now exactly where the first started, so resetting
       // the offset changes neither the visible text nor its direction.
       _scroll.jumpTo(0);
+      _cycles++;
+      final maxCycles = widget.maxCycles;
+      if (maxCycles != null && _cycles >= maxCycles) return;
       _scheduleCycle(generation);
     }
   }

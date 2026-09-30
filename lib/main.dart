@@ -92,6 +92,11 @@ void main() {
             deviceSupportsBackdropBlurProvider.overrideWithValue(
               runtimeProfile.enableBackdropBlur,
             ),
+            // The RAM tiers describe Android hardware. Other platforms keep
+            // the existing full material by default.
+            deviceSupportsLiquidGlassProvider.overrideWithValue(
+              !Platform.isAndroid || runtimeProfile.enableBackdropBlur,
+            ),
             initialSettingsProvider.overrideWithValue(bootstrapSettings),
             initialSafAccessLostProvider.overrideWithValue(
               initialSafAccessLost,
