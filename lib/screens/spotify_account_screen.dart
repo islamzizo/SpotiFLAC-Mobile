@@ -119,7 +119,6 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
     id: track.id, name: track.name, artistName: track.artistName,
     albumName: track.albumName ?? '', coverUrl: track.coverUrl,
     duration: ((track.durationMs ?? 0) / 1000).round(),
-    source: 'spotify',
   );
 
   Future<void> _openPlaylist(SpotifyPlaylist playlist) async {
