@@ -76,11 +76,6 @@ class ThemeNotifier extends Notifier<ThemeSettings> {
     await _saveToStorage();
   }
 
-  Future<void> setSeedColorValue(int colorValue) async {
-    state = state.copyWith(seedColorValue: colorValue);
-    await _saveToStorage();
-  }
-
   Future<void> setUseAmoled(bool value) async {
     state = state.copyWith(useAmoled: value);
     await _saveToStorage();

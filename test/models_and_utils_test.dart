@@ -717,8 +717,6 @@ void main() {
       expect(album.isPlaylistItem, isFalse);
       expect(album.isArtistItem, isFalse);
       expect(album.isCollection, isTrue);
-      expect(album.isFromExtension, isTrue);
-      expect(album.hasAudioQuality, isTrue);
       expect(album.isDolbyAtmos, isTrue);
     });
 

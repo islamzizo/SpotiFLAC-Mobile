@@ -114,13 +114,3 @@ double syncedLyricSegmentLift({
   final emphasis = wordLift > 0 ? normalLift / wordLift : 0;
   return normalLift + 1.3 * heldStrength * rise * settle * emphasis;
 }
-
-/// Horizontal leading edge for a highlight that fills left to right.
-double syncedLyricsLeftToRightBoundary({
-  required double left,
-  required double right,
-  required double progress,
-}) {
-  final value = progress.clamp(0.0, 1.0);
-  return left + ((right - left) * value);
-}

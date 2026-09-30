@@ -132,7 +132,6 @@ class MornyeGlassPanel extends ConsumerWidget {
     this.tintOpacity,
     this.tintColor,
     this.backdropFilter,
-    this.liquidGlass = false,
     this.blurEnabled = true,
   });
 
@@ -146,7 +145,6 @@ class MornyeGlassPanel extends ConsumerWidget {
     this.tintOpacity = 0.78,
     this.tintColor,
     this.backdropFilter,
-    this.liquidGlass = false,
     this.blurEnabled = true,
   }) : strongTint = false;
 
@@ -158,7 +156,6 @@ class MornyeGlassPanel extends ConsumerWidget {
   final double? tintOpacity;
   final Color? tintColor;
   final ImageFilter? backdropFilter;
-  final bool liquidGlass;
 
   /// Disable backdrop sampling for surfaces that scroll over a plain page.
   final bool blurEnabled;
@@ -170,16 +167,6 @@ class MornyeGlassPanel extends ConsumerWidget {
         !MediaQuery.highContrastOf(context) &&
         (!ref.watch(lowEndDeviceProvider) ||
             ref.watch(backdropBlurEnabledProvider));
-    if (liquidGlass) {
-      return MornyeGlass(
-        radius: radius,
-        tintOpacity: tintOpacity,
-        tintColor: tintColor,
-        backdropFilter: backdropFilter,
-        blurEnabled: blur,
-        child: Material(color: Colors.transparent, child: child),
-      );
-    }
     return MornyeGlass.navigation(
       radius: radius,
       firstInGroup: firstInGroup,

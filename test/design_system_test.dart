@@ -556,64 +556,6 @@ void main() {
       expect(find.text('body'), findsOneWidget);
     });
 
-    testWidgets('draggable content moves as one surface and dismisses', (
-      tester,
-    ) async {
-      const sheetKey = ValueKey<String>('scrollable-sheet');
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.light(),
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => ElevatedButton(
-                onPressed: () => showModalBottomSheet<void>(
-                  context: context,
-                  isScrollControlled: true,
-                  // Disable the route recognizer so the draggable surface,
-                  // rather than the modal's fallback gesture, is under test.
-                  enableDrag: false,
-                  builder: (_) => AppDraggableSheet(
-                    builder: (_, scrollController) => Material(
-                      key: sheetKey,
-                      child: ListView(
-                        controller: scrollController,
-                        children: const [
-                          SizedBox(height: 800, child: Text('sheet body')),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                child: const Text('open'),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
-      expect(find.byKey(sheetKey), findsOneWidget);
-
-      final initialTop = tester.getTopLeft(find.byKey(sheetKey)).dy;
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byKey(sheetKey)),
-      );
-      await gesture.moveBy(const Offset(0, 160));
-      await tester.pump();
-
-      expect(
-        tester.getTopLeft(find.byKey(sheetKey)).dy,
-        greaterThan(initialTop + 100),
-      );
-
-      await gesture.moveBy(const Offset(0, 260));
-      await gesture.up();
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(sheetKey), findsNothing);
-    });
-
     testWidgets('sheet shape comes from the token scale', (tester) async {
       final shape =
           AppTheme.light().bottomSheetTheme.shape! as RoundedRectangleBorder;

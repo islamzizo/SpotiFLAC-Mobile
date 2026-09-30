@@ -189,20 +189,5 @@ void main() {
         1,
       );
     });
-
-    test('moves the reveal boundary from left to right', () {
-      expect(
-        syncedLyricsLeftToRightBoundary(left: 10, right: 110, progress: 0),
-        10,
-      );
-      expect(
-        syncedLyricsLeftToRightBoundary(left: 10, right: 110, progress: 0.5),
-        60,
-      );
-      expect(
-        syncedLyricsLeftToRightBoundary(left: 10, right: 110, progress: 1),
-        110,
-      );
-    });
   });
 }

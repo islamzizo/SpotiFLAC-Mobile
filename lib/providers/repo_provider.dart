@@ -40,23 +40,6 @@ class RepoCategory {
     lyrics,
     integration,
   ];
-
-  static String getDisplayName(String category) {
-    switch (category) {
-      case metadata:
-        return 'Metadata';
-      case download:
-        return 'Download';
-      case utility:
-        return 'Utility';
-      case lyrics:
-        return 'Lyrics';
-      case integration:
-        return 'Integration';
-      default:
-        return category;
-    }
-  }
 }
 
 class RepoExtension {

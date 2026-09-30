@@ -294,14 +294,6 @@ class BackupService {
     );
   }
 
-  /// Legacy JSON writer retained for compatibility with callers outside the
-  /// settings UI. It no longer defines the default backup format.
-  static Future<File> writeBackupFile(Map<String, dynamic> envelope) async {
-    final output = await _newBackupFile();
-    await output.writeAsString(encode(envelope), flush: true);
-    return output;
-  }
-
   static Future<BackupBundle?> parseFile(
     String path, {
     Directory? temporaryDirectory,
