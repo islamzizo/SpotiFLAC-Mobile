@@ -137,7 +137,7 @@ class SpotifyLibraryExtrasService {
     if(artists is Map<dynamic, dynamic> && artists['items'] is List) {
       artistName=(artists['items'] as List).whereType<Map<dynamic, dynamic>>().map((a)=>_map(a['profile'])?['name']?.toString()??'').where((s)=>s.isNotEmpty).join(', ');
     } else if(artists is List) {
-      artistName=artists.whereType<Map>().map((a)=>_map(a['profile'])?['name']?.toString()??a['name']?.toString()??'').where((s)=>s.isNotEmpty).join(', ');
+      artistName=artists.whereType<Map<dynamic, dynamic>>().map((a)=>_map(a['profile'])?['name']?.toString()??a['name']?.toString()??'').where((s)=>s.isNotEmpty).join(', ');
     }
     final album=_map(data['albumOfTrack'])??_map(data['album']);
     final duration=_map(data['duration']);
