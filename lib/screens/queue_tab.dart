@@ -1582,8 +1582,8 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Builder(
-                        builder: (context) {
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
                           int filteredAllCount;
                           int filteredAlbumCount;
                           int filteredSingleCount;
@@ -1600,45 +1600,53 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                               padding: context.isMornye
                                   ? const EdgeInsets.symmetric(vertical: 4)
                                   : EdgeInsets.zero,
-                              child: Row(
-                                children: [
-                                  _FilterChip(
-                                    label: context.l10n.historyFilterAll,
-                                    count: filteredAllCount,
-                                    isSelected: historyFilterMode == 'all',
-                                    onTap: () {
-                                      _animateToFilterPage(0);
-                                    },
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _FilterChip(
-                                    label: context.l10n.historyFilterAlbums,
-                                    count: filteredAlbumCount,
-                                    isSelected: historyFilterMode == 'albums',
-                                    onTap: () {
-                                      _animateToFilterPage(1);
-                                    },
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _FilterChip(
-                                    label: context.l10n.historyFilterSingles,
-                                    count: filteredSingleCount,
-                                    isSelected: historyFilterMode == 'singles',
-                                    onTap: () {
-                                      _animateToFilterPage(2);
-                                    },
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _FilterChip(
-                                    label: context.l10n.searchPlaylists,
-                                    count: collectionState.playlists.length,
-                                    isSelected:
-                                        historyFilterMode == 'playlists',
-                                    onTap: () {
-                                      _animateToFilterPage(3);
-                                    },
-                                  ),
-                                ],
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  minWidth: constraints.maxWidth,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    _FilterChip(
+                                      label: context.l10n.historyFilterAll,
+                                      count: filteredAllCount,
+                                      isSelected: historyFilterMode == 'all',
+                                      onTap: () {
+                                        _animateToFilterPage(0);
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _FilterChip(
+                                      label: context.l10n.historyFilterAlbums,
+                                      count: filteredAlbumCount,
+                                      isSelected: historyFilterMode == 'albums',
+                                      onTap: () {
+                                        _animateToFilterPage(1);
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _FilterChip(
+                                      label: context.l10n.historyFilterSingles,
+                                      count: filteredSingleCount,
+                                      isSelected:
+                                          historyFilterMode == 'singles',
+                                      onTap: () {
+                                        _animateToFilterPage(2);
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _FilterChip(
+                                      label: context.l10n.searchPlaylists,
+                                      count: collectionState.playlists.length,
+                                      isSelected:
+                                          historyFilterMode == 'playlists',
+                                      onTap: () {
+                                        _animateToFilterPage(3);
+                                      },
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );
