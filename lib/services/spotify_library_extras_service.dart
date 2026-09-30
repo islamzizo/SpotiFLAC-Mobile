@@ -94,23 +94,35 @@ class SpotifyLibraryExtrasService {
   }
 
   Future<List<SpotifyWebTrack>> fetchPlaylistTracks(String playlistId) async {
-    final uri=playlistId.startsWith('spotify:')?playlistId:'spotify:playlist:$playlistId';
-    final body=await _graphql('fetchPlaylist',{'uri':uri,'offset':0,'limit':100},[_playlistHash,_playlistPreviousHash]);
-    final data=_map(body['data']);
-    final playlist=_map(data?['playlistV2']) ?? _map(data?['playlist']);
-    final content=_map(playlist?['content']);
-    final items=content?['items'] ?? playlist?['tracks'];
-    if(items is! List) throw const SpotifyAccountException('Spotify returned an invalid playlist response.');
-    final result=<SpotifyWebTrack>[];
-    for(final item in items) {
-      final wrapper=_map(_map(item)?['item']) ?? _map(item);
-      final trackData=_map(wrapper?['data']) ?? _map(wrapper?['track']);
-      if(trackData==null) continue;
-      final trackUri=(wrapper?['_uri']??trackData['uri']??'').toString();
-      final id=trackUri.startsWith('spotify:track:')?trackUri.substring('spotify:track:'.length):'';
-      final track=_parseTrack(id,trackData); if(track!=null) result.add(track);
+    if (playlistId.isEmpty || playlistId == 'liked-songs') return const [];
+    const pageSize = 100;
+    var offset = 0;
+    final tracks = <SpotifyWebTrack>[];
+    while (true) {
+      final body = await _graphql('fetchPlaylist', {
+        'uri': 'spotify:playlist:$playlistId',
+        'offset': offset,
+        'limit': pageSize,
+        'enableWatchFeedEntrypoint': false,
+      }, [_playlistHash, _playlistPreviousHash]);
+      final playlist = _map(_map(body['data'])?['playlistV2']);
+      final content = _map(playlist?['content']);
+      final items = content?['items'];
+      if (items is! List || items.isEmpty) break;
+      for (final item in items) {
+        final wrapper = _map(_map(item)?['itemV2']);
+        final trackData = _map(wrapper?['data']);
+        if (wrapper == null || trackData == null) continue;
+        final uri = (wrapper['_uri'] ?? wrapper['uri'] ?? trackData['uri'] ?? '').toString();
+        final id = uri.startsWith('spotify:track:') ? uri.substring('spotify:track:'.length) : '';
+        final track = _parseTrack(id, trackData);
+        if (track != null) tracks.add(track);
+      }
+      if (items.length < pageSize) break;
+      offset += items.length;
+      if (offset > 100000) break;
     }
-    return result;
+    return tracks;
   }
 
   SpotifyWebTrack? _parseTrack(String id, Map<String,dynamic> data) {
