@@ -847,7 +847,7 @@ extension _QueueTabItemWidgets on _QueueTabState {
     final isSelected = _selectedIds.contains(item.id);
     final date = item.addedAt;
     final dateStr =
-        '${_QueueTabState._months[date.month - 1]} ${date.day}, ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+        '${shortMonthNames[date.month - 1]} ${date.day}, ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
 
     final isDownloaded = item.source == LibraryItemSource.downloaded;
     final quality = item.qualityForMode(_libraryQualityLabelMode);

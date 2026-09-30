@@ -14,6 +14,7 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/library_search_results.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:flutter/services.dart';
@@ -261,21 +262,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   final List<String> _filterModes = ['all', 'albums', 'singles', 'playlists'];
   bool _isPageControllerInitialized = false;
   bool _wasTabVisible = false;
-  static const List<String> _months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   String _searchQuery = '';

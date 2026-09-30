@@ -350,10 +350,10 @@ extension _TrackMetadataConvertAndCueSplit on _TrackMetadataScreenState {
       final cueInfo = await PlatformBridge.parseCueSheet(cuePath);
 
       if (!mounted) return;
-      _hideCurrentSnackBar();
+      ScaffoldMessenger.of(this.context).hideCurrentSnackBar();
 
       if (cueInfo.containsKey('error')) {
-        _showSnackBarMessage(_l10nCueSplitNoAudioFile);
+        _showSnackBarMessage(this.context.l10n.cueSplitNoAudioFile);
         return;
       }
 
@@ -365,7 +365,7 @@ extension _TrackMetadataConvertAndCueSplit on _TrackMetadataScreenState {
       final tracksRaw = cueInfo['tracks'] as List<dynamic>? ?? [];
 
       if (audioPath.isEmpty) {
-        _showSnackBarMessage(_l10nCueSplitNoAudioFile);
+        _showSnackBarMessage(this.context.l10n.cueSplitNoAudioFile);
         return;
       }
 
@@ -374,7 +374,7 @@ extension _TrackMetadataConvertAndCueSplit on _TrackMetadataScreenState {
           .toList();
 
       if (tracks.isEmpty) {
-        _showSnackBarMessage(_l10nCueSplitFailed);
+        _showSnackBarMessage(this.context.l10n.cueSplitFailed);
         return;
       }
 
@@ -514,8 +514,8 @@ extension _TrackMetadataConvertAndCueSplit on _TrackMetadataScreenState {
       );
     } catch (e) {
       if (!mounted) return;
-      _hideCurrentSnackBar();
-      _showSnackBarMessage(_l10nCueSplitFailed);
+      ScaffoldMessenger.of(this.context).hideCurrentSnackBar();
+      _showSnackBarMessage(this.context.l10n.cueSplitFailed);
       _log.e('Failed to parse CUE sheet: $e');
     }
   }
@@ -668,7 +668,9 @@ extension _TrackMetadataConvertAndCueSplit on _TrackMetadataScreenState {
       }
 
       if (!mounted) return;
-      _showLongSnackBarMessage(_l10nCueSplitSplitting(1, tracks.length));
+      _showLongSnackBarMessage(
+        context.l10n.cueSplitSplitting(1, tracks.length),
+      );
 
       String? coverPath;
       try {
@@ -699,8 +701,10 @@ extension _TrackMetadataConvertAndCueSplit on _TrackMetadataScreenState {
         coverPath: coverPath,
         onProgress: (current, total) {
           if (mounted) {
-            _hideCurrentSnackBar();
-            _showLongSnackBarMessage(_l10nCueSplitSplitting(current, total));
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            _showLongSnackBarMessage(
+              context.l10n.cueSplitSplitting(current, total),
+            );
           }
         },
       );
@@ -741,18 +745,20 @@ extension _TrackMetadataConvertAndCueSplit on _TrackMetadataScreenState {
       }
 
       if (mounted) {
-        _hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         if (finalOutputPaths != null && finalOutputPaths.isNotEmpty) {
-          _showSnackBarMessage(_l10nCueSplitSuccess(finalOutputPaths.length));
+          _showSnackBarMessage(
+            context.l10n.cueSplitSuccess(finalOutputPaths.length),
+          );
         } else {
-          _showSnackBarMessage(_l10nCueSplitFailed);
+          _showSnackBarMessage(context.l10n.cueSplitFailed);
         }
       }
     } catch (e) {
       _log.e('CUE split failed: $e');
       if (mounted) {
-        _hideCurrentSnackBar();
-        _showSnackBarMessage(_l10nCueSplitFailed);
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        _showSnackBarMessage(context.l10n.cueSplitFailed);
       }
     } finally {
       if (safTempAudioPath != null) {

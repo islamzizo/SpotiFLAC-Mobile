@@ -29,6 +29,7 @@ import 'package:spotiflac_android/screens/track_metadata_screen.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/widgets/collection_scaffold.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/album_track_tile.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/destructive_selection_button.dart';
@@ -188,15 +189,7 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
             startItem: track,
           );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-            ),
-          ),
-        );
-      }
+      if (mounted) showCannotOpenFileSnackBar(context, e);
     }
   }
 

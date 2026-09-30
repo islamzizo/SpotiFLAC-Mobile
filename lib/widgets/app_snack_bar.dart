@@ -1,6 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
+
+/// Reports a failure to open a local file with a plain Material snackbar.
+void showCannotOpenFileSnackBar(BuildContext context, Object error) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        context.l10n.snackbarCannotOpenFile(context.friendlyError(error)),
+      ),
+    ),
+  );
+}
 
 /// Transient messages use the same glass as confirmation dialogs in Mornye.
 ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(

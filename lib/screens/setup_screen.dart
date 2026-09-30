@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
@@ -257,15 +258,7 @@ class _SetupScreenState extends ConsumerState<SetupScreen> {
           result = await PlatformBridge.pickSafTree();
         } catch (e) {
           _log.w('Failed to open Android SAF picker: $e');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-                ),
-              ),
-            );
-          }
+          if (mounted) showCannotOpenFileSnackBar(context, e);
         }
         if (result != null) {
           final treeUri = result['tree_uri'] as String? ?? '';

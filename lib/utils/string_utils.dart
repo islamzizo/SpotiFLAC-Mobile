@@ -70,6 +70,22 @@ String formatBytes(int bytes) {
   return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
 }
 
+/// English month abbreviations indexed by `DateTime.month - 1`.
+const List<String> shortMonthNames = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
 /// "m:ss" clock formatting for track durations.
 String formatClock(num seconds) {
   final total = seconds.round();

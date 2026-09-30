@@ -154,21 +154,6 @@ extension _TrackMetadataDisplay on _TrackMetadataScreenState {
     ).showSnackBar(SnackBar(content: Text(_cueVirtualTrackGuidance(context))));
   }
 
-  void _hideCurrentSnackBar() {
-    ScaffoldMessenger.of(context).hideCurrentSnackBar();
-  }
-
-  String get _l10nCueSplitFailed => context.l10n.cueSplitFailed;
-  String get _l10nCueSplitNoAudioFile => context.l10n.cueSplitNoAudioFile;
-
-  String _l10nCueSplitSplitting(int current, int total) {
-    return context.l10n.cueSplitSplitting(current, total);
-  }
-
-  String _l10nCueSplitSuccess(int count) {
-    return context.l10n.cueSplitSuccess(count);
-  }
-
   void _showSnackBarMessage(String message) {
     ScaffoldMessenger.of(
       context,

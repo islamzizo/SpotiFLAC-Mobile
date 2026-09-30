@@ -262,11 +262,11 @@ class AboutPage extends StatelessWidget {
       ),
     );
   }
+}
 
-  static Future<void> _launchUrl(String url) async {
-    final uri = Uri.parse(url);
-    await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
-  }
+Future<void> _launchUrl(String url) async {
+  final uri = Uri.parse(url);
+  await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
 }
 
 class _AppHeaderCard extends StatelessWidget {
@@ -386,7 +386,7 @@ class _ContributorItem extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         InkWell(
-          onTap: () => _launchGitHub(githubUsername),
+          onTap: () => _launchUrl('https://github.com/$githubUsername'),
           splashColor: colorScheme.primary.withValues(alpha: 0.12),
           highlightColor: colorScheme.primary.withValues(alpha: 0.08),
           child: Padding(
@@ -456,11 +456,6 @@ class _ContributorItem extends StatelessWidget {
           ),
       ],
     );
-  }
-
-  Future<void> _launchGitHub(String username) async {
-    final uri = Uri.parse('https://github.com/$username');
-    await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
   }
 }
 
@@ -619,7 +614,9 @@ class _TranslatorChip extends StatelessWidget {
       color: colorScheme.secondaryContainer,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
-        onTap: () => _launchCrowdin(translator.crowdinUsername),
+        onTap: () => _launchUrl(
+          'https://crowdin.com/profile/${translator.crowdinUsername}',
+        ),
         borderRadius: BorderRadius.circular(20),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -655,11 +652,6 @@ class _TranslatorChip extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Future<void> _launchCrowdin(String username) async {
-    final uri = Uri.parse('https://crowdin.com/profile/$username');
-    await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
   }
 }
 

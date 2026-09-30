@@ -32,6 +32,7 @@ import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/services/update_checker.dart';
 import 'package:spotiflac_android/widgets/app_announcement_dialog.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/update_dialog.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
@@ -277,15 +278,7 @@ class _MainShellState extends ConsumerState<MainShell>
                                   'Failed to repair SAF access from startup: $e',
                                 );
                                 if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        context.l10n.snackbarCannotOpenFile(
-                                          context.friendlyError(e),
-                                        ),
-                                      ),
-                                    ),
-                                  );
+                                  showCannotOpenFileSnackBar(context, e);
                                 }
                               } finally {
                                 if (dialogContext.mounted) {

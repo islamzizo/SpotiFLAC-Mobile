@@ -35,6 +35,7 @@ import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/utils/synced_lyrics_scroll.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/app_loading_indicator.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/expressive_button.dart';
 import 'package:spotiflac_android/widgets/expressive_icon_button.dart';
 import 'package:spotiflac_android/widgets/aligned_lyric_pronunciation.dart';
@@ -2021,13 +2022,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
       await openFile(source);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-          ),
-        ),
-      );
+      showCannotOpenFileSnackBar(context, e);
     }
   }
 
