@@ -1150,7 +1150,10 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
         return null;
       }
       var preserve = false;
-      String? producedFileName;
+      final rawFileName =
+          (result['file_name'] as String?) ?? context.safFileName ?? 'track';
+      final newFileName =
+          '${rawFileName.replaceFirst(RegExp(r'\.[^.]+$'), '')}.flac';
       final newUri = await _replaceSafFileVia(
         uri: filePath,
         treeUri: treeUri,
@@ -1176,13 +1179,6 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
               'as FLAC and embedding metadata.',
             );
             await embedFlacMetadata(tempPath);
-            final rawFileName =
-                (result['file_name'] as String?) ??
-                context.safFileName ??
-                'track';
-            final baseName = rawFileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
-            final newFileName = '$baseName.flac';
-            producedFileName = newFileName;
             return (tempPath, newFileName);
           }
           final flacPath = await FFmpegService.convertM4aToFlac(tempPath);
@@ -1191,13 +1187,6 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
           }
           addCleanup(flacPath);
           await embedFlacMetadata(flacPath);
-          final rawFileName =
-              (result['file_name'] as String?) ??
-              context.safFileName ??
-              'track';
-          final baseName = rawFileName.replaceFirst(RegExp(r'\.[^.]+$'), '');
-          final newFileName = '$baseName.flac';
-          producedFileName = newFileName;
           return (flacPath, newFileName);
         },
       );
@@ -1207,7 +1196,7 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
       if (newUri == null) {
         return null;
       }
-      result['file_name'] = producedFileName;
+      result['file_name'] = newFileName;
       markFinalOutputAsFlac();
       return newUri;
     }
