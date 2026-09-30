@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:spotiflac_android/models/theme_settings.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/mornye_context_menu.dart';
@@ -26,6 +27,7 @@ void main() {
     bool lowEnd = false,
     Color? backgroundColor,
     GlobalKey? capture,
+    double glassClarity = kDefaultMornyeGlassClarity,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -37,7 +39,7 @@ void main() {
           backdropBlurEnabledProvider.overrideWithValue(false),
         ],
         child: MaterialApp(
-          theme: MornyeTheme.build(brightness),
+          theme: MornyeTheme.build(brightness, glassClarity: glassClarity),
           builder: (context, child) => RepaintBoundary(
             key: capture,
             child: MediaQuery(
@@ -137,59 +139,63 @@ void main() {
   }))!;
 
   for (final brightness in Brightness.values) {
-    for (final background in [
-      Colors.white,
-      Colors.black,
-      const Color(0xff6c3a22),
-    ]) {
-      testWidgets('menu labels stay readable over $background ($brightness)', (
-        tester,
-      ) async {
-        final originalDisableShadows = debugDisableShadows;
-        debugDisableShadows = false;
-        try {
-          final capture = GlobalKey();
-          await openMenu(
-            tester,
-            anchor: const Rect.fromLTWH(330, 144, 44, 44),
-            brightness: brightness,
-            backgroundColor: background,
-            capture: capture,
-            onResult: (_) {},
-          );
-          final menu = tester.getRect(find.byType(MornyeContextMenu));
-          final pixels = await samplePixels(tester, capture, [
-            for (final x in [menu.left + 8, menu.right - 8])
-              for (final fraction in [0.25, 0.5, 0.75])
-                Offset(x, menu.top + menu.height * fraction),
-          ]);
-          final foreground = MornyeTheme.build(
-            brightness,
-          ).colorScheme.onSurface;
-          for (final inside in pixels) {
-            // Busy lyrics and bright artwork must not wash out either label.
-            for (final textColor in [
-              foreground,
-              Color.alphaBlend(foreground.withValues(alpha: 0.96), inside),
-            ]) {
-              final luminances = [
-                inside.computeLuminance(),
-                textColor.computeLuminance(),
-              ]..sort();
-              final contrast =
-                  (luminances.last + 0.05) / (luminances.first + 0.05);
-              expect(contrast, greaterThanOrEqualTo(4.5));
+    for (final clarity in [0.0, kDefaultMornyeGlassClarity, 1.0]) {
+      for (final background in [
+        Colors.white,
+        Colors.black,
+        const Color(0xff6c3a22),
+      ]) {
+        testWidgets(
+          'menu labels stay readable over $background ($brightness, clarity: $clarity)',
+          (tester) async {
+            final originalDisableShadows = debugDisableShadows;
+            debugDisableShadows = false;
+            try {
+              final capture = GlobalKey();
+              await openMenu(
+                tester,
+                anchor: const Rect.fromLTWH(330, 144, 44, 44),
+                brightness: brightness,
+                glassClarity: clarity,
+                backgroundColor: background,
+                capture: capture,
+                onResult: (_) {},
+              );
+              final menu = tester.getRect(find.byType(MornyeContextMenu));
+              final pixels = await samplePixels(tester, capture, [
+                for (final x in [menu.left + 8, menu.right - 8])
+                  for (final fraction in [0.25, 0.5, 0.75])
+                    Offset(x, menu.top + menu.height * fraction),
+              ]);
+              final foreground = MornyeTheme.build(
+                brightness,
+              ).colorScheme.onSurface;
+              for (final inside in pixels) {
+                // Busy lyrics and bright artwork must not wash out either label.
+                for (final textColor in [
+                  foreground,
+                  Color.alphaBlend(foreground.withValues(alpha: 0.96), inside),
+                ]) {
+                  final luminances = [
+                    inside.computeLuminance(),
+                    textColor.computeLuminance(),
+                  ]..sort();
+                  final contrast =
+                      (luminances.last + 0.05) / (luminances.first + 0.05);
+                  expect(contrast, greaterThanOrEqualTo(4.5));
+                }
+                // The panel remains even at both edges without an offset lens.
+                expect(inside.r, closeTo(pixels.first.r, 0.015));
+                expect(inside.g, closeTo(pixels.first.g, 0.015));
+                expect(inside.b, closeTo(pixels.first.b, 0.015));
+              }
+              expect(tester.takeException(), isNull);
+            } finally {
+              debugDisableShadows = originalDisableShadows;
             }
-            // The panel remains even at both edges without an offset lens.
-            expect(inside.r, closeTo(pixels.first.r, 0.015));
-            expect(inside.g, closeTo(pixels.first.g, 0.015));
-            expect(inside.b, closeTo(pixels.first.b, 0.015));
-          }
-          expect(tester.takeException(), isNull);
-        } finally {
-          debugDisableShadows = originalDisableShadows;
-        }
-      });
+          },
+        );
+      }
     }
 
     testWidgets('menu stays on screen near a bottom edge ($brightness)', (

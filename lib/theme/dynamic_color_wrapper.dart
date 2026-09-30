@@ -23,11 +23,13 @@ class DynamicColorWrapper extends ConsumerWidget {
           Brightness.light,
           accent: themeSettings.mornyeAccent,
           useSystemFont: themeSettings.useSystemFont,
+          glassClarity: themeSettings.mornyeGlassClarity,
         ),
         MornyeTheme.build(
           Brightness.dark,
           accent: themeSettings.mornyeAccent,
           useSystemFont: themeSettings.useSystemFont,
+          glassClarity: themeSettings.mornyeGlassClarity,
         ),
         themeSettings.themeMode,
       );

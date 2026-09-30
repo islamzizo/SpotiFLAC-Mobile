@@ -70,6 +70,10 @@
   "appearanceAccentBlue": "Biru",
   "appearanceAccentPurple": "Ungu",
   "appearanceAccentPink": "Merah muda",
+  "appearanceGlassClarity": "Kebeningan kaca",
+  "appearanceGlassClaritySubtitle": "Atur transparansi menu dan navigasi Mornye. Kontras tulisan tetap dijaga.",
+  "appearanceGlassTinted": "Pekat",
+  "appearanceGlassClear": "Bening",
   "appearanceUseSystemFont": "Gunakan font sistem",
   "appearanceUseSystemFontSubtitle": "Gunakan jenis huruf bawaan perangkat untuk teks aplikasi.",
   "@appearanceStyle": {

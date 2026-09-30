@@ -10,6 +10,23 @@ import 'package:spotiflac_android/theme/dynamic_color_wrapper.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 
 void main() {
+  test('glass clarity restores safely from old and invalid settings', () {
+    expect(
+      ThemeSettings.fromJson({}).mornyeGlassClarity,
+      kDefaultMornyeGlassClarity,
+    );
+    for (final (saved, expected) in [
+      (0, 0.0),
+      (1, 1.0),
+      (-1, 0.0),
+      (2, 1.0),
+      (double.nan, kDefaultMornyeGlassClarity),
+    ]) {
+      final settings = ThemeSettings.fromJson({kMornyeGlassClarityKey: saved});
+      expect(settings.mornyeGlassClarity, expected);
+      expect(ThemeSettings.fromJson(settings.toJson()), settings);
+    }
+  });
   test('custom accents keep text readable in both appearances', () {
     double contrast(Color first, Color second) {
       final a = first.computeLuminance();
@@ -69,6 +86,43 @@ void main() {
   }
 
   for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+    testWidgets('glass clarity previews live and survives restart ($mode)', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({
+        kThemeStyleKey: 'mornye',
+        kThemeModeKey: mode.name,
+      });
+      final prefs = await SharedPreferences.getInstance();
+      await openSettings(tester, prefs);
+      final slider = find.byKey(const ValueKey('mornye-glass-clarity'));
+      await tester.ensureVisible(slider);
+      await tester.pumpAndSettle();
+      await tester.drag(slider, const Offset(160, 0));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 1);
+      expect(prefs.getDouble(kMornyeGlassClarityKey), 1);
+      final context = tester.element(slider);
+      expect(MornyeTheme.glassClarityOf(context), 1);
+      expect(
+        MornyeTheme.fromContext(
+          context,
+          brightness: Brightness.dark,
+        ).extension<MornyeTheme>()!.glassClarity,
+        1,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await openSettings(tester, prefs);
+      expect(tester.widget<Slider>(slider).value, 1);
+      await tester.ensureVisible(slider);
+      await tester.pumpAndSettle();
+      await tester.drag(slider, const Offset(-320, 0));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 0);
+      expect(prefs.getDouble(kMornyeGlassClarityKey), 0);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('Mornye accent updates live and survives restart ($mode)', (
       tester,
     ) async {
@@ -140,7 +194,11 @@ void main() {
           tester.element(page),
         ).textTheme.bodyLarge!.fontFamily;
         final setting = find.text('Use system font');
-        await tester.ensureVisible(setting);
+        await tester.scrollUntilVisible(
+          setting,
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
         await tester.pumpAndSettle();
         await tester.tap(setting);
         await tester.pumpAndSettle();
@@ -164,7 +222,11 @@ void main() {
           Theme.of(tester.element(page)).textTheme.bodyLarge!.fontFamily,
           systemFamily,
         );
-        await tester.ensureVisible(setting);
+        await tester.scrollUntilVisible(
+          setting,
+          200,
+          scrollable: find.byType(Scrollable).first,
+        );
         await tester.pumpAndSettle();
         await tester.tap(setting);
         await tester.pumpAndSettle();

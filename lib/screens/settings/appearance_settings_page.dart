@@ -111,6 +111,7 @@ class AppearanceSettingsPage extends ConsumerWidget {
                           .read(themeProvider.notifier)
                           .setMornyeAccent,
                     ),
+                    const _MornyeGlassClaritySlider(),
                   ],
                 ),
               ),
@@ -476,6 +477,98 @@ class _ThemePreviewCard extends StatelessWidget {
             ),
           );
         },
+      ),
+    );
+  }
+}
+
+class _MornyeGlassClaritySlider extends ConsumerWidget {
+  const _MornyeGlassClaritySlider();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final clarity = ref.watch(
+      themeProvider.select((settings) => settings.mornyeGlassClarity),
+    );
+    final notifier = ref.read(themeProvider.notifier);
+    final theme = Theme.of(context);
+    final l10n = context.l10n;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(l10n.appearanceGlassClarity, style: theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            l10n.appearanceGlassClaritySubtitle,
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 16),
+          ExcludeSemantics(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      theme.colorScheme.primary,
+                      const Color(0xff277f94),
+                      const Color(0xffc69756),
+                    ],
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: MornyeGlassPanel(
+                    radius: 22,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.music_note_rounded),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Mornye',
+                              style: theme.textTheme.titleMedium,
+                            ),
+                          ),
+                          const Icon(Icons.play_arrow_rounded),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Semantics(
+            label: l10n.appearanceGlassClarity,
+            child: Slider(
+              key: const ValueKey('mornye-glass-clarity'),
+              value: clarity,
+              divisions: 20,
+              label: '${(clarity * 100).round()}%',
+              onChanged: (value) =>
+                  notifier.setMornyeGlassClarity(value, persist: false),
+              onChangeEnd: notifier.setMornyeGlassClarity,
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                l10n.appearanceGlassTinted,
+                style: theme.textTheme.bodySmall,
+              ),
+              Text(l10n.appearanceGlassClear, style: theme.textTheme.bodySmall),
+            ],
+          ),
+        ],
       ),
     );
   }

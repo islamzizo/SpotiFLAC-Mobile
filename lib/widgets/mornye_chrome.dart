@@ -237,12 +237,7 @@ class MornyeGlassPanel extends ConsumerWidget {
       tintColor: tintColor,
       backdropFilter: backdropFilter,
       blurEnabled: blur,
-      child: Material(
-        color: strongTint
-            ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.60)
-            : Colors.transparent,
-        child: child,
-      ),
+      child: Material(color: Colors.transparent, child: child),
     );
   }
 }
@@ -285,15 +280,19 @@ class MornyeGlass extends StatelessWidget {
   /// Keeps floating controls readable over arbitrary album artwork.
   final bool strongTint;
 
-  /// Uses a single tint instead of layered highlights for translucent surfaces.
+  /// Base tint before applying the user's glass clarity preference.
   final double? tintOpacity;
   final Color? tintColor;
   final ImageFilter? backdropFilter;
 
   @override
   Widget build(BuildContext context) {
+    final clarity = MornyeTheme.glassClarityOf(context);
     final useGlass =
-        _useLens && blurEnabled && !MediaQuery.highContrastOf(context);
+        _useLens &&
+        blurEnabled &&
+        clarity > 0 &&
+        !MediaQuery.highContrastOf(context);
     Widget lens(Widget child) => Consumer(
       // Mid-range Android keeps the frosted surface but not the shader lens.
       builder: (context, ref, child) =>
@@ -314,39 +313,33 @@ class MornyeGlass extends StatelessWidget {
   }
 
   Widget _liquidLens(Widget child) => Builder(
-    builder: (context) {
-      final scheme = Theme.of(context).colorScheme;
-      final dark = scheme.brightness == Brightness.dark;
-      return NativeGlassMetrics(
-        child: LiquidGlassLens(
-          style: LiquidGlassStyle(
-            shape: LiquidGlassShape.continuousRoundedRectangle(
-              cornerRadius: radius,
-              borderWidth: dark && tintOpacity == null ? 0 : 0.6,
-              lightIntensity: dark && tintOpacity == null ? 0 : 0.18,
-            ),
-            appearance: LiquidGlassAppearance(
-              color: tintOpacity != null
-                  ? Colors.transparent
-                  : dark
-                  ? scheme.surfaceContainerHigh.withValues(alpha: 0.28)
-                  : Colors.white.withValues(alpha: strongTint ? 0.20 : 0.55),
-              // The surface already blurs the backdrop. Refracting that
-              // frosted result needs no second Gaussian blur pass.
-              blur: const LiquidGlassBlur(),
-            ),
-            refraction: const LiquidGlassRefraction(
-              distortion: 0.02,
-              distortionWidth: 8,
-              chromaticAberration: 0,
-            ),
+    builder: (context) => NativeGlassMetrics(
+      child: LiquidGlassLens(
+        style: LiquidGlassStyle(
+          shape: LiquidGlassShape.continuousRoundedRectangle(
+            cornerRadius: radius,
+            // The shared rim owns directional highlights, including
+            // surfaces without a lens. Avoid a second specular border.
+            borderWidth: 0,
+            lightIntensity: 0,
           ),
-          // Only the shader uses window metrics; responsive content and
-          // decoded artwork retain the surrounding tablet layout scale.
-          child: MediaQuery(data: MediaQuery.of(context), child: child),
+          appearance: const LiquidGlassAppearance(
+            color: Colors.transparent,
+            // The surface already blurs the backdrop. Refracting that
+            // frosted result needs no second Gaussian blur pass.
+            blur: LiquidGlassBlur(),
+          ),
+          refraction: const LiquidGlassRefraction(
+            distortion: 0.02,
+            distortionWidth: 8,
+            chromaticAberration: 0,
+          ),
         ),
-      );
-    },
+        // Only the shader uses window metrics; responsive content and
+        // decoded artwork retain the surrounding tablet layout scale.
+        child: MediaQuery(data: MediaQuery.of(context), child: child),
+      ),
+    ),
   );
 }
 
@@ -354,6 +347,34 @@ class MornyeGlass extends StatelessWidget {
 /// lens adds refraction above this frosted base, never above bare page text.
 class _MornyeGlassSurface extends StatelessWidget {
   static final _backdropBlur = ImageFilter.blur(sigmaX: 18, sigmaY: 18);
+  // Reduce luminance without flattening the backdrop's color differences.
+  // Subtract 35% of Rec.709 luma from every channel: white is bounded at 0.65,
+  // while colored artwork stays visible without per-frame pixel readback.
+  static final _darkBackdrop = ImageFilter.compose(
+    outer: const ColorFilter.matrix([
+      0.92559,
+      -0.25032,
+      -0.02527,
+      0,
+      0,
+      -0.07441,
+      0.74968,
+      -0.02527,
+      0,
+      0,
+      -0.07441,
+      -0.25032,
+      0.97473,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+    ]),
+    inner: _backdropBlur,
+  );
 
   const _MornyeGlassSurface({
     required this.child,
@@ -380,52 +401,27 @@ class _MornyeGlassSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final useBlur = blurEnabled && !MediaQuery.highContrastOf(context);
+    final clarity = MornyeTheme.glassClarityOf(context);
+    final useBlur =
+        blurEnabled && clarity > 0 && !MediaQuery.highContrastOf(context);
     final dark = scheme.brightness == Brightness.dark;
     final shape = BorderRadius.vertical(
       top: firstInGroup ? Radius.circular(radius) : Radius.zero,
       bottom: lastInGroup ? Radius.circular(radius) : Radius.zero,
     );
-    final rim = BorderSide(
-      color: dark
-          ? Colors.white.withValues(alpha: tintColor == null ? 0.16 : 0.28)
-          : Colors.black.withValues(alpha: 0.17),
-      width: 0.75,
-    );
-    final border = Border(
-      top: firstInGroup ? rim : BorderSide.none,
-      bottom: lastInGroup ? rim : BorderSide.none,
-      left: rim,
-      right: rim,
-    );
     // A translucent white tint must not become solid white behind light
     // text when accessibility or the device profile disables blur.
+    final baseTint = (tintColor ?? scheme.surfaceContainerHigh).withValues(
+      alpha: (tintOpacity ?? (strongTint ? 0.80 : 0.60)) * (dark ? 0.82 : 0.88),
+    );
     final tint = useBlur
-        ? tintColor ?? scheme.surfaceContainerHigh
+        ? Color.alphaBlend(
+            scheme.surfaceContainerHigh.withValues(alpha: 1 - clarity),
+            baseTint,
+          )
         : scheme.surfaceContainerHigh;
     final surface = DecoratedBox(
-      decoration: BoxDecoration(
-        color: tint.withValues(
-          alpha: useBlur ? (tintOpacity ?? (strongTint ? 0.80 : 0.60)) : 1,
-        ),
-        gradient: useBlur && !dark && tintOpacity == null
-            ? LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: const [0, 0.35, 0.75, 1],
-                colors: [
-                  Colors.white.withValues(alpha: 0.90),
-                  Colors.white.withValues(alpha: strongTint ? 0.80 : 0.78),
-                  scheme.surfaceContainerHigh.withValues(
-                    alpha: strongTint ? 0.76 : 0.72,
-                  ),
-                  Colors.white.withValues(alpha: 0.85),
-                ],
-              )
-            : null,
-        borderRadius: shape,
-        border: dark ? border : null,
-      ),
+      decoration: BoxDecoration(color: tint, borderRadius: shape),
       child: child,
     );
     return DecoratedBox(
@@ -434,31 +430,29 @@ class _MornyeGlassSurface extends StatelessWidget {
         boxShadow: firstInGroup && lastInGroup
             ? [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: dark ? 0.2 : 0.06),
-                  blurRadius: dark ? 18 : 10,
+                  color: Colors.black.withValues(alpha: dark ? 0.14 : 0.08),
+                  blurRadius: 12,
                   // Clear glass keeps its tint; the shadow belongs outside
                   // the panel, not underneath its translucent center.
-                  blurStyle: tintColor == null
-                      ? BlurStyle.normal
-                      : BlurStyle.outer,
-                  offset: Offset(0, dark ? 4 : 2),
+                  blurStyle: BlurStyle.outer,
+                  offset: const Offset(0, 3),
                 ),
               ]
             : null,
       ),
-      child: DecoratedBox(
-        // Paint the light outline above the lens so its pale tint cannot wash
-        // the edge out on an all-white page. Dark chrome keeps its quiet rim.
-        position: DecorationPosition.foreground,
-        decoration: BoxDecoration(
-          borderRadius: shape,
-          border: dark ? null : border,
+      child: CustomPaint(
+        foregroundPainter: _MornyeGlassRim(
+          shape: shape,
+          firstInGroup: firstInGroup,
+          lastInGroup: lastInGroup,
+          illuminated: useBlur,
         ),
         child: ClipRRect(
           borderRadius: shape,
           child: useBlur
               ? BackdropFilter(
-                  filter: backdropFilter ?? _backdropBlur,
+                  filter:
+                      backdropFilter ?? (dark ? _darkBackdrop : _backdropBlur),
                   child: surface,
                 )
               : surface,
@@ -466,6 +460,73 @@ class _MornyeGlassSurface extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Static, axis-aligned highlights: bright upper/lower inner edges and a thin
+/// shadow at the sides. No offscreen layer, extra blur, or per-frame readback.
+class _MornyeGlassRim extends CustomPainter {
+  const _MornyeGlassRim({
+    required this.shape,
+    required this.firstInGroup,
+    required this.lastInGroup,
+    required this.illuminated,
+  });
+
+  final BorderRadius shape;
+  final bool firstInGroup;
+  final bool lastInGroup;
+  final bool illuminated;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final bounds = Offset.zero & size;
+    final outline = shape.toRRect(
+      Rect.fromLTRB(
+        0,
+        firstInGroup ? 0 : -2,
+        size.width,
+        lastInGroup ? size.height : size.height + 2,
+      ),
+    );
+    canvas.save();
+    canvas.clipRect(bounds);
+    canvas.drawRRect(
+      outline.deflate(0.25),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5
+        ..color = Colors.black.withValues(alpha: 0.22),
+    );
+    if (illuminated) {
+      canvas.drawRRect(
+        outline.deflate(0.9),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8
+          ..shader = LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: const [0, 0.18, 0.5, 0.82, 1],
+            colors: [
+              firstInGroup ? const Color(0x99ffffff) : Colors.transparent,
+              const Color(0x18ffffff),
+              const Color(0x30000000),
+              const Color(0x18ffffff),
+              lastInGroup ? const Color(0x80ffffff) : Colors.transparent,
+            ],
+          ).createShader(bounds),
+      );
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _MornyeGlassRim oldDelegate) =>
+      shape != oldDelegate.shape ||
+      firstInGroup != oldDelegate.firstInGroup ||
+      lastInGroup != oldDelegate.lastInGroup ||
+      illuminated != oldDelegate.illuminated;
 }
 
 /// A searchable category uses the same material as the navigation capsule.

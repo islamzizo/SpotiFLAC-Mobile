@@ -43,6 +43,7 @@ void main() {
     Color? backdrop,
     Color? chromeSurface,
     Widget? body,
+    double glassClarity = 0.75,
     ValueNotifier<int>? activeTab,
   }) async {
     tester.view.physicalSize = const Size(393, 760);
@@ -68,7 +69,11 @@ void main() {
           backdropBlurEnabledProvider.overrideWithValue(blur),
         ],
         child: MaterialApp(
-          theme: MornyeTheme.build(brightness, chromeSurface: chromeSurface),
+          theme: MornyeTheme.build(
+            brightness,
+            chromeSurface: chromeSurface,
+            glassClarity: glassClarity,
+          ),
           builder: (_, child) => RepaintBoundary(key: capture, child: child),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
@@ -389,85 +394,88 @@ void main() {
   }
 
   for (final brightness in Brightness.values) {
-    for (final backdrop in [
-      Colors.white,
-      Colors.black,
-      if (brightness == Brightness.dark) albumBlue,
-    ]) {
-      testWidgets(
-        'floating glass stays legible in $brightness over $backdrop',
-        (tester) async {
-          await pumpShell(
-            tester,
-            blur: true,
-            brightness: brightness,
-            backdrop: backdrop,
-            chromeSurface: backdrop == albumBlue ? albumBlue : null,
-          );
-          final artist = find.text('Artist');
-          // The glass renderer also builds a copy for the refractive pill.
-          final libraryIcon = find
-              .descendant(
-                of: find.byType(MornyeTabBar),
-                matching: find.byIcon(Icons.music_note),
-              )
-              .first;
-          final artistRect = tester.getRect(artist);
-          final iconRect = tester.getRect(libraryIcon);
-          final foregrounds = [
-            tester.widget<Text>(artist).style!.color!,
-            IconTheme.of(tester.element(libraryIcon)).color!,
-          ];
-          final samples = [
-            Offset(artistRect.left + 8, artistRect.bottom + 2),
-            Offset(iconRect.right + 8, iconRect.center.dy),
-          ];
-          final backgrounds = await tester.runAsync(() async {
-            final boundary = tester.renderObject<RenderRepaintBoundary>(
-              find.byKey(capture),
+    for (final clarity in [0.0, 0.75, 1.0]) {
+      for (final backdrop in [
+        Colors.white,
+        Colors.black,
+        if (brightness == Brightness.dark) albumBlue,
+      ]) {
+        testWidgets(
+          'floating glass stays legible in $brightness over $backdrop (clarity: $clarity)',
+          (tester) async {
+            await pumpShell(
+              tester,
+              blur: true,
+              brightness: brightness,
+              glassClarity: clarity,
+              backdrop: backdrop,
+              chromeSurface: backdrop == albumBlue ? albumBlue : null,
             );
-            final image = await boundary.toImage();
-            final bytes = (await image.toByteData(
-              format: ui.ImageByteFormat.rawRgba,
-            ))!;
-            final colors = <Color>[];
-            for (final point in samples) {
-              final offset =
-                  (point.dy.floor() * image.width + point.dx.floor()) * 4;
-              colors.add(
-                Color.fromARGB(
-                  bytes.getUint8(offset + 3),
-                  bytes.getUint8(offset),
-                  bytes.getUint8(offset + 1),
-                  bytes.getUint8(offset + 2),
-                ),
+            final artist = find.text('Artist');
+            // The glass renderer also builds a copy for the refractive pill.
+            final libraryIcon = find
+                .descendant(
+                  of: find.byType(MornyeTabBar),
+                  matching: find.byIcon(Icons.music_note),
+                )
+                .first;
+            final artistRect = tester.getRect(artist);
+            final iconRect = tester.getRect(libraryIcon);
+            final foregrounds = [
+              tester.widget<Text>(artist).style!.color!,
+              IconTheme.of(tester.element(libraryIcon)).color!,
+            ];
+            final samples = [
+              Offset(artistRect.left + 8, artistRect.bottom + 2),
+              Offset(iconRect.right + 8, iconRect.center.dy),
+            ];
+            final backgrounds = await tester.runAsync(() async {
+              final boundary = tester.renderObject<RenderRepaintBoundary>(
+                find.byKey(capture),
+              );
+              final image = await boundary.toImage();
+              final bytes = (await image.toByteData(
+                format: ui.ImageByteFormat.rawRgba,
+              ))!;
+              final colors = <Color>[];
+              for (final point in samples) {
+                final offset =
+                    (point.dy.floor() * image.width + point.dx.floor()) * 4;
+                colors.add(
+                  Color.fromARGB(
+                    bytes.getUint8(offset + 3),
+                    bytes.getUint8(offset),
+                    bytes.getUint8(offset + 1),
+                    bytes.getUint8(offset + 2),
+                  ),
+                );
+              }
+              image.dispose();
+              return colors;
+            });
+            for (var index = 0; index < foregrounds.length; index++) {
+              if (backdrop == albumBlue) {
+                final glass = HSLColor.fromColor(backgrounds![index]);
+                final page = HSLColor.fromColor(albumBlue);
+                expect(glass.hue, closeTo(page.hue, 8));
+                expect(glass.saturation, greaterThan(page.saturation * 0.7));
+              }
+              final luminances = [
+                foregrounds[index].computeLuminance(),
+                backgrounds![index].computeLuminance(),
+              ]..sort();
+              final contrast =
+                  (luminances.last + 0.05) / (luminances.first + 0.05);
+              expect(
+                contrast,
+                greaterThanOrEqualTo(index == 0 ? 4.5 : 3),
+                reason: index == 0 ? 'Mini-player artist' : 'Inactive tab icon',
               );
             }
-            image.dispose();
-            return colors;
-          });
-          for (var index = 0; index < foregrounds.length; index++) {
-            if (backdrop == albumBlue) {
-              final glass = HSLColor.fromColor(backgrounds![index]);
-              final page = HSLColor.fromColor(albumBlue);
-              expect(glass.hue, closeTo(page.hue, 8));
-              expect(glass.saturation, greaterThan(page.saturation * 0.7));
-            }
-            final luminances = [
-              foregrounds[index].computeLuminance(),
-              backgrounds![index].computeLuminance(),
-            ]..sort();
-            final contrast =
-                (luminances.last + 0.05) / (luminances.first + 0.05);
-            expect(
-              contrast,
-              greaterThanOrEqualTo(index == 0 ? 4.5 : 3),
-              reason: index == 0 ? 'Mini-player artist' : 'Inactive tab icon',
-            );
-          }
-          expect(tester.takeException(), isNull);
-        },
-      );
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
     }
   }
 
