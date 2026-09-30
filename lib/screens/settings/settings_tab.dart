@@ -21,6 +21,7 @@ import 'package:spotiflac_android/screens/settings/lyrics_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/metadata_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/playback_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/settings_search_catalog.dart';
+import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -111,6 +112,14 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     final groups = [
       _Group(
         destinations: [
+          _Destination(
+            icon: Icons.music_note_outlined,
+            iconColor: Colors.green,
+            title: 'Spotify Account',
+            subtitle: 'Log in to Spotify and sync your playlists',
+            keywords: const ['spotify', 'login', 'log in', 'account', 'playlist', 'liked songs'],
+            pageBuilder: () => const SpotifyAccountScreen(),
+          ),
           _Destination(
             icon: Icons.extension_outlined,
             iconColor: Colors.teal,
