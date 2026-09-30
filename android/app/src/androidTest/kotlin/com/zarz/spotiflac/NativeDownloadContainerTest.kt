@@ -37,6 +37,76 @@ class NativeDownloadContainerTest {
     }
 
     @Test
+    fun selectedLibraryFilesCanBeEditedReenrichedAndExportArtworkOutsideDownloadRoot() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val directory = File(context.filesDir, "selected-library-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val input = File(directory, "selected.flac")
+            val fixture = NativeDownloadFinalizer.runFFmpegArguments(arrayOf(
+                "-v", "error", "-f", "lavfi", "-i", "sine=frequency=997:sample_rate=48000",
+                "-t", "0.5", "-c:a", "flac", input.path,
+            ))
+            assertTrue(fixture.second, fixture.first)
+            val artwork = File(directory, "selected.png")
+            val bitmap = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.BLUE)
+            artwork.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+            bitmap.recycle()
+            val edit = JSONObject(backend.editFileMetadata(input.path, JSONObject()
+                .put("title", "Edited title").put("cover_path", artwork.path)
+                .put("replaygain_track_gain", "-7.00 dB").put("replaygain_track_peak", "0.750000").toString()))
+            assertTrue(edit.toString(), edit.getBoolean("success"))
+            val request = JSONObject().put("file_path", input.path).put("search_online", false)
+                .put("track_name", "Enriched title").put("artist_name", "Example artist")
+                .put("update_fields", org.json.JSONArray(listOf("track_name")))
+            val enriched = JSONObject(backend.reEnrichFile(request.toString()))
+            assertTrue(enriched.toString(), enriched.getBoolean("success"))
+            val metadata = JSONObject(backend.readFileMetadata(input.path, input.name))
+            assertEquals("Enriched title", metadata.getString("title"))
+            assertEquals("-7.00 dB", metadata.getString("replaygain_track_gain"))
+            val output = File(directory, "export.png")
+            backend.extractCoverToFile(input.path, output.path)
+            assertTrue(output.readBytes().contentEquals(artwork.readBytes()))
+            val library = JSONObject(backend.readAudioMetadata(input.path, input.name, ""))
+            assertEquals("Enriched title", library.getString("trackName"))
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test
+    fun libraryMetadataReadsAnOpenDescriptorWithoutGrantingItsFilesystemPath() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val artwork = File(backendRoot, "selected-cover.png")
+        val bitmap = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.GREEN)
+        artwork.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+        bitmap.recycle()
+        val input = File(backendRoot, "selected-track.flac")
+        val fixture = NativeDownloadFinalizer.runFFmpegArguments(arrayOf(
+            "-v", "error", "-f", "lavfi", "-i", "sine=frequency=997:sample_rate=48000",
+            "-i", artwork.path, "-t", "0.5", "-map", "0:a", "-map", "1:v",
+            "-c:a", "flac", "-c:v", "copy", "-disposition:v", "attached_pic",
+            "-metadata", "title=Document track", input.path,
+        ))
+        assertTrue(fixture.second, fixture.first)
+        val covers = File(context.cacheDir, "descriptor-covers-${System.nanoTime()}").apply { mkdirs() }
+        try {
+            backend.setLibraryCoverCacheDirectory(covers.path)
+            android.os.ParcelFileDescriptor.open(input, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+                val result = JSONObject(backend.readAudioMetadata(
+                    "/proc/self/fd/${descriptor.fd}", input.name, "content://example/tree/music/selected-track.flac",
+                ))
+                assertEquals("Document track", result.getString("trackName"))
+                assertEquals(48000, result.getInt("sampleRate"))
+                assertFalse(result.optBoolean("metadataFromFilename"))
+                val cachedCover = File(result.getString("coverPath"))
+                assertEquals(covers.canonicalPath, cachedCover.parentFile!!.canonicalPath)
+                assertTrue(cachedCover.readBytes().contentEquals(artwork.readBytes()))
+                assertTrue(descriptor.statSize > 0)
+            }
+        } finally { covers.deleteRecursively() }
+    }
+
+    @Test
     fun nativeFormatsPreserveTagsLyricsAndReplayGain() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val root = File(context.cacheDir, "finalizer-parity-${System.nanoTime()}").apply { mkdirs() }

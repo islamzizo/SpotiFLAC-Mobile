@@ -318,6 +318,14 @@ final class RustCoreBackend: CoreBackend {
         return try block(current)
     }
 
+    private func withMediaFiles<T>(_ paths: [String], block: (ExtensionManager) throws -> T) throws -> T {
+        let directories = try paths.filter { !$0.isEmpty }.map { path -> String in
+            guard path.hasPrefix("/") else { throw failure("Media paths must be absolute") }
+            return URL(fileURLWithPath: path).deletingLastPathComponent().path
+        }
+        return try withLibraryDirectories(Array(Set(directories)), block: block)
+    }
+
     func setLibraryCoverCacheDirectory(path: String) throws {
         ownerLock.lock()
         defer { ownerLock.unlock() }
@@ -489,7 +497,10 @@ final class RustCoreBackend: CoreBackend {
     }
 
     func editFileMetadata(path: String, metadataJson: String) throws -> String {
-        try owner().editFileMetadata(path: URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path, metadataJson: metadataJson, lease: nil)
+        let fields = try JSONSerialization.jsonObject(with: Data(metadataJson.utf8), options: [.fragmentsAllowed]) as? [String: Any]
+        return try withMediaFiles([path, fields?["cover_path"] as? String ?? ""]) {
+            try $0.editFileMetadata(path: mediaPath(path), metadataJson: metadataJson, lease: nil)
+        }
     }
 
     private func mediaPath(_ path: String) -> String {
@@ -505,19 +516,29 @@ final class RustCoreBackend: CoreBackend {
             request["file_path"] = mediaPath(path)
         }
         let data = try JSONSerialization.data(withJSONObject: request)
-        return try owner().reenrichFile(requestJson: String(decoding: data, as: UTF8.self), lease: nil)
+        let resolved = String(decoding: data, as: UTF8.self)
+        if request["preview_only"] as? Bool != true, let path = request["file_path"] as? String, !path.isEmpty {
+            return try withMediaFiles([path]) { try $0.reenrichFile(requestJson: resolved, lease: nil) }
+        }
+        return try owner().reenrichFile(requestJson: resolved, lease: nil)
     }
 
     func rewriteSplitArtistTags(path: String, artist: String, albumArtist: String) throws -> String {
-        try owner().rewriteSplitArtistTags(path: mediaPath(path), artist: artist, albumArtist: albumArtist, lease: nil)
+        try withMediaFiles([path]) {
+            try $0.rewriteSplitArtistTags(path: mediaPath(path), artist: artist, albumArtist: albumArtist, lease: nil)
+        }
     }
 
     func extractCoverToFile(audioPath: String, outputPath: String) throws {
-        try owner().extractCoverToFile(audioPath: mediaPath(audioPath), outputPath: mediaPath(outputPath), lease: nil)
+        try withMediaFiles([audioPath, outputPath]) {
+            try $0.extractCoverToFile(audioPath: mediaPath(audioPath), outputPath: mediaPath(outputPath), lease: nil)
+        }
     }
 
     func writeM4aFreeformTags(path: String, metadataJson: String) throws -> String {
-        try owner().writeM4aFreeformTags(path: mediaPath(path), metadataJson: metadataJson, lease: nil)
+        try withMediaFiles([path]) {
+            try $0.writeM4aFreeformTags(path: mediaPath(path), metadataJson: metadataJson, lease: nil)
+        }
     }
 
     func ensureAc4Config(path: String, reference: String) throws -> String {
@@ -709,7 +730,11 @@ final class RustCoreBackend: CoreBackend {
             let albumArtist = (try? current.fetchMusicBrainzAlbumArtistByIsrc(isrc: string("isrc"), albumName: string("album_name"), lease: nil)) ?? ""
             return String(decoding: try JSONSerialization.data(withJSONObject: ["genre": genre, "album_artist": albumArtist]), as: UTF8.self)
         case "getTrackCacheSize": return Int(try current.getTrackCacheSize())
-        case "readAudioMetadata": return try current.readAudioMetadata(path: string("file_path"), hint: "", cacheKey: "", lease: nil)
+        case "readAudioMetadata":
+            let path = string("file_path")
+            return try withMediaFiles([path]) {
+                try $0.readAudioMetadata(path: mediaPath(path), hint: "", cacheKey: "", lease: nil)
+            }
         case "clearTrackCache": try current.clearTrackIdCache(); return nil
         case "setMetadataLanguage": try current.setMetadataLanguage(tag: string("tag")); return nil
         case "downloadByStrategy", "downloadWithExtensions":

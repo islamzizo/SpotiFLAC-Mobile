@@ -58,6 +58,7 @@ internal object RustCoreBackend : CoreBackend {
     private var runtimeState: Pair<String, String>? = null
     private val directoryScopes = mutableMapOf<String, AutoCloseable>()
     private var libraryCoverScope: AutoCloseable? = null
+    @Volatile private var libraryCoverDirectory: File? = null
 
     @Synchronized
     fun initialize(context: Context): RustCoreBackend {
@@ -209,6 +210,7 @@ internal object RustCoreBackend : CoreBackend {
         directoryScopes.clear()
         libraryCoverScope?.close()
         libraryCoverScope = null
+        libraryCoverDirectory = null
         identity = null
         runtimeState = null
     }
@@ -221,8 +223,53 @@ internal object RustCoreBackend : CoreBackend {
     override fun checkHiResAuthenticity(path: String, optionsJson: String): String =
         com.spotiflac.backend.checkHiresAuthenticity(path, optionsJson, null)
 
-    override fun readAudioMetadata(path: String, hint: String, cacheKey: String): String =
-        owner().readAudioMetadata(File(path).canonicalPath, hint, cacheKey, null)
+    override fun readAudioMetadata(path: String, hint: String, cacheKey: String): String {
+        val descriptor = path.removePrefix("/proc/self/fd/").toIntOrNull()
+        if (path.startsWith("/proc/self/fd/") && descriptor != null) {
+            val directory = libraryCoverDirectory
+            // Never key artwork by the descriptor number: Android reuses it.
+            val key = cacheKey.trim().takeIf { it.isNotEmpty() }
+            val hash = key?.codePoints()?.reduce(5381) { hash, codePoint -> hash * 33 + codePoint }
+                ?.toUInt()?.toString(16)
+            val cached = if (directory != null && hash != null) {
+                listOf(File(directory, "cover_$hash.jpg"), File(directory, "cover_$hash.png"))
+                    .firstOrNull { it.isFile }
+            } else null
+            val result = com.spotiflac.backend.readLibraryMetadataFromDescriptor(
+                descriptor, hint, java.time.Instant.now().toString(),
+                directory != null && hash != null && cached == null, null,
+            )
+            val metadata = JSONObject(result.metadataJson)
+            var cover = cached
+            if (directory != null && hash != null && result.coverBytes.isNotEmpty()) {
+                try {
+                    val extension = if (result.coverMime.contains("png")) "png" else "jpg"
+                    val output = File(directory, "cover_$hash.$extension")
+                    val staged = File.createTempFile("cover_", ".tmp", directory)
+                    try {
+                        staged.writeBytes(result.coverBytes)
+                        check(staged.renameTo(output)) { "Could not publish library artwork" }
+                        cover = output
+                    } finally { staged.delete() }
+                } catch (error: Exception) {
+                    android.util.Log.w("SpotiFLAC", "Could not cache document artwork", error)
+                }
+            }
+            cover?.let { metadata.put("coverPath", it.path) }
+            return metadata.toString()
+        }
+        return withMediaFiles(listOf(path)) {
+            it.readAudioMetadata(File(path).canonicalPath, hint, cacheKey, null)
+        }
+    }
+
+    // Native callers have already selected/resolved these files through app or
+    // SAF access. Retain only their parent directories for this operation.
+    private fun <T> withMediaFiles(paths: List<String>, block: (ExtensionManager) -> T): T =
+        withLibraryDirectories(paths.filter { it.isNotBlank() }.map { path ->
+            require(File(path).isAbsolute) { "Media paths must be absolute" }
+            File(path).absoluteFile.parent!!
+        }.distinct(), block)
 
     private fun <T> withLibraryDirectories(paths: List<String>, block: (ExtensionManager) -> T): T {
         val (current, scope) = synchronized(this) {
@@ -247,6 +294,7 @@ internal object RustCoreBackend : CoreBackend {
         catch (error: Exception) { next?.close(); throw error }
         libraryCoverScope?.close()
         libraryCoverScope = next
+        libraryCoverDirectory = directory
     }
 
     override fun scanLibraryFolder(folder: String): String = withLibraryDirectories(listOf(folder)) {
@@ -314,8 +362,12 @@ internal object RustCoreBackend : CoreBackend {
         }
     }
 
-    override fun editFileMetadata(path: String, metadataJson: String): String =
-        owner().editFileMetadata(File(path).canonicalPath, metadataJson, null)
+    override fun editFileMetadata(path: String, metadataJson: String): String {
+        val cover = if (metadataJson.trim() == "null") "" else JSONObject(metadataJson).optString("cover_path", "")
+        return withMediaFiles(listOf(path, cover)) {
+            it.editFileMetadata(File(path).canonicalPath, metadataJson, null)
+        }
+    }
 
     private fun mediaPath(path: String): String = if (path.isEmpty()) "" else File(path).canonicalPath
 
@@ -325,18 +377,22 @@ internal object RustCoreBackend : CoreBackend {
         if (!request.optBoolean("preview_only", false) && path?.startsWith("/") == true) {
             request.put("file_path", mediaPath(path))
         }
-        return owner().reenrichFile(request.toString(), null)
+        return if (!request.optBoolean("preview_only", false) && !path.isNullOrBlank()) {
+            withMediaFiles(listOf(path)) { it.reenrichFile(request.toString(), null) }
+        } else owner().reenrichFile(request.toString(), null)
     }
 
     override fun rewriteSplitArtistTags(path: String, artist: String, albumArtist: String): String =
-        owner().rewriteSplitArtistTags(mediaPath(path), artist, albumArtist, null)
+        withMediaFiles(listOf(path)) { it.rewriteSplitArtistTags(mediaPath(path), artist, albumArtist, null) }
 
     override fun extractCoverToFile(audioPath: String, outputPath: String) {
-        owner().extractCoverToFile(mediaPath(audioPath), mediaPath(outputPath), null)
+        withMediaFiles(listOf(audioPath, outputPath)) {
+            it.extractCoverToFile(mediaPath(audioPath), mediaPath(outputPath), null)
+        }
     }
 
     override fun writeM4aFreeformTags(path: String, metadataJson: String): String =
-        owner().writeM4aFreeformTags(mediaPath(path), metadataJson, null)
+        withMediaFiles(listOf(path)) { it.writeM4aFreeformTags(mediaPath(path), metadataJson, null) }
 
     override fun ensureAc4Config(path: String, reference: String): String =
         owner().ensureAc4Config(mediaPath(path), mediaPath(reference), null)
