@@ -946,11 +946,9 @@ class MainActivity: FlutterFragmentActivity() {
             } catch (_: Exception) {}
         }
         libraryStorageReceiver = null
-        try {
-            coreBackend.cleanupExtensions()
-        } catch (e: Exception) {
-            android.util.Log.w("SpotiFLAC", "Failed to cleanup extensions on destroy: ${e.message}")
-        }
+        // The backend belongs to the process/shared Flutter engine and download
+        // service. Activity recreation must not shut it down (or wait for its
+        // active scans/downloads on the UI thread).
         stopDownloadProgressStream()
         stopLibraryScanProgressStream()
         closeAllSafPlaybackLeases()

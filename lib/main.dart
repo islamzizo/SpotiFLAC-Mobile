@@ -243,7 +243,7 @@ Future<bool> _detectInitialSafAccessLoss(AppSettings settings) async {
   try {
     return !await PlatformBridge.validateSafTreeAccess(
       settings.downloadTreeUri,
-    );
+    ).timeout(const Duration(seconds: 2));
   } catch (e) {
     // A transient bridge failure must not trap the user at launch. Download
     // preflight validates strictly again before any write starts.
