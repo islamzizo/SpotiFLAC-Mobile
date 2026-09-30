@@ -1123,11 +1123,6 @@ class PlatformBridge {
     });
   }
 
-  static Future<List<String>> getLyricsProviders() async {
-    final result = await _channel.invokeMethod('getLyricsProviders');
-    return _decodeStringListResult(result, 'getLyricsProviders');
-  }
-
   static Future<List<Map<String, dynamic>>>
   getAvailableLyricsProviders() async {
     final result = await _channel.invokeMethod('getAvailableLyricsProviders');
@@ -1142,10 +1137,6 @@ class PlatformBridge {
     await _channel.invokeMethod('setLyricsFetchOptions', {
       'options_json': optionsJSON,
     });
-  }
-
-  static Future<Map<String, dynamic>> getLyricsFetchOptions() {
-    return _invokeMap('getLyricsFetchOptions');
   }
 
   static Future<Map<String, dynamic>> reEnrichFile(
@@ -1608,11 +1599,6 @@ class PlatformBridge {
     } catch (_) {}
   }
 
-  static Future<Map<String, dynamic>> getGoRuntimeMetrics() async {
-    final result = await _channel.invokeMethod('getGoRuntimeMetrics');
-    return _decodeRequiredMapResult(result, 'getGoRuntimeMetrics');
-  }
-
   /// Tells the backend the app's display language so metadata providers
   /// localize by it instead of IP geolocation. Best-effort.
   static Future<void> setMetadataLanguage(String tag) async {
@@ -1655,14 +1641,6 @@ class PlatformBridge {
     _log.d('loadExtensionFromPath: $filePath');
     await _clearLookupCaches();
     return _invokeMap('loadExtensionFromPath', {'file_path': filePath});
-  }
-
-  static Future<void> unloadExtension(String extensionId) async {
-    _log.d('unloadExtension: $extensionId');
-    await _clearLookupCaches();
-    await _channel.invokeMethod('unloadExtension', {
-      'extension_id': extensionId,
-    });
   }
 
   static Future<void> removeExtension(String extensionId) async {
@@ -1835,17 +1813,6 @@ class PlatformBridge {
     return _decodeNullableMapResult(result, 'getExtensionPendingAuth');
   }
 
-  static Future<void> setExtensionAuthCode(
-    String extensionId,
-    String authCode,
-  ) async {
-    _log.d('setExtensionAuthCode: $extensionId');
-    await _channel.invokeMethod('setExtensionAuthCode', {
-      'extension_id': extensionId,
-      'auth_code': authCode,
-    });
-  }
-
   static final Map<String, Future<bool>> _extensionSessionGrantCompletions =
       <String, Future<bool>>{};
 
@@ -1888,68 +1855,6 @@ class PlatformBridge {
       ExtensionSessionGrantEvent(extensionId: extensionId, success: success),
     );
     return success;
-  }
-
-  static Future<void> setExtensionTokens(
-    String extensionId, {
-    required String accessToken,
-    String? refreshToken,
-    int? expiresIn,
-  }) async {
-    _log.d('setExtensionTokens: $extensionId');
-    await _channel.invokeMethod('setExtensionTokens', {
-      'extension_id': extensionId,
-      'access_token': accessToken,
-      'refresh_token': refreshToken ?? '',
-      'expires_in': expiresIn ?? 0,
-    });
-  }
-
-  static Future<void> clearExtensionPendingAuth(String extensionId) async {
-    await _channel.invokeMethod('clearExtensionPendingAuth', {
-      'extension_id': extensionId,
-    });
-  }
-
-  static Future<bool> isExtensionAuthenticated(String extensionId) async {
-    final result = await _channel.invokeMethod('isExtensionAuthenticated', {
-      'extension_id': extensionId,
-    });
-    return result as bool;
-  }
-
-  static Future<List<Map<String, dynamic>>> getAllPendingAuthRequests() async {
-    final result = await _channel.invokeMethod('getAllPendingAuthRequests');
-    return _decodeMapListResult(result, 'getAllPendingAuthRequests');
-  }
-
-  static Future<Map<String, dynamic>?> getPendingFFmpegCommand(
-    String commandId,
-  ) async {
-    final result = await _channel.invokeMethod('getPendingFFmpegCommand', {
-      'command_id': commandId,
-    });
-    return _decodeNullableMapResult(result, 'getPendingFFmpegCommand');
-  }
-
-  static Future<void> setFFmpegCommandResult(
-    String commandId, {
-    required bool success,
-    String output = '',
-    String error = '',
-  }) async {
-    await _channel.invokeMethod('setFFmpegCommandResult', {
-      'command_id': commandId,
-      'success': success,
-      'output': output,
-      'error': error,
-    });
-  }
-
-  static Future<List<Map<String, dynamic>>>
-  getAllPendingFFmpegCommands() async {
-    final result = await _channel.invokeMethod('getAllPendingFFmpegCommands');
-    return _decodeMapListResult(result, 'setFFmpegCommandResult');
   }
 
   static Future<List<Map<String, dynamic>>> customSearchWithExtension(
@@ -2218,15 +2123,6 @@ class PlatformBridge {
     });
   }
 
-  static Future<List<Map<String, dynamic>>> scanLibraryFolder(
-    String folderPath,
-  ) async {
-    final result = await _channel.invokeMethod('scanLibraryFolder', {
-      'folder_path': folderPath,
-    });
-    return _decodeMapListResultAsync(result, 'scanLibraryFolder');
-  }
-
   static Future<LibraryScanNDJSONFile> scanLibraryFolderToNDJSONFile(
     String folderPath, {
     bool forceFullScan = false,
@@ -2266,13 +2162,6 @@ class PlatformBridge {
       result,
       'scanLibraryFolderIncrementalFromSnapshot',
     );
-  }
-
-  static Future<List<Map<String, dynamic>>> scanSafTree(String treeUri) async {
-    final result = await _channel.invokeMethod('scanSafTree', {
-      'tree_uri': treeUri,
-    });
-    return _decodeMapListResultAsync(result, 'scanSafTree');
   }
 
   static Future<LibraryScanNDJSONFile> scanSafTreeToNDJSONFile(
@@ -2592,21 +2481,6 @@ class PlatformBridge {
     return IosPickedDirectory(path: path, bookmark: bookmark);
   }
 
-  /// Create a security-scoped bookmark from a filesystem path picked by
-  /// FilePicker on iOS. Must be called while the picker session is still active.
-  /// Returns base64-encoded bookmark data, or null on failure.
-  static Future<String?> createIosBookmarkFromPath(String path) async {
-    try {
-      final result = await _channel.invokeMethod('createIosBookmarkFromPath', {
-        'path': path,
-      });
-      return result as String?;
-    } catch (e) {
-      _log.w('Failed to create iOS bookmark from path: $e');
-      return null;
-    }
-  }
-
   /// Resolve a base64-encoded iOS security-scoped bookmark and start accessing
   /// the resource. The returned lease must be passed to
   /// [stopAccessingIosBookmark] by the operation that acquired it.
@@ -2730,23 +2604,6 @@ class PlatformBridge {
     return _decodeMapListResult(result, 'getRepoExtensions');
   }
 
-  static Future<List<Map<String, dynamic>>> searchRepoExtensions(
-    String query, {
-    String? category,
-  }) async {
-    _log.d('searchRepoExtensions: "$query" (category: $category)');
-    final result = await _channel.invokeMethod('searchRepoExtensions', {
-      'query': query,
-      'category': category ?? '',
-    });
-    return _decodeMapListResult(result, 'searchRepoExtensions');
-  }
-
-  static Future<List<String>> getRepoCategories() async {
-    final result = await _channel.invokeMethod('getRepoCategories');
-    return _decodeStringListResult(result, 'getRepoCategories');
-  }
-
   static Future<String> downloadRepoExtension(
     String extensionId,
     String destDir,
@@ -2757,11 +2614,6 @@ class PlatformBridge {
       'dest_dir': destDir,
     });
     return result as String;
-  }
-
-  static Future<void> clearRepoCache() async {
-    _log.d('clearRepoCache');
-    await _channel.invokeMethod('clearRepoCache');
   }
 
   static Future<Map<String, dynamic>> parseCueSheet(

@@ -75,21 +75,6 @@ impl Backend {
         Ok(())
     }
 
-    pub fn scan_library_folder(&self, folder: &str, check: Check<'_>) -> Result<Value, String> {
-        let mut tracks = Vec::new();
-        self.scan_library(
-            folder,
-            None,
-            true,
-            &mut |value| {
-                tracks.push(value);
-                Ok(())
-            },
-            check,
-        )?;
-        Ok(tracks.into())
-    }
-
     pub fn scan_library_folder_incremental(
         &self,
         folder: &str,

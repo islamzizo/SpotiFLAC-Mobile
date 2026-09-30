@@ -93,11 +93,9 @@ class MainActivity: FlutterFragmentActivity() {
         "editFileMetadata",
         "reEnrichFile",
         "setLibraryCoverCacheDir",
-        "scanLibraryFolder",
         "scanLibraryFolderToNDJSONFile",
         "scanLibraryFolderIncremental",
         "scanLibraryFolderIncrementalFromSnapshot",
-        "scanSafTree",
         "scanSafTreeToNDJSONFile",
         "scanSafTreeIncremental",
         "scanSafTreeIncrementalFromSnapshot",
@@ -1904,14 +1902,6 @@ class MainActivity: FlutterFragmentActivity() {
                             }
                             result.success(null)
                         }
-                        "scanLibraryFolder" -> {
-                            val folderPath = call.argument<String>("folder_path") ?: ""
-                            val response = withContext(Dispatchers.IO) {
-                                safScanActive = false
-                                bridgeJsonResult(coreBackend.scanLibraryFolder(folderPath))
-                            }
-                            result.success(response)
-                        }
                         "scanLibraryFolderToNDJSONFile" -> {
                             val folderPath = call.argument<String>("folder_path") ?: ""
                             val outputPath = call.argument<String>("output_path") ?: ""
@@ -1952,13 +1942,6 @@ class MainActivity: FlutterFragmentActivity() {
                                         snapshotPath,
                                     )
                                 )
-                            }
-                            result.success(response)
-                        }
-                        "scanSafTree" -> {
-                            val treeUri = call.argument<String>("tree_uri") ?: ""
-                            val response = withContext(Dispatchers.IO) {
-                                scanSafTree(treeUri)
                             }
                             result.success(response)
                         }

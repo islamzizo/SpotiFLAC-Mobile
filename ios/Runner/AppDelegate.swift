@@ -257,8 +257,8 @@ import UniformTypeIdentifiers
 
     private func handleMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
         let osMethods: Set<String> = ["getBackendImplementations", "startWebAuthSession", "beginBackgroundDownloadTask", "endBackgroundDownloadTask",
-            "pickIosDirectory", "createIosBookmarkFromPath", "resolveIosBookmark", "startAccessingIosBookmark", "stopAccessingIosBookmark", "downloadCoverToFile", "releaseMemory", "releaseMemoryUnderPressure",
-            "setLibraryCoverCacheDir", "scanLibraryFolder", "scanLibraryFolderToNDJSONFile", "scanLibraryFolderIncremental",
+            "pickIosDirectory", "startAccessingIosBookmark", "stopAccessingIosBookmark", "downloadCoverToFile", "releaseMemory", "releaseMemoryUnderPressure",
+            "setLibraryCoverCacheDir", "scanLibraryFolderToNDJSONFile", "scanLibraryFolderIncremental",
             "getLibraryScanProgress", "cancelLibraryScan", "parseCueSheet", "extractCoverToFile",
             "rewriteSplitArtistTags", "writeM4AFreeformTags", "ensureAC4Config", "writeAC4Metadata", "reEnrichFile",
             "checkHiResAuthenticity"]
@@ -546,11 +546,6 @@ import UniformTypeIdentifiers
             try coreBackend.setLibraryCoverCacheDirectory(path: cacheDir)
             return nil
 
-        case "scanLibraryFolder":
-            let args = call.arguments as! [String: Any]
-            let folderPath = args["folder_path"] as! String
-            return bridgeJsonResult(try coreBackend.scanLibraryFolder(folder: folderPath))
-
         case "scanLibraryFolderToNDJSONFile":
             guard
                 let args = call.arguments as? [String: Any],
@@ -582,11 +577,6 @@ import UniformTypeIdentifiers
             return nil
 
 
-        case "resolveIosBookmark":
-            let args = call.arguments as! [String: Any]
-            let bookmarkBase64 = args["bookmark"] as! String
-            return try resolveIosBookmark(bookmarkBase64)
-
         case "startAccessingIosBookmark":
             guard
                 let args = call.arguments as? [String: Any],
@@ -607,11 +597,6 @@ import UniformTypeIdentifiers
             }
             stopAccessingIosBookmark(token: token)
             return nil
-
-        case "createIosBookmarkFromPath":
-            let args = call.arguments as! [String: Any]
-            let path = args["path"] as! String
-            return try createIosBookmarkFromPath(path)
 
 
         case "parseCueSheet":
@@ -662,68 +647,6 @@ import UniformTypeIdentifiers
     }
 
     // MARK: - iOS Security-Scoped Bookmark Helpers
-
-    /// Create a security-scoped bookmark from a filesystem path (e.g. from FilePicker).
-    /// The path must currently be accessible (within the same picker session).
-    /// Returns base64-encoded bookmark data.
-    private func createIosBookmarkFromPath(_ path: String) throws -> String {
-        let url = URL(fileURLWithPath: path)
-        do {
-            #if os(macOS)
-            let options: URL.BookmarkCreationOptions = .withSecurityScope
-            #else
-            let options: URL.BookmarkCreationOptions = []
-            #endif
-            let bookmarkData = try url.bookmarkData(
-                options: options,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            return bookmarkData.base64EncodedString()
-        } catch {
-            throw NSError(
-                domain: "SpotiFLAC",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create bookmark for path \(path): \(error.localizedDescription)"]
-            )
-        }
-    }
-
-    /// Resolve a base64-encoded security-scoped bookmark and return the resolved path.
-    /// Does NOT start accessing the resource.
-    private func resolveIosBookmark(_ bookmarkBase64: String) throws -> String {
-        guard let bookmarkData = Data(base64Encoded: bookmarkBase64) else {
-            throw NSError(
-                domain: "SpotiFLAC",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid base64 bookmark data"]
-            )
-        }
-
-        var isStale = false
-        let url: URL
-        do {
-            #if os(macOS)
-            let options: URL.BookmarkResolutionOptions = .withSecurityScope
-            #else
-            let options: URL.BookmarkResolutionOptions = []
-            #endif
-            url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: options,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-        } catch {
-            throw NSError(
-                domain: "SpotiFLAC",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to resolve bookmark: \(error.localizedDescription)"]
-            )
-        }
-
-        return url.path
-    }
 
     private func invalidArgumentsError(_ method: String) -> NSError {
         return NSError(

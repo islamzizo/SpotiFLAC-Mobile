@@ -590,12 +590,6 @@ impl ExtensionManager {
             .map_err(|e| error(e.to_string()))
     }
 
-    pub fn unload(&self, id: &str) -> Result<(), ManagerError> {
-        let _metadata = MetadataChange(&self.metadata_revision);
-        let _mutation = self.mutation.lock().expect("extension mutation lock");
-        self.unload_locked(id)
-    }
-
     fn unload_locked(&self, id: &str) -> Result<(), ManagerError> {
         self.check()?;
         let entry = self
@@ -609,23 +603,6 @@ impl ExtensionManager {
             &entry,
             &mut entry.engine.lock().expect("extension engine lock"),
         );
-        Ok(())
-    }
-
-    pub fn unload_all(&self) -> Result<(), ManagerError> {
-        let _metadata = MetadataChange(&self.metadata_revision);
-        let _mutation = self.mutation.lock().expect("extension mutation lock");
-        self.check()?;
-        let ids: Vec<_> = self
-            .entries
-            .lock()
-            .expect("extension manager lock")
-            .keys()
-            .cloned()
-            .collect();
-        for id in ids {
-            self.unload_locked(&id)?;
-        }
         Ok(())
     }
 

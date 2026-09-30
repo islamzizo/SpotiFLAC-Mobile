@@ -391,13 +391,6 @@ impl Backend {
         Ok(output.display())
     }
 
-    pub fn clear_cover_memory_cache(&self) -> Result<(), String> {
-        let _operation = self.enter()?;
-        self.cover.clear();
-        spotiflac_core::cover::clear_library_thumbnail_cache();
-        Ok(())
-    }
-
     pub fn download_cover_to_file_sized(
         &self,
         url: &str,

@@ -90,14 +90,6 @@ pub fn library_thumbnail(
     Ok(thumbnail)
 }
 
-pub fn clear_library_thumbnail_cache() {
-    if let Some(mutex) = CACHE.get()
-        && let Ok(mut cache) = mutex.try_lock()
-    {
-        *cache = Cache::default();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

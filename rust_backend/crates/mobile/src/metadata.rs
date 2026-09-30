@@ -2,12 +2,6 @@ use crate::cancellation::RequestLease;
 use crate::manager::{ExtensionManager, ExtensionManagerError};
 use std::sync::Arc;
 
-#[derive(uniffi::Record)]
-pub struct DeezerResource {
-    pub resource_type: String,
-    pub resource_id: String,
-}
-
 fn check(lease: &Option<Arc<RequestLease>>) -> Result<(), String> {
     lease.as_ref().map_or(Ok(()), |lease| {
         lease
@@ -21,16 +15,6 @@ fn check(lease: &Option<Arc<RequestLease>>) -> Result<(), String> {
 /// Run network operations on a native background thread and retain any lease.
 #[uniffi::export]
 impl ExtensionManager {
-    pub fn enrich_track_json(
-        &self,
-        extension_id: String,
-        track_json: String,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .enrich_track_json(&extension_id, &track_json)
-            .map_err(ExtensionManagerError::Operation)
-    }
-
     pub fn handle_url_json(&self, url: String) -> Result<String, ExtensionManagerError> {
         self.inner
             .handle_url_json(&url)
@@ -118,18 +102,6 @@ impl ExtensionManager {
             .map_err(ExtensionManagerError::Operation)
     }
 
-    pub fn set_song_link_region(&self, region: String) -> Result<(), ExtensionManagerError> {
-        self.inner
-            .set_song_link_region(&region)
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_song_link_region(&self) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_song_link_region()
-            .map_err(ExtensionManagerError::Operation)
-    }
-
     pub fn get_track_cache_size(&self) -> Result<u64, ExtensionManagerError> {
         self.inner
             .get_track_cache_size()
@@ -142,47 +114,6 @@ impl ExtensionManager {
             .map_err(ExtensionManagerError::Operation)
     }
 
-    pub fn parse_deezer_url(&self, url: String) -> Result<DeezerResource, ExtensionManagerError> {
-        let (resource_type, resource_id) = self
-            .inner
-            .parse_deezer_url(&url)
-            .map_err(ExtensionManagerError::Operation)?;
-        Ok(DeezerResource {
-            resource_type,
-            resource_id,
-        })
-    }
-
-    pub fn search_deezer(
-        &self,
-        query: String,
-        track_limit: i64,
-        artist_limit: i64,
-        filter: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .search_deezer(
-                &query,
-                track_limit as isize,
-                artist_limit as isize,
-                &filter,
-                &|| check(&lease),
-            )
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_deezer_metadata(
-        &self,
-        resource_type: String,
-        resource_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_deezer_metadata(&resource_type, &resource_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
     pub fn get_deezer_extended_metadata(
         &self,
         track_id: String,
@@ -190,16 +121,6 @@ impl ExtensionManager {
     ) -> Result<String, ExtensionManagerError> {
         self.inner
             .get_deezer_extended_metadata(&track_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn search_deezer_by_isrc(
-        &self,
-        isrc: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .search_deezer_by_isrc(&isrc, &|| check(&lease))
             .map_err(ExtensionManagerError::Operation)
     }
 
@@ -233,151 +154,6 @@ impl ExtensionManager {
     ) -> Result<String, ExtensionManagerError> {
         self.inner
             .get_track_platform_links_json(&spotify_id, &isrc, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn check_track_availability_json(
-        &self,
-        spotify_id: String,
-        isrc: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .check_track_availability_json(&spotify_id, &isrc, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn check_album_availability_json(
-        &self,
-        spotify_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .check_album_availability_json(&spotify_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn check_availability_from_deezer_json(
-        &self,
-        track_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .check_availability_from_deezer_json(&track_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn check_availability_by_platform_json(
-        &self,
-        platform: String,
-        resource_type: String,
-        resource_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .check_availability_by_platform_json(&platform, &resource_type, &resource_id, &|| {
-                check(&lease)
-            })
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn check_availability_from_url_json(
-        &self,
-        url: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .check_availability_from_url_json(&url, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_streaming_urls_json(
-        &self,
-        spotify_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_streaming_urls_json(&spotify_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_deezer_id_from_spotify(
-        &self,
-        spotify_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_deezer_id_from_spotify(&spotify_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_deezer_album_id_from_spotify(
-        &self,
-        spotify_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_deezer_album_id_from_spotify(&spotify_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_youtube_url_from_spotify(
-        &self,
-        spotify_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_youtube_url_from_spotify(&spotify_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_spotify_id_from_deezer_track(
-        &self,
-        track_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_spotify_id_from_deezer_track(&track_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_tidal_url_from_deezer_track(
-        &self,
-        track_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_tidal_url_from_deezer_track(&track_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_amazon_url_from_deezer_track(
-        &self,
-        track_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_amazon_url_from_deezer_track(&track_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_youtube_url_from_deezer_track(
-        &self,
-        track_id: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_youtube_url_from_deezer_track(&track_id, &|| check(&lease))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn preview_reenrich_file(
-        &self,
-        request_json: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .preview_reenrich_file(&request_json, &|| check(&lease))
             .map_err(ExtensionManagerError::Operation)
     }
 

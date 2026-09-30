@@ -22,10 +22,6 @@ pub struct FfmpegCommands {
 
 #[uniffi::export]
 impl FfmpegCommands {
-    pub fn pending(&self) -> Result<String, FfmpegError> {
-        self.inner.pending_json().map_err(Into::into)
-    }
-
     pub fn wait_pending(&self, timeout_ms: i64) -> Result<String, FfmpegError> {
         self.inner.wait_pending_json(timeout_ms).map_err(Into::into)
     }

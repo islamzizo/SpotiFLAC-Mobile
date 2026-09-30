@@ -198,7 +198,6 @@ internal interface CoreBackend {
     fun checkHiResAuthenticity(path: String, optionsJson: String): String
     fun readAudioMetadata(path: String, hint: String, cacheKey: String): String
     fun setLibraryCoverCacheDirectory(path: String)
-    fun scanLibraryFolder(folder: String): String
     fun scanLibraryFolderToNdjsonFile(folder: String, output: String): Long
     fun scanLibraryFolderIncremental(folder: String, existing: String): String
     fun scanLibraryFolderIncrementalFromSnapshot(folder: String, snapshot: String): String

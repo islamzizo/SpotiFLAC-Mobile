@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::io::Cursor;
 
 mod library;
-pub use library::{clear_library_thumbnail_cache, library_thumbnail};
+pub use library::library_thumbnail;
 
 pub const MAX_DOWNLOAD_BYTES: usize = 24 << 20;
 pub const LIBRARY_MAX_DIMENSION: i64 = 800;

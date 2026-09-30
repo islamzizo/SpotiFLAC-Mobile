@@ -56,12 +56,6 @@ impl CommandRegistry {
         Ok(state.commands.get(id).map(|entry| entry.command.clone()))
     }
 
-    pub fn pending_json(&self) -> Result<String, RegistryClosed> {
-        let mut state = self.state.lock().expect("FFmpeg state lock");
-        state.check()?;
-        Ok(state.pending(false))
-    }
-
     /// Claims each command at most once, even with multiple native pumps.
     /// A zero/negative timeout performs a nonblocking claim. Shutdown wakes waits.
     pub fn wait_pending_json(&self, timeout_ms: i64) -> Result<String, RegistryClosed> {
@@ -70,7 +64,7 @@ impl CommandRegistry {
         let mut state = self.state.lock().expect("FFmpeg state lock");
         loop {
             state.check()?;
-            let commands = state.pending(true);
+            let commands = state.claim_pending();
             let remaining = timeout.saturating_sub(started.elapsed());
             if commands != "[]" || remaining.is_zero() {
                 return Ok(commands);
@@ -185,7 +179,7 @@ impl State {
         }
     }
 
-    fn pending(&mut self, claim: bool) -> String {
+    fn claim_pending(&mut self) -> String {
         #[derive(Serialize)]
         struct PendingCommand<'a> {
             command_id: &'a str,
@@ -198,9 +192,7 @@ impl State {
             .values_mut()
             .filter(|entry| !entry.claimed && entry.result.is_none())
             .map(|entry| {
-                if claim {
-                    entry.claimed = true;
-                }
+                entry.claimed = true;
                 PendingCommand {
                     command_id: &entry.command.command_id,
                     extension_id: &entry.command.extension_id,

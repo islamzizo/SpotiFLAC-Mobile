@@ -297,10 +297,6 @@ internal object RustCoreBackend : CoreBackend {
         libraryCoverDirectory = directory
     }
 
-    override fun scanLibraryFolder(folder: String): String = withLibraryDirectories(listOf(folder)) {
-        it.scanLibraryFolder(File(folder).canonicalPath, null)
-    }
-
     override fun scanLibraryFolderToNdjsonFile(folder: String, output: String): Long =
         withLibraryDirectories(listOf(folder)) { current ->
             require(File(output).isAbsolute && File(output).extension.equals("ndjson", ignoreCase = true)) {
@@ -622,7 +618,7 @@ internal object RustCoreBackend : CoreBackend {
                 null
             }
             "setLoggingEnabled", "setAllowPrivateNetwork", "setDownloadFallbackExtensionIds",
-            "setNetworkCompatibilityOptions", "setSongLinkNetworkOptions",
+            "setNetworkCompatibilityOptions",
             "setLyricsProviders", "setLyricsFetchOptions" -> synchronized(this) {
                 when (method) {
                     "setLoggingEnabled" -> {
@@ -637,7 +633,7 @@ internal object RustCoreBackend : CoreBackend {
                         manager?.environment()?.use { it.setAllowPrivateNetwork(allowed) }
                         allowPrivateNetwork = allowed
                     }
-                    "setNetworkCompatibilityOptions", "setSongLinkNetworkOptions" -> {
+                    "setNetworkCompatibilityOptions" -> {
                         val allowed = args["allow_http"] as? Boolean ?: false
                         val insecureTls = args["insecure_tls"] as? Boolean ?: false
                         manager?.environment()?.use { it.setNetworkCompatibilityOptions(allowed, insecureTls) }
@@ -678,19 +674,10 @@ internal object RustCoreBackend : CoreBackend {
             "getRepoExtensions" -> return repositoryOwner().extensions(
                 args["force_refresh"] as? Boolean ?: false,
             )
-            "searchRepoExtensions" -> return repositoryOwner().search(
-                string("query"),
-                string("category"),
-            )
-            "getRepoCategories" -> return JSONArray(repositoryOwner().categories()).toString()
             "downloadRepoExtension" -> return repositoryOwner().download(
                 string("extension_id"),
                 string("dest_dir"),
             )
-            "clearRepoCache" -> {
-                repositoryOwner().clearCache()
-                return null
-            }
         }
         val current = owner()
         return when (method) {
@@ -706,10 +693,6 @@ internal object RustCoreBackend : CoreBackend {
             "getInstalledExtensions" -> current.installed()
             "setExtensionEnabled" -> {
                 current.setEnabled(string("extension_id"), args["enabled"] as? Boolean ?: false)
-                null
-            }
-            "unloadExtension" -> {
-                current.unload(string("extension_id"))
                 null
             }
             "removeExtension" -> {
@@ -730,8 +713,6 @@ internal object RustCoreBackend : CoreBackend {
             "getProviderPriority", "getMetadataProviderPriority" -> {
                 JSONObject(current.providerPriorities()).optJSONArray(if (method == "getProviderPriority") "download" else "metadata")?.toString() ?: "[]"
             }
-            "getLyricsProviders" -> current.getLyricsProvidersJson()
-            "getLyricsFetchOptions" -> current.getLyricsFetchOptionsJson()
             "getAvailableLyricsProviders" -> current.getAvailableLyricsProvidersJson()
             "searchTracksWithMetadataProviders" -> current.searchMetadataProviders(
                 string("query"),
@@ -764,14 +745,6 @@ internal object RustCoreBackend : CoreBackend {
             "convertSpotifyToDeezer" -> current.convertSpotifyToDeezer(
                 string("resource_type"),
                 string("spotify_id"),
-                null,
-            )
-            "getSpotifyIDFromDeezerTrack" -> current.getSpotifyIdFromDeezerTrack(
-                string("deezer_track_id"),
-                null,
-            )
-            "getTidalURLFromDeezerTrack" -> current.getTidalUrlFromDeezerTrack(
-                string("deezer_track_id"),
                 null,
             )
             "getTrackPlatformLinks" -> current.getTrackPlatformLinksJson(
@@ -810,36 +783,15 @@ internal object RustCoreBackend : CoreBackend {
             }
             "findURLHandler" -> current.findUrlHandler(string("url")) ?: ""
             "handleURLWithExtension" -> current.handleUrlJson(string("url"))
-            "enrichTrackWithExtension" -> current.enrichTrackJson(string("extension_id"), string("track", "{}"))
             "getExtensionPendingAuth" -> current.getExtensionPendingAuthJson(string("extension_id")).ifEmpty { null }
-            "setExtensionAuthCode" -> current.environment().use { it.setAuthCode(string("extension_id"), string("auth_code")); null }
             "completeExtensionSessionGrant" -> {
                 completeSessionGrant(current, string("extension_id"), string("grant"))
                 true
             }
-            "setExtensionTokens" -> current.environment().use {
-                it.setAuthTokens(string("extension_id"), string("access_token"), string("refresh_token"), (args["expires_in"] as? Int)?.toLong() ?: 0L)
-                null
-            }
-            "clearExtensionPendingAuth" -> current.environment().use { it.clearPendingAuth(string("extension_id")); null }
-            "isExtensionAuthenticated" -> current.environment().use { it.isAuthenticated(string("extension_id")) }
-            "getAllPendingAuthRequests" -> current.environment().use { it.allPendingAuth() }
             "getAllDownloadProgress" -> current.environment().use { environment ->
                 environment.downloadState().use { state -> state.allProgress() }
             }
             "cleanupConnections" -> current.environment().use { it.cleanupConnections(); null }
-            "getPendingFFmpegCommand", "getAllPendingFFmpegCommands", "setFFmpegCommandResult" -> current.environment().use { environment ->
-                environment.ffmpegCommands().use { commands ->
-                    when (method) {
-                        "getPendingFFmpegCommand" -> commands.getCommand(string("command_id"))
-                        "getAllPendingFFmpegCommands" -> commands.pending()
-                        else -> {
-                            commands.complete(string("command_id"), args["success"] as? Boolean ?: false, string("output"), string("error"))
-                            null
-                        }
-                    }
-                }
-            }
             "clearItemProgress", "cancelDownload", "resetDownloadCancel" -> current.environment().use { environment ->
                 environment.downloadState().use { state ->
                     when (method) {

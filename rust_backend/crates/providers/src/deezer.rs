@@ -4,7 +4,6 @@ mod browse;
 mod cache;
 mod extended;
 mod search;
-pub use extended::parse_url;
 
 use crate::resolver::{Check, ResolverError, http::ResolverHttp};
 use serde::de::DeserializeOwned;

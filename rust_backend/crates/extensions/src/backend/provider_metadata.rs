@@ -10,13 +10,6 @@ use std::time::Duration;
 mod value_tests;
 
 impl Backend {
-    pub fn enrich_track_json(&self, id: &str, track_json: &str) -> Result<String, String> {
-        let _operation = self.enter()?;
-        self.manager
-            .enrich_track_export(id, track_json)
-            .map_err(|error| error.to_string())
-    }
-
     pub fn handle_url_json(&self, url: &str) -> Result<String, String> {
         let _operation = self.enter()?;
         let id = self

@@ -93,17 +93,6 @@ impl ExtensionManager {
             .map_err(ExtensionManagerError::Operation)
     }
 
-    pub fn scan_library_folder(
-        &self,
-        folder: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .scan_library_folder(&folder, &|| check_lease(lease.as_deref()))
-            .map(|value| value.to_string())
-            .map_err(ExtensionManagerError::Operation)
-    }
-
     pub fn scan_library_folder_incremental(
         &self,
         folder: String,
@@ -178,25 +167,6 @@ impl ExtensionManager {
     ) -> Result<(), ExtensionManagerError> {
         self.inner
             .extract_cover_to_file(&audio_path, &output_path, &|| check_lease(lease.as_deref()))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn save_cover_to_cache_with_hint_and_key(
-        &self,
-        audio_path: String,
-        hint: String,
-        cache_directory: String,
-        cache_key: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .save_cover_to_cache_with_hint_and_key(
-                &audio_path,
-                &hint,
-                &cache_directory,
-                &cache_key,
-                &|| check_lease(lease.as_deref()),
-            )
             .map_err(ExtensionManagerError::Operation)
     }
 
@@ -280,22 +250,6 @@ impl ExtensionManager {
             })?;
         Ok(serde_json::json!({"success":true,"handled":handled}).to_string())
     }
-
-    /// Atomic audio tag editing on the root owner's granted file paths.
-    pub fn edit_audio_tags(
-        &self,
-        path: String,
-        format: String,
-        fields_json: String,
-        lease: Option<Arc<RequestLease>>,
-    ) -> Result<(), ExtensionManagerError> {
-        let check = || check_lease(lease.as_deref());
-        check().map_err(ExtensionManagerError::Operation)?;
-        let fields = decode_fields(&fields_json).map_err(ExtensionManagerError::Operation)?;
-        self.inner
-            .edit_audio_tags(&path, &format, &fields, &check)
-            .map_err(ExtensionManagerError::Operation)
-    }
 }
 
 fn decode_fields(json: &str) -> Result<BTreeMap<String, String>, String> {
@@ -308,23 +262,9 @@ fn decode_fields(json: &str) -> Result<BTreeMap<String, String>, String> {
         .collect())
 }
 
-/// Read only the tag fields. Native callers retain ownership of any platform
-/// descriptor referenced by `path` until this synchronous operation returns.
-#[uniffi::export]
-pub fn read_audio_tags(
-    path: String,
-    format: String,
-    lease: Option<Arc<RequestLease>>,
-) -> Result<String, AudioTagsError> {
-    let check = || check_lease(lease.as_deref());
-    check()?;
-    let mut file = open_audio_file(&path)?;
-    let metadata = tags::read_audio_tags(&mut file, &format, &check)?;
-    serde_json::to_string(&metadata).map_err(|error| error.to_string().into())
-}
-
 /// Complete application metadata. An empty hint is equivalent to the legacy
-/// ReadFileMetadata call. Native descriptor ownership matches read_audio_tags.
+/// ReadFileMetadata call. Native callers retain ownership of any platform
+/// descriptor referenced by `path` until this synchronous operation returns.
 #[uniffi::export]
 pub fn read_file_metadata(
     path: String,
