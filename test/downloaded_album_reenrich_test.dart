@@ -8,10 +8,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/settings.dart';
+import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/providers/download_history_provider.dart';
+import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
+import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/services/local_track_batch_actions.dart';
 import 'package:spotiflac_android/theme/app_theme.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
@@ -55,11 +59,152 @@ class _History extends DownloadHistoryNotifier {
   }
 }
 
+class _Library extends LocalLibraryNotifier {
+  int refreshes = 0;
+
+  @override
+  LocalLibraryState build() => LocalLibraryState();
+
+  @override
+  Future<void> scanAllSources({bool forceFullScan = false}) async {
+    refreshes++;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('com.zarz.spotiflac/backend');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+  for (final includeLocal in [false, true]) {
+    testWidgets(
+      'Library re-enrich includes downloaded tracks and refreshes each source (mixed: $includeLocal)',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final cache = Directory.systemTemp.createTempSync('library_reenrich_');
+        DownloadedEmbeddedCoverResolver.setPersistentCacheDirectoryForTesting(
+          cache,
+        );
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.runAsync(() async {
+            await DownloadedEmbeddedCoverResolver.resetMemoryStateForTesting();
+            DownloadedEmbeddedCoverResolver.setPersistentCacheDirectoryForTesting(
+              null,
+            );
+            await cache.delete(recursive: true);
+          });
+        });
+        final history = _History();
+        final library = _Library();
+        final requests = <Map<String, dynamic>>[];
+        final paths = [
+          'content://library/document/download.flac',
+          if (includeLocal) '/music/local.flac',
+        ];
+        var completed = false;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'reEnrichFile') {
+            final request = Map<String, dynamic>.from(
+              jsonDecode((call.arguments as Map)['request_json'] as String)
+                  as Map,
+            );
+            requests.add(request);
+            return request['preview_only'] == true
+                ? {
+                    'method': 'preview',
+                    'enriched_metadata': {'isrc': 'USABC2600001'},
+                  }
+                : {'method': 'native'};
+          }
+          if (call.method == 'readAudioMetadata') {
+            return {
+              'trackName': 'Downloaded',
+              'artistName': 'Artist',
+              'albumName': 'Album',
+              'isrc': 'USABC2600001',
+            };
+          }
+          return null;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              settingsProvider.overrideWith(_Settings.new),
+              downloadHistoryProvider.overrideWith(() => history),
+              localLibraryProvider.overrideWith(() => library),
+            ],
+            child: MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: Consumer(
+                  builder: (context, ref, _) => TextButton(
+                    onPressed: () => reEnrichLibraryTracks(
+                      context,
+                      ref,
+                      [
+                        UnifiedLibraryItem.fromDownloadHistory(
+                          DownloadHistoryItem(
+                            id: 'download',
+                            trackName: 'Downloaded',
+                            artistName: 'Artist',
+                            albumName: 'Album',
+                            filePath: paths.first,
+                            service: 'example-provider',
+                            downloadedAt: DateTime(2026),
+                          ),
+                        ),
+                        if (includeLocal)
+                          UnifiedLibraryItem.fromLocalLibrary(
+                            LocalLibraryItem(
+                              id: 'local',
+                              trackName: 'Local',
+                              artistName: 'Artist',
+                              albumName: 'Album',
+                              filePath: paths.last,
+                              scannedAt: DateTime(2026),
+                            ),
+                          ),
+                      ],
+                      isActive: () => context.mounted,
+                      onSelectionHide: () async {},
+                      onSelectionRestore: () {},
+                      onComplete: () => completed = true,
+                    ),
+                    child: const Text('Start'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Start'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Review changes'));
+        await tester.pumpAndSettle();
+        expect(requests.map((request) => request['file_path']), paths);
+        await tester.tap(find.text('Apply changes'));
+        for (var attempt = 0; attempt < 50 && !completed; attempt++) {
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.runAsync(() async {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          });
+        }
+        await tester.pumpAndSettle();
+        expect(requests.map((request) => request['file_path']), [
+          ...paths,
+          ...paths,
+        ]);
+        expect(history.updates, {'download': 'USABC2600001'});
+        expect(library.refreshes, includeLocal ? 1 : 0);
+        expect(completed, isTrue);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   for (final mornye in [false, true]) {
     testWidgets(

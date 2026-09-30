@@ -5,16 +5,20 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/utils/re_enrich_result.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/track.dart';
+import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/batch_metadata_re_enrich.dart';
+import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/ffmpeg_reenrich.dart';
+import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
+import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/widgets/batch_progress_dialog.dart';
 import 'package:spotiflac_android/widgets/re_enrich_field_dialog.dart';
 import 'package:spotiflac_android/widgets/re_enrich_review_sheet.dart';
@@ -137,6 +141,100 @@ Future<void> queueLocalTracksAsFlac(
   onComplete();
 }
 
+Future<void> reEnrichLibraryTracks(
+  BuildContext context,
+  WidgetRef ref,
+  List<UnifiedLibraryItem> selected, {
+  required bool Function() isActive,
+  required Future<void> Function() onSelectionHide,
+  required VoidCallback onSelectionRestore,
+  required VoidCallback onComplete,
+}) async {
+  if (selected.isEmpty) return;
+  final downloads = selected
+      .map((item) => item.historyItem)
+      .whereType<DownloadHistoryItem>()
+      .toList(growable: false);
+  final history = downloads.isEmpty
+      ? null
+      : ref.read(downloadHistoryProvider.notifier);
+  await reEnrichLocalTracks(
+    context,
+    ref,
+    [
+      for (final item in selected)
+        if (item.localItem != null)
+          item.localItem!
+        else if (item.historyItem case final track?)
+          LocalLibraryItem.fromJson({
+            ...track.toJson(),
+            'scannedAt': track.downloadedAt.toIso8601String(),
+          }),
+    ],
+    isActive: isActive,
+    onSelectionHide: onSelectionHide,
+    onSelectionRestore: onSelectionRestore,
+    onComplete: onComplete,
+    refreshLibrary: () async {
+      // Downloaded tracks read history, not the local-scan index. Read back
+      // saved tags so failed or unselected fields cannot change history.
+      for (final track in downloads) {
+        try {
+          await DownloadedEmbeddedCoverResolver.invalidate(track.filePath);
+          final metadata = await PlatformBridge.readDisplayAudioMetadata(
+            track.filePath,
+          );
+          if (metadata['error'] != null) continue;
+          await history!.updateMetadataForItem(
+            id: track.id,
+            trackName: metadata['title'] as String? ?? track.trackName,
+            artistName: metadata['artist'] as String? ?? track.artistName,
+            albumName: metadata['album'] as String? ?? track.albumName,
+            albumArtist: metadata['album_artist'] as String?,
+            isrc: metadata['isrc'] as String?,
+            trackNumber: readPositiveInt(metadata['track_number']),
+            totalTracks: readPositiveInt(metadata['total_tracks']),
+            discNumber: readPositiveInt(metadata['disc_number']),
+            totalDiscs: readPositiveInt(metadata['total_discs']),
+            releaseDate: metadata['date'] as String?,
+            genre: metadata['genre'] as String?,
+            composer: metadata['composer'] as String?,
+            label: metadata['label'] as String?,
+            copyright: metadata['copyright'] as String?,
+            explicit: parseExplicitFlag(metadata['explicit']),
+            hasLyrics:
+                metadata.containsKey('hasLyrics') ||
+                    metadata.containsKey('lyrics')
+                ? metadata['hasLyrics'] == true ||
+                      hasUsableLyricsContent(
+                        metadata['lyrics']?.toString() ?? '',
+                      )
+                : null,
+          );
+        } catch (error) {
+          debugPrint('Could not refresh re-enriched download: $error');
+        }
+      }
+      if (isActive() && selected.any((item) => item.localItem != null)) {
+        await _refreshReEnrichedLocalLibrary(ref);
+      }
+    },
+  );
+}
+
+Future<void> _refreshReEnrichedLocalLibrary(WidgetRef ref) async {
+  final library = ref.read(localLibraryProvider.notifier);
+  try {
+    if (!ref.read(localLibraryProvider).isScanning) {
+      await library.scanAllSources();
+    } else {
+      await library.reloadFromStorage();
+    }
+  } catch (_) {
+    await library.reloadFromStorage();
+  }
+}
+
 Future<void> reEnrichLocalTracks(
   BuildContext context,
   WidgetRef ref,
@@ -247,15 +345,7 @@ Future<void> reEnrichLocalTracks(
   if (refreshLibrary != null) {
     await refreshLibrary();
   } else {
-    try {
-      if (!ref.read(localLibraryProvider).isScanning) {
-        await ref.read(localLibraryProvider.notifier).scanAllSources();
-      } else {
-        await ref.read(localLibraryProvider.notifier).reloadFromStorage();
-      }
-    } catch (_) {
-      await ref.read(localLibraryProvider.notifier).reloadFromStorage();
-    }
+    await _refreshReEnrichedLocalLibrary(ref);
   }
 
   if (!context.mounted || !isActive()) return;

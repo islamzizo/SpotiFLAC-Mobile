@@ -7,9 +7,7 @@ import 'package:spotiflac_android/theme/cover_palette.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:spotiflac_android/services/cover_cache_manager.dart';
-import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
-import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/local_track_batch_actions.dart';
 import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
@@ -19,9 +17,6 @@ import 'package:spotiflac_android/utils/confirm_and_delete_tracks.dart';
 import 'package:spotiflac_android/utils/cover_art_utils.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/image_cache_utils.dart';
-import 'package:spotiflac_android/utils/int_utils.dart';
-import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
-import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/providers/playback_provider.dart';
@@ -662,68 +657,19 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
   }
 
   Future<void> _reEnrichSelected(List<DownloadHistoryItem> allTracks) async {
-    final selected = allTracks
-        .where((track) => selectedIds.contains(track.id))
-        .toList(growable: false);
-    final history = ref.read(downloadHistoryProvider.notifier);
-    await reEnrichLocalTracks(
+    await reEnrichLibraryTracks(
       context,
       ref,
-      [
-        for (final track in selected)
-          LocalLibraryItem.fromJson({
-            ...track.toJson(),
-            'scannedAt': track.downloadedAt.toIso8601String(),
-          }),
-      ],
+      _selectedUnifiedItems(allTracks),
       isActive: () => mounted,
       onSelectionHide: () async {
         setState(() => isSelectionMode = false);
         await Future<void>.delayed(const Duration(milliseconds: 300));
       },
       onSelectionRestore: () => setState(() => isSelectionMode = true),
-      onComplete: exitSelectionMode,
-      refreshLibrary: () async {
-        // Downloaded albums read history, not the local-scan index. Read back
-        // the saved tags so failed or unselected fields cannot change history.
-        for (final track in selected) {
-          try {
-            await DownloadedEmbeddedCoverResolver.invalidate(track.filePath);
-            final metadata = await PlatformBridge.readDisplayAudioMetadata(
-              track.filePath,
-            );
-            if (metadata['error'] != null) continue;
-            await history.updateMetadataForItem(
-              id: track.id,
-              trackName: metadata['title'] as String? ?? track.trackName,
-              artistName: metadata['artist'] as String? ?? track.artistName,
-              albumName: metadata['album'] as String? ?? track.albumName,
-              albumArtist: metadata['album_artist'] as String?,
-              isrc: metadata['isrc'] as String?,
-              trackNumber: readPositiveInt(metadata['track_number']),
-              totalTracks: readPositiveInt(metadata['total_tracks']),
-              discNumber: readPositiveInt(metadata['disc_number']),
-              totalDiscs: readPositiveInt(metadata['total_discs']),
-              releaseDate: metadata['date'] as String?,
-              genre: metadata['genre'] as String?,
-              composer: metadata['composer'] as String?,
-              label: metadata['label'] as String?,
-              copyright: metadata['copyright'] as String?,
-              explicit: parseExplicitFlag(metadata['explicit']),
-              hasLyrics:
-                  metadata.containsKey('hasLyrics') ||
-                      metadata.containsKey('lyrics')
-                  ? metadata['hasLyrics'] == true ||
-                        hasUsableLyricsContent(
-                          metadata['lyrics']?.toString() ?? '',
-                        )
-                  : null,
-            );
-          } catch (error) {
-            debugPrint('Could not refresh re-enriched download: $error');
-          }
-        }
+      onComplete: () {
         _onEmbeddedCoverChanged();
+        exitSelectionMode();
       },
     );
   }

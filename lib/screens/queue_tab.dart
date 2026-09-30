@@ -19,7 +19,6 @@ import 'package:spotiflac_android/widgets/library_search_results.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';

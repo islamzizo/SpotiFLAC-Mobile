@@ -49,16 +49,10 @@ extension _QueueTabItemWidgets on _QueueTabState {
 
             actions.add(
               SelectionActionButton(
-                icon: localOnlySelection
-                    ? Icons.auto_fix_high_outlined
-                    : Icons.share_outlined,
-                label: localOnlySelection
-                    ? '${context.l10n.trackReEnrich} ($selectedCount)'
-                    : context.l10n.selectionShareCount(selectedCount),
+                icon: Icons.auto_fix_high_outlined,
+                label: '${context.l10n.trackReEnrich} ($selectedCount)',
                 onPressed: selectedCount > 0
-                    ? () => localOnlySelection
-                          ? _reEnrichSelectedLocalFromQueue(unifiedItems)
-                          : _shareSelected(unifiedItems)
+                    ? () => _reEnrichSelectedFromQueue(unifiedItems)
                     : null,
                 colorScheme: colorScheme,
               ),
