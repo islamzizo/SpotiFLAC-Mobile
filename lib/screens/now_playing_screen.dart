@@ -101,10 +101,30 @@ class NowPlayingRoute extends PageRoute<void> {
   bool _interactiveTransition = false;
   int _dragGeneration = 0;
 
-  // Keep the previous page painted where a drag exposes it. The player itself
-  // fills the screen, including the status bar and bottom safe area.
+  // The player paints an opaque surface over the whole screen, including the
+  // status bar and bottom safe area. Once settled, the framework therefore
+  // keeps the pages below offstage: their glass, marquees and tickers stop
+  // compositing. Every drag or dismissal moves the animation off `completed`,
+  // which makes this route translucent again before the page is exposed.
   @override
-  bool get opaque => false;
+  bool get opaque => true;
+
+  /// Overlay size when the pages below were last laid out, recorded while this
+  /// route hides them. A rotation while hidden leaves their geometry stale.
+  Size? _coveredOverlaySize;
+
+  Size? get _overlaySize {
+    final box = navigator?.overlay?.context.findRenderObject();
+    return box is RenderBox && box.hasSize ? box.size : null;
+  }
+
+  @override
+  void install() {
+    super.install();
+    animation!.addStatusListener((status) {
+      _coveredOverlaySize = status.isCompleted ? _overlaySize : null;
+    });
+  }
 
   @override
   Color? get barrierColor => null;
@@ -175,7 +195,10 @@ class NowPlayingRoute extends PageRoute<void> {
         context.isMornye &&
         !MediaQuery.disableAnimationsOf(context) &&
         (controller?.value ?? 0) > 0) {
-      final target = miniPlayerGeometry?.call();
+      final coveredSize = _coveredOverlaySize;
+      final target = coveredSize == null || coveredSize == _overlaySize
+          ? miniPlayerGeometry?.call()
+          : null;
       if (target != null && !target.surface.isEmpty) {
         final size = MediaQuery.sizeOf(context);
         _dismissStartValue = controller!.value;

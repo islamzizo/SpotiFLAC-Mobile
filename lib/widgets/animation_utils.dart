@@ -155,7 +155,8 @@ class _ShimmerLoadingState extends State<ShimmerLoading>
           child: child,
         );
       },
-      child: widget.child,
+      // The mask moves every frame; the skeleton beneath it does not.
+      child: RepaintBoundary(child: widget.child),
     );
   }
 }
