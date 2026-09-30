@@ -4390,25 +4390,18 @@ class _SweepingTimedLyricTextState extends State<_SweepingTimedLyricText> {
         var segmentOffset = 0;
         for (final segment in widget.segments) {
           final segmentEnd = segmentOffset + segment.length;
-          final boxes = <Rect>[];
-          // Keep paragraph shaping/wrapping intact. Select whole graphemes so
-          // accents, surrogate pairs and joined emoji never lift in pieces.
-          final fragments = widget.liftEnabled ? segment.characters : [segment];
-          var offset = segmentOffset;
-          for (final fragment in fragments) {
-            boxes.addAll(
-              highlightedPainter
-                  .getBoxesForSelection(
-                    TextSelection(
-                      baseOffset: offset,
-                      extentOffset: offset + fragment.length,
-                    ),
-                    boxHeightStyle: BoxHeightStyle.max,
-                  )
-                  .map((box) => box.toRect()),
-            );
-            offset += fragment.length;
-          }
+          // Select the whole timed word, keeping paragraph shaping and wrapping
+          // intact. All of its text runs share the same vertical movement.
+          final boxes = highlightedPainter
+              .getBoxesForSelection(
+                TextSelection(
+                  baseOffset: segmentOffset,
+                  extentOffset: segmentEnd,
+                ),
+                boxHeightStyle: BoxHeightStyle.max,
+              )
+              .map((box) => box.toRect())
+              .toList();
           boxes.sort((a, b) {
             final row = a.top.compareTo(b.top);
             return row == 0 ? a.left.compareTo(b.left) : row;
@@ -4478,23 +4471,22 @@ class _TimedLyricSweepPainter extends CustomPainter {
           : 0.0;
       final boxes = segmentBoxes[index];
       final width = boxes.fold<double>(0, (sum, box) => sum + box.width);
+      final lift = highlightLift > 0 && timed
+          ? highlightLift *
+                syncedLyricSegmentLift(
+                  position: position,
+                  start: starts[index],
+                  end: ends[index],
+                )
+          : 0.0;
       var consumed = 0.0;
       for (final box in boxes) {
         if (box.width <= 0) continue;
-        final lift = highlightLift > 0 && timed
-            ? highlightLift *
-                  syncedLyricSegmentLift(
-                    position: position,
-                    start: starts[index],
-                    end: ends[index],
-                    progressOffset: consumed / width,
-                  )
-            : 0.0;
         if (highlightLift > 0) {
           pendingPaths.putIfAbsent(lift, Path.new).addRect(box);
         }
-        // Consume the same word progress across graphemes, wrapping and font
-        // fallback. The sweep timing never restarts at a glyph boundary.
+        // Keep the color sweep continuous across wrapping and font fallback,
+        // independently of the movement shared by the whole word.
         final revealWidth = width * value - consumed;
         final feather = ((highlightLift > 0 ? width : box.width) * 0.18).clamp(
           3.0,
@@ -4523,8 +4515,8 @@ class _TimedLyricSweepPainter extends CustomPainter {
     }
 
     for (final (box, value, lift, feather) in partialBoxes) {
-      // The feather can cross into the following grapheme before its solid
-      // fill arrives, avoiding a hard flash at each letter boundary.
+      // Feather the leading edge so the highlight flows through each letter
+      // while the word rises as a single unit.
       final boundary = box.left + box.width * value;
       final revealRight = (boundary + feather).clamp(box.left, box.right);
       final revealRect = Rect.fromLTRB(
