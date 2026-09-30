@@ -134,8 +134,8 @@ class SpotifyLibraryExtrasService {
     if(id.isEmpty || name.isEmpty) return null;
     final artists=data['artists'];
     var artistName='';
-    if(artists is Map && artists['items'] is List) {
-      artistName=(artists['items'] as List).whereType<Map>().map((a)=>_map(a['profile'])?['name']?.toString()??'').where((s)=>s.isNotEmpty).join(', ');
+    if(artists is Map<dynamic, dynamic> && artists['items'] is List) {
+      artistName=(artists['items'] as List).whereType<Map<dynamic, dynamic>>().map((a)=>_map(a['profile'])?['name']?.toString()??'').where((s)=>s.isNotEmpty).join(', ');
     } else if(artists is List) {
       artistName=artists.whereType<Map>().map((a)=>_map(a['profile'])?['name']?.toString()??a['name']?.toString()??'').where((s)=>s.isNotEmpty).join(', ');
     }
