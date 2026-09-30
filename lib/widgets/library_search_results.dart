@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/providers/library_search_provider.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/playback_provider.dart';
 import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
 import 'package:spotiflac_android/screens/library_tracks_folder_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
-import 'package:spotiflac_android/services/history_database.dart';
+import 'package:spotiflac_android/screens/track_metadata_screen.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/library_search.dart';
+import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
 import 'package:spotiflac_android/widgets/track_card.dart';
@@ -55,18 +55,29 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
     _pages = 1;
   });
 
-  Future<void> _open(LibrarySearchHit hit) async {
+  Future<void> _open(LibrarySearchHit hit, {bool play = false}) async {
     FocusScope.of(context).unfocus();
     try {
       switch (hit.kind) {
         case LibrarySearchKind.songs:
-          final row = hit.source == 'local'
-              ? await LibraryDatabase.instance.getById(hit.id)
-              : await HistoryDatabase.instance.getById(hit.id);
-          if (!mounted || row == null) return;
-          final media = hit.source == 'local'
-              ? playableFromLocal(LocalLibraryItem.fromJson(row))
-              : playableFromHistory(DownloadHistoryItem.fromJson(row));
+          final item = await ref.read(
+            librarySearchTrackProvider((source: hit.source, id: hit.id)).future,
+          );
+          if (!mounted || item == null) return;
+          if (!play) {
+            await Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => TrackMetadataScreen(
+                  item: item.historyItem,
+                  localItem: item.localItem,
+                ),
+              ),
+            );
+            return;
+          }
+          final media = item.localItem != null
+              ? playableFromLocal(item.localItem!)
+              : playableFromHistory(item.historyItem!);
           await ref
               .read(playbackProvider.notifier)
               .playMediaQueue(
@@ -139,7 +150,9 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
     );
     return TrackCard(
       key: ValueKey('${hit.kind.name}:${hit.source}:${hit.id}'),
-      style: TrackCardStyle.flat,
+      style: hit.kind == LibrarySearchKind.songs && !context.isMornye
+          ? TrackCardStyle.filled
+          : TrackCardStyle.flat,
       leading: ClipRRect(
         borderRadius: BorderRadius.circular(
           hit.kind == LibrarySearchKind.artists ? 28 : 8,
@@ -153,11 +166,13 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
       ),
       title: hit.title,
       subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
-      trailing: Icon(
-        hit.kind == LibrarySearchKind.songs
-            ? Icons.play_arrow_rounded
-            : Icons.chevron_right,
-      ),
+      trailing: hit.kind == LibrarySearchKind.songs
+          ? IconButton(
+              tooltip: context.l10n.tooltipPlay,
+              icon: const Icon(Icons.play_arrow_rounded),
+              onPressed: () => _open(hit, play: true),
+            )
+          : const Icon(Icons.chevron_right),
       onTap: () => _open(hit),
     );
   }

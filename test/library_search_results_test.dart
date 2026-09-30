@@ -1,13 +1,37 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/l10n/app_localizations.dart';
+import 'package:spotiflac_android/models/unified_library_item.dart';
+import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/providers/library_search_provider.dart';
+import 'package:spotiflac_android/providers/playback_provider.dart';
+import 'package:spotiflac_android/screens/track_metadata_screen.dart';
+import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/library_search.dart';
+import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/library_search_results.dart';
+import 'package:spotiflac_android/widgets/track_card.dart';
+
+class _PlaybackRecorder extends PlaybackController {
+  final paths = <String>[];
+
+  @override
+  Future<void> playMediaQueue(
+    Iterable<PlayableMedia> queue, {
+    required int startIndex,
+    required String externalPath,
+  }) async {
+    paths.add(externalPath);
+  }
+}
 
 LibrarySearchHit _hit(
   LibrarySearchKind kind,
@@ -20,6 +44,121 @@ LibrarySearchHit _hit(
 );
 
 void main() {
+  for (final mornye in [false, true]) {
+    for (final local in [false, true]) {
+      testWidgets(
+        'search opens metadata; only Play starts audio ($mornye/$local)',
+        (tester) async {
+          SharedPreferences.setMockInitialValues({});
+          FlutterSecureStorage.setMockInitialValues({});
+          const channel = MethodChannel('com.zarz.spotiflac/backend');
+          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            (call) async => switch (call.method) {
+              'safStat' => jsonEncode({'exists': true, 'size': 100}),
+              'readAudioMetadata' || 'readFileMetadata' => '{}',
+              'getLyricsLRCWithSource' => jsonEncode({
+                'lyrics': '',
+                'source': '',
+              }),
+              'getSafFileModTimes' => '{}',
+              _ => null,
+            },
+          );
+          addTearDown(
+            () => tester.binding.defaultBinaryMessenger
+                .setMockMethodCallHandler(channel, null),
+          );
+          const path = 'content://library/document/song.flac';
+          final item = local
+              ? UnifiedLibraryItem.fromLocalLibrary(
+                  LocalLibraryItem(
+                    id: 'chosen',
+                    trackName: 'Song',
+                    artistName: 'Artist',
+                    albumName: 'Album',
+                    filePath: path,
+                    scannedAt: DateTime(2026),
+                  ),
+                )
+              : UnifiedLibraryItem.fromDownloadHistory(
+                  DownloadHistoryItem(
+                    id: 'chosen',
+                    trackName: 'Song',
+                    artistName: 'Artist',
+                    albumName: 'Album',
+                    filePath: path,
+                    service: 'provider-a',
+                    downloadedAt: DateTime(2026),
+                  ),
+                );
+          final player = _PlaybackRecorder();
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [
+                playbackProvider.overrideWith(() => player),
+                librarySearchProvider.overrideWith(
+                  (ref, request) async =>
+                      request.kind == LibrarySearchKind.songs
+                      ? [
+                          LibrarySearchHit(
+                            kind: LibrarySearchKind.songs,
+                            id: 'chosen',
+                            title: 'Song',
+                            source: local ? 'local' : 'history',
+                          ),
+                        ]
+                      : [],
+                ),
+                librarySearchTrackProvider.overrideWith((ref, key) async {
+                  expect(key, (
+                    source: local ? 'local' : 'history',
+                    id: 'chosen',
+                  ));
+                  return item;
+                }),
+              ],
+              child: MaterialApp(
+                theme: mornye
+                    ? MornyeTheme.build(Brightness.dark)
+                    : ThemeData(),
+                localizationsDelegates: AppLocalizations.localizationsDelegates,
+                supportedLocales: AppLocalizations.supportedLocales,
+                home: Scaffold(
+                  body: CustomScrollView(
+                    slivers: [
+                      LibrarySearchResults(query: 'Song', onOpenArtist: (_) {}),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(
+            tester.widget<TrackCard>(find.byType(TrackCard)).style,
+            mornye ? TrackCardStyle.flat : TrackCardStyle.filled,
+          );
+          await tester.tap(find.text('Song'));
+          await tester.pumpAndSettle();
+          final details = tester.widget<TrackMetadataScreen>(
+            find.byType(TrackMetadataScreen),
+          );
+          expect(details.item, item.historyItem);
+          expect(details.localItem, item.localItem);
+          expect(player.paths, isEmpty);
+          tester.state<NavigatorState>(find.byType(Navigator).first).pop();
+          await tester.pumpAndSettle();
+          await tester.tap(find.byTooltip('Play'));
+          await tester.pumpAndSettle();
+          expect(player.paths, [path]);
+          expect(find.byType(TrackMetadataScreen), findsNothing);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
   for (final mornye in [false, true]) {
     testWidgets('Library shows every result type and paginates ($mornye)', (
       tester,
