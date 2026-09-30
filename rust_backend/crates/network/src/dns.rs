@@ -85,6 +85,7 @@ impl Dns {
         let mut http = HttpConnector::new();
         http.enforce_http(false);
         http.set_connect_timeout(Some(Duration::from_secs(5)));
+        http.set_nodelay(true);
         let connector = HttpsConnectorBuilder::new()
             .with_tls_config(tls)
             .https_only()

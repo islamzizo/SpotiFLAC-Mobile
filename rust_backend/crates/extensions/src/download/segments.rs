@@ -299,6 +299,7 @@ fn fetch(
                 if !(200..300).contains(&status) {
                     let mut failure = status_failure(&stream.response, &options.policy, attempt);
                     failure.error = format!("segment {index} HTTP error: {status}");
+                    stream.discard(check);
                     if !retryable(status) || attempt == options.policy.max_attempts {
                         return Err(failure);
                     }

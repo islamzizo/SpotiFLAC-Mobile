@@ -244,7 +244,7 @@ pub(crate) fn download(
             } else {
                 retry_delay
             };
-            drop(stream);
+            stream.discard(check);
             if !retryable(status) || attempt == options.policy.max_attempts {
                 return Err(failure);
             }
