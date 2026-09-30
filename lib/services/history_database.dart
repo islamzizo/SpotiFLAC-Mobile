@@ -1078,25 +1078,6 @@ class HistoryDatabase {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
-  Future<Map<String, int>> getGroupedCounts() async {
-    final db = await database;
-    final rows = await db.rawQuery('''
-      SELECT
-        SUM(CASE WHEN track_count > 1 THEN 1 ELSE 0 END) AS albums,
-        SUM(CASE WHEN track_count = 1 THEN 1 ELSE 0 END) AS singles
-      FROM (
-        SELECT COUNT(*) AS track_count
-        FROM history
-        GROUP BY album_key
-      )
-      ''');
-    final row = rows.isEmpty ? const <String, Object?>{} : rows.first;
-    return {
-      'albums': (row['albums'] as num?)?.toInt() ?? 0,
-      'singles': (row['singles'] as num?)?.toInt() ?? 0,
-    };
-  }
-
   Future<Map<String, dynamic>?> findExisting({
     String? spotifyId,
     String? isrc,

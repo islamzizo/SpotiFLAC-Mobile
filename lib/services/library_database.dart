@@ -1006,52 +1006,6 @@ class LibraryDatabase {
     _log.i('Replaced library with ${items.length} items');
   }
 
-  /// Atomically replaces the Library while consuming bounded scan batches.
-  /// The stream may represent tens of thousands of tracks without requiring a
-  /// second full list of models/maps on the Dart heap.
-  Future<int> replaceAllStream(
-    Stream<Map<String, dynamic>> items, {
-    int batchSize = 300,
-  }) async {
-    if (batchSize <= 0) {
-      throw ArgumentError.value(batchSize, 'batchSize', 'Must be positive');
-    }
-    final db = await database;
-    var inserted = 0;
-    await db.transaction((txn) async {
-      await txn.delete('library_path_keys');
-      await txn.delete('library');
-
-      var batch = txn.batch();
-      var pending = 0;
-      Future<void> flush() async {
-        if (pending == 0) return;
-        await batch.commit(noResult: true);
-        batch = txn.batch();
-        pending = 0;
-      }
-
-      await for (final json in items) {
-        final id = json['id'] as String?;
-        if (id == null || id.trim().isEmpty) {
-          throw const FormatException('Library scan row has no valid id');
-        }
-        batch.insert(
-          'library',
-          _jsonToDbRow(json),
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-        _putPathKeysInBatch(batch, id, json['filePath'] as String?);
-        inserted++;
-        pending++;
-        if (pending >= batchSize) await flush();
-      }
-      await flush();
-    });
-    _log.i('Stream-replaced library with $inserted items');
-    return inserted;
-  }
-
   /// Stages scan rows in bounded, independently committed batches, then swaps
   /// only this source in one short transaction. Download-history exclusion is
   /// an indexed SQLite anti-join, avoiding a full History path set in Dart.

@@ -622,10 +622,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     '.mp4',
   ];
 
-  Future<String?> _findConvertedSibling(
-    String originalPath, {
-    bool includeAlternateExtensions = true,
-  }) async {
+  Future<String?> _findConvertedSibling(String originalPath) async {
     final dotIndex = originalPath.lastIndexOf('.');
     if (dotIndex < 0) return null;
     final directoryPrefix = originalPath.substring(
@@ -638,7 +635,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
 
     for (final candidateName in _conversionRenameCandidates(
       fileName,
-      includeAlternateExtensions: includeAlternateExtensions,
+      includeAlternateExtensions: true,
     )) {
       final candidatePath = '$directoryPrefix$candidateName';
       if (candidatePath == originalPath) continue;
@@ -647,67 +644,6 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       } catch (_) {}
     }
     return null;
-  }
-
-  Future<bool> verifyOrRepairHistoryItem(DownloadHistoryItem item) async {
-    if (await fileExists(item.filePath)) return true;
-
-    DownloadHistoryItem? repaired;
-    if (item.storageMode == 'saf' &&
-        item.downloadTreeUri != null &&
-        item.downloadTreeUri!.isNotEmpty) {
-      var fileName = (item.safFileName ?? '').trim();
-      if (fileName.isEmpty && isContentUri(item.filePath)) {
-        fileName = _fileNameFromUri(item.filePath);
-      }
-      for (final candidate in _conversionRenameCandidates(fileName)) {
-        try {
-          final resolved = await PlatformBridge.resolveSafFile(
-            treeUri: item.downloadTreeUri!,
-            relativeDir: item.safRelativeDir ?? '',
-            fileName: candidate,
-          );
-          final uri = (resolved['uri'] as String? ?? '').trim();
-          if (uri.isEmpty || !await fileExists(uri)) continue;
-          final relativeDir = (resolved['relative_dir'] as String? ?? '')
-              .trim();
-          repaired = item.copyWith(
-            filePath: uri,
-            safFileName: candidate,
-            safRelativeDir: relativeDir.isEmpty
-                ? item.safRelativeDir
-                : relativeDir,
-            safRepaired: true,
-          );
-          break;
-        } catch (error) {
-          _historyLog.w('Failed to resolve renamed SAF file: $error');
-        }
-      }
-    } else if (!isContentUri(item.filePath)) {
-      final sibling = await _findConvertedSibling(
-        item.filePath,
-        includeAlternateExtensions: false,
-      );
-      if (sibling != null) repaired = item.copyWith(filePath: sibling);
-    }
-
-    if (repaired == null) return false;
-    await _db.upsert(repaired.toJson());
-    final updatedItems = state.items
-        .map((entry) => entry.id == repaired!.id ? repaired : entry)
-        .toList(growable: false);
-    final updatedLookupItems = state.lookupItems
-        .map((entry) => entry.id == repaired!.id ? repaired : entry)
-        .toList(growable: false);
-    state = state.copyWith(
-      items: updatedItems,
-      lookupItems: updatedLookupItems,
-    );
-    _historyLog.i(
-      'Reconciled renamed conversion: ${item.filePath} -> ${repaired.filePath}',
-    );
-    return true;
   }
 
   Future<
@@ -1090,28 +1026,6 @@ final downloadHistoryProvider =
       DownloadHistoryNotifier.new,
     );
 
-class DownloadHistoryGroupedCounts {
-  final int albumCount;
-  final int singleTrackCount;
-
-  const DownloadHistoryGroupedCounts({
-    required this.albumCount,
-    required this.singleTrackCount,
-  });
-}
-
-final downloadHistoryGroupedCountsProvider =
-    FutureProvider<DownloadHistoryGroupedCounts>((ref) async {
-      ref.watch(
-        downloadHistoryProvider.select((state) => state.loadedIndexVersion),
-      );
-      final counts = await HistoryDatabase.instance.getGroupedCounts();
-      return DownloadHistoryGroupedCounts(
-        albumCount: counts['albums'] ?? 0,
-        singleTrackCount: counts['singles'] ?? 0,
-      );
-    });
-
 HistoryLookupRequest historyLookupForTrack(Track track) {
   return HistoryLookupRequest(
     spotifyId: track.id,
@@ -1121,21 +1035,8 @@ HistoryLookupRequest historyLookupForTrack(Track track) {
   );
 }
 
-final downloadHistoryExistsProvider = FutureProvider.autoDispose
-    .family<bool, HistoryLookupRequest>((ref, request) async {
-      ref.watch(
-        downloadHistoryProvider.select((state) => state.loadedIndexVersion),
-      );
-      final notifier = ref.read(downloadHistoryProvider.notifier);
-      final row = await HistoryDatabase.instance.findExistingTrack(request);
-      if (row == null) return false;
-      return notifier.verifyOrRepairHistoryItem(
-        DownloadHistoryItem.fromJson(row),
-      );
-    });
-
-// Batch lookups deliberately avoid per-row SAF verification. Startup repair
-// reconciles stale rows; the single-track provider above keeps strict checks.
+// Batch lookups deliberately avoid per-row SAF verification; startup repair
+// reconciles stale rows.
 final downloadHistoryBatchExistsProvider = FutureProvider.autoDispose
     .family<Set<String>, HistoryBatchLookupRequest>((ref, request) async {
       ref.watch(
