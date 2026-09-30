@@ -147,15 +147,33 @@ class NativeFlacConversionTest {
                             execute(arguments).also { result ->
                                 if (mode == "corrupt-remux" && "copy" in arguments && result.first) {
                                     val bytes = output.readBytes()
-                                    for (index in bytes.size - 50 until bytes.size - 34) {
-                                        bytes[index] = (bytes[index].toInt() xor 0x55).toByte()
+                                    // FLAC metadata (including the cover picture) has variable size.
+                                    // Locate the first audio frame instead of assuming audio lives
+                                    // at a fixed offset from the end of the file.
+                                    var offset = 4 // "fLaC" marker
+                                    var lastMetadataBlock = false
+                                    while (!lastMetadataBlock && offset + 4 <= bytes.size) {
+                                        val header = bytes[offset].toInt() and 0xff
+                                        lastMetadataBlock = (header and 0x80) != 0
+                                        val blockLength =
+                                            ((bytes[offset + 1].toInt() and 0xff) shl 16) or
+                                            ((bytes[offset + 2].toInt() and 0xff) shl 8) or
+                                            (bytes[offset + 3].toInt() and 0xff)
+                                        offset += 4 + blockLength
                                     }
+                                    check(lastMetadataBlock && offset < bytes.size) {
+                                        "FLAC output has no audio frame to corrupt"
+                                    }
+                                    val audioLength = bytes.size - offset
+                                    check(audioLength > 32) { "FLAC audio payload is unexpectedly short" }
+                                    val index = offset + audioLength / 2
+                                    bytes[index] = (bytes[index].toInt() xor 0x55).toByte()
                                     output.writeBytes(bytes)
                                 }
                             }
                         }
                     }, {})
-                    assertEquals(mode != "remux", encoded)
+                    assertEquals("unexpected encoder fallback for $sampleRate Hz ($mode)", mode != "remux", encoded)
                     assertEquals(sourceHash, run("-v", "error", "-i", output.path, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-"))
                     assertEquals(coverHash, run("-v", "error", "-i", output.path, "-map", "0:v:0", "-f", "hash", "-hash", "sha256", "-"))
                     assertTrue(input.exists())
