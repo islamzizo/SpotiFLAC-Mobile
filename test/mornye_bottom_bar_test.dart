@@ -39,6 +39,7 @@ void main() {
     WidgetTester tester, {
     bool withPlayer = true,
     bool blur = false,
+    bool liquidGlass = true,
     Brightness brightness = Brightness.light,
     Color? backdrop,
     Color? chromeSurface,
@@ -67,6 +68,7 @@ void main() {
           playbackStateProvider.overrideWith((ref) => const Stream.empty()),
           lowEndDeviceProvider.overrideWithValue(!blur),
           backdropBlurEnabledProvider.overrideWithValue(blur),
+          mornyeLiquidGlassProvider.overrideWithValue(liquidGlass),
         ],
         child: MaterialApp(
           theme: MornyeTheme.build(
@@ -134,6 +136,91 @@ void main() {
   }
 
   const albumBlue = Color(0xff464566);
+
+  for (final liquidGlass in [false, true]) {
+    testWidgets(
+      'navbar keeps its backdrop blurred throughout motion (liquid: $liquidGlass)',
+      (tester) async {
+        await pumpShell(
+          tester,
+          blur: true,
+          liquidGlass: liquidGlass,
+          brightness: Brightness.dark,
+          glassClarity: 1,
+          body: const SizedBox.expand(
+            child: CustomPaint(painter: _StripedBackdrop()),
+          ),
+        );
+
+        Future<void> expectBlur(Offset center, String phase) async {
+          final variation = await tester.runAsync(() async {
+            final boundary = tester.renderObject<RenderRepaintBoundary>(
+              find.byKey(capture),
+            );
+            final image = await boundary.toImage();
+            final bytes = (await image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!;
+            final values = <int>[];
+            for (var x = -9; x <= 9; x++) {
+              final offset =
+                  (center.dy.floor() * image.width + center.dx.floor() + x) * 4;
+              values.add(bytes.getUint8(offset));
+            }
+            image.dispose();
+            values.sort();
+            return values.last - values.first;
+          });
+          expect(variation, lessThan(20), reason: phase);
+        }
+
+        const capsuleSample = Offset(196, 745);
+        await expectBlur(capsuleSample, 'Expanded capsule');
+        final gesture = await tester.startGesture(
+          tester.getCenter(find.text('Home').first),
+        );
+        await gesture.moveBy(const Offset(100, 0));
+        await tester.pump(const Duration(milliseconds: 100));
+        await expectBlur(capsuleSample, 'Dragging the selected tab');
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        for (final collapsed in [true, false]) {
+          chrome.value = collapsed;
+          await tester.pump();
+          if (collapsed) {
+            await tester.pump(const Duration(milliseconds: 190));
+            await expectBlur(
+              capsuleSample,
+              'Capsule halfway to collapsed=$collapsed',
+            );
+          }
+          // Sample below the icons once the growing circles are large enough to
+          // expose their backdrop; the page stripes must stay blurred while moving.
+          await tester.pump(const Duration(milliseconds: 95));
+          for (final key in [
+            'mornye-compact-leading',
+            'mornye-compact-search',
+          ]) {
+            final center = tester.getCenter(find.byKey(ValueKey(key)));
+            await expectBlur(
+              center + const Offset(0, 18),
+              '$key moving to collapsed=$collapsed',
+            );
+          }
+          if (!collapsed) {
+            await tester.pump(const Duration(milliseconds: 95));
+            await expectBlur(
+              capsuleSample,
+              'Capsule halfway to collapsed=$collapsed',
+            );
+          }
+          await tester.pumpAndSettle();
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   for (final blur in [false, true]) {
     testWidgets('active edge icons and tabs stay synchronized (glass: $blur)', (
@@ -717,4 +804,20 @@ void main() {
     expect(chrome.value, isFalse);
     expect(tester.takeException(), isNull);
   });
+}
+
+class _StripedBackdrop extends CustomPainter {
+  const _StripedBackdrop();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    for (var x = 0.0; x < size.width; x += 12) {
+      paint.color = (x / 12).round().isEven ? Colors.white : Colors.black;
+      canvas.drawRect(Rect.fromLTWH(x, 0, 12, size.height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_StripedBackdrop oldDelegate) => false;
 }

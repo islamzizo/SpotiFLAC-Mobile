@@ -612,6 +612,7 @@ class MornyeTabBar extends StatelessWidget {
     required this.blurEnabled,
     this.liquidGlass = true,
     this.hiddenIconIndices = const {},
+    this.contentOpacity = const AlwaysStoppedAnimation(1),
   });
 
   /// Shader capsule and travelling pill; otherwise the frosted row below.
@@ -637,6 +638,10 @@ class MornyeTabBar extends StatelessWidget {
   final bool blurEnabled;
   // The active and Search icons move independently while the capsule folds.
   final Set<int> hiddenIconIndices;
+
+  /// Fade icons and labels while the capsule folds. Its backdrop must stay
+  /// outside the fade layer so it can still sample the page during motion.
+  final Animation<double> contentOpacity;
 
   @override
   Widget build(BuildContext context) {
@@ -673,79 +678,83 @@ class MornyeTabBar extends StatelessWidget {
                     child: const SizedBox.expand(),
                   ),
                 ),
-                NativeGlassMetrics(
-                  child: LiquidGlassTabBar.withImpeller(
-                    width: constraints.maxWidth,
-                    height: 64,
-                    margin: const EdgeInsets.only(bottom: 8),
-                    selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
-                    onChanged: onSelected,
-                    style: LiquidGlassTabBar.defaultStyle.copyWith(
-                      // The frosted base owns the subtle outline. Disable the
-                      // package's default specular rim around the whole capsule.
-                      shape: const LiquidGlassShape.continuousRoundedRectangle(
-                        cornerRadius: 32,
-                        borderWidth: 0,
-                        lightIntensity: 0,
-                      ),
-                      // The sibling surface already supplies tint and blur. Keep
-                      // the lens clear so the moving pill can refract the icons.
-                      appearance: const LiquidGlassAppearance(),
-                      refraction: const LiquidGlassRefraction(
-                        distortion: 0,
-                        chromaticAberration: 0,
-                      ),
-                    ),
-                    itemStyle: LiquidGlassTabItemStyle(
-                      selectedColor: scheme.primary,
-                      unselectedColor: scheme.onSurface,
-                      iconSize: 25,
-                      labelFontSize: 11,
-                    ),
-                    pillStyle: LiquidGlassTabPillStyle(
-                      mode: LiquidGlassPillMode.impellerOnly,
-                      show: selectedIndex >= 0,
-                      color: selectionFill,
-                      animated: true,
-                      // Keep the moving refractive pill, without stacking the
-                      // package's second magnifier lens beneath it.
-                      magnifierPill: const LiquidGlassTabMagnifierPillStyle(
-                        enabled: false,
-                      ),
-                    ),
-                    items: [
-                      for (final (index, destination) in destinations.indexed)
-                        LiquidGlassTabBarItem(
-                          label: destination.label,
-                          iconBuilder: (context, icon) => IconTheme(
-                            data: IconThemeData(
-                              size: icon.size,
-                              color: icon.selected && selectedIndex >= 0
-                                  ? scheme.primary
-                                  : inactiveIconColor,
+                FadeTransition(
+                  opacity: contentOpacity,
+                  child: NativeGlassMetrics(
+                    child: LiquidGlassTabBar.withImpeller(
+                      width: constraints.maxWidth,
+                      height: 64,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
+                      onChanged: onSelected,
+                      style: LiquidGlassTabBar.defaultStyle.copyWith(
+                        // The frosted base owns the subtle outline. Disable the
+                        // package's default specular rim around the whole capsule.
+                        shape:
+                            const LiquidGlassShape.continuousRoundedRectangle(
+                              cornerRadius: 32,
+                              borderWidth: 0,
+                              lightIntensity: 0,
                             ),
-                            child: Opacity(
-                              opacity: hiddenIconIndices.contains(index)
-                                  ? 0
-                                  : 1,
-                              child: destination.icon,
-                            ),
-                          ),
-                          labelBuilder: (context, label) => Text(
-                            destination.label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  fontSize: label.textStyle.fontSize,
-                                  fontWeight: FontWeight.w600,
-                                  color: selectedIndex < 0
-                                      ? scheme.onSurface
-                                      : label.textStyle.color,
-                                ),
-                          ),
+                        // The sibling surface already supplies tint and blur. Keep
+                        // the lens clear so the moving pill can refract the icons.
+                        appearance: const LiquidGlassAppearance(),
+                        refraction: const LiquidGlassRefraction(
+                          distortion: 0,
+                          chromaticAberration: 0,
                         ),
-                    ],
+                      ),
+                      itemStyle: LiquidGlassTabItemStyle(
+                        selectedColor: scheme.primary,
+                        unselectedColor: scheme.onSurface,
+                        iconSize: 25,
+                        labelFontSize: 11,
+                      ),
+                      pillStyle: LiquidGlassTabPillStyle(
+                        mode: LiquidGlassPillMode.impellerOnly,
+                        show: selectedIndex >= 0,
+                        color: selectionFill,
+                        animated: true,
+                        // Keep the moving refractive pill, without stacking the
+                        // package's second magnifier lens beneath it.
+                        magnifierPill: const LiquidGlassTabMagnifierPillStyle(
+                          enabled: false,
+                        ),
+                      ),
+                      items: [
+                        for (final (index, destination) in destinations.indexed)
+                          LiquidGlassTabBarItem(
+                            label: destination.label,
+                            iconBuilder: (context, icon) => IconTheme(
+                              data: IconThemeData(
+                                size: icon.size,
+                                color: icon.selected && selectedIndex >= 0
+                                    ? scheme.primary
+                                    : inactiveIconColor,
+                              ),
+                              child: Opacity(
+                                opacity: hiddenIconIndices.contains(index)
+                                    ? 0
+                                    : 1,
+                                child: destination.icon,
+                              ),
+                            ),
+                            labelBuilder: (context, label) => Text(
+                              destination.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(
+                                    fontSize: label.textStyle.fontSize,
+                                    fontWeight: FontWeight.w600,
+                                    color: selectedIndex < 0
+                                        ? scheme.onSurface
+                                        : label.textStyle.color,
+                                  ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
                 // With no selected tab the package still needs an internal
@@ -784,77 +793,80 @@ class MornyeTabBar extends StatelessWidget {
       blurEnabled: blurEnabled,
       strongTint: true,
       tintOpacity: MornyeTheme.navigationOpacity(context),
-      child: Padding(
-        padding: const EdgeInsets.all(5),
-        child: Row(
-          children: [
-            for (var index = 0; index < destinations.length; index++)
-              Expanded(
-                child: Semantics(
-                  selected: index == selectedIndex,
-                  button: true,
-                  label: destinations[index].label,
-                  excludeSemantics: true,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(28),
-                      onTap: () => onSelected(index),
-                      child: AnimatedContainer(
-                        duration: MediaQuery.disableAnimationsOf(context)
-                            ? Duration.zero
-                            : const Duration(milliseconds: 220),
-                        constraints: const BoxConstraints(minHeight: 54),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: index == selectedIndex
-                              ? selectionFill
-                              : Colors.transparent,
-                          borderRadius: BorderRadius.circular(28),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconTheme(
-                              data: IconThemeData(
-                                size: 25,
-                                color: index == selectedIndex
-                                    ? scheme.primary
-                                    : inactiveIconColor,
+      child: FadeTransition(
+        opacity: contentOpacity,
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Row(
+            children: [
+              for (var index = 0; index < destinations.length; index++)
+                Expanded(
+                  child: Semantics(
+                    selected: index == selectedIndex,
+                    button: true,
+                    label: destinations[index].label,
+                    excludeSemantics: true,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(28),
+                        onTap: () => onSelected(index),
+                        child: AnimatedContainer(
+                          duration: MediaQuery.disableAnimationsOf(context)
+                              ? Duration.zero
+                              : const Duration(milliseconds: 220),
+                          constraints: const BoxConstraints(minHeight: 54),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: index == selectedIndex
+                                ? selectionFill
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconTheme(
+                                data: IconThemeData(
+                                  size: 25,
+                                  color: index == selectedIndex
+                                      ? scheme.primary
+                                      : inactiveIconColor,
+                                ),
+                                // Keep tab selection quiet, as in Mornye. Badges
+                                // stay live without the Material bounce/spin.
+                                child: Opacity(
+                                  opacity: hiddenIconIndices.contains(index)
+                                      ? 0
+                                      : 1,
+                                  child: destinations[index].icon,
+                                ),
                               ),
-                              // Keep tab selection quiet, as in Mornye. Badges
-                              // stay live without the Material bounce/spin.
-                              child: Opacity(
-                                opacity: hiddenIconIndices.contains(index)
-                                    ? 0
-                                    : 1,
-                                child: destinations[index].icon,
+                              const SizedBox(height: 2),
+                              Text(
+                                destinations[index].label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                      color: index == selectedIndex
+                                          ? scheme.primary
+                                          : scheme.onSurface,
+                                    ),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              destinations[index].label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    color: index == selectedIndex
-                                        ? scheme.primary
-                                        : scheme.onSurface,
-                                  ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
