@@ -92,7 +92,7 @@ class SpotifyAccountService {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const [];
-      return decoded.whereType<Map>()
+      return decoded.whereType<Map<dynamic, dynamic>>()
           .map((v) => SpotifyPlaylist.fromJson(Map<String, dynamic>.from(v)))
           .whereType<SpotifyPlaylist>().toList(growable: false);
     } catch (_) { return const []; }
@@ -120,7 +120,7 @@ class SpotifyAccountService {
       if (library == null) {
         throw SpotifyAccountException(_firstError(response) ?? 'Spotify returned an invalid library response.');
       }
-      final items = library['items'] is List ? library['items'] as List : const [];
+      final items = library['items'] is List ? library['items'] as List : const <dynamic>[];
       for (final item in items) {
         final wrapper = _map(_map(item)?['item']);
         final d = _map(wrapper?['data']);
@@ -158,12 +158,14 @@ class SpotifyAccountService {
     final token = await _storage.read(key: accessTokenKey);
     final expiry = int.tryParse(await _storage.read(key: _expiryKey) ?? '');
     if (token != null && token.isNotEmpty && expiry != null &&
-        expiry > DateTime.now().millisecondsSinceEpoch + 60000) return token;
+        expiry > DateTime.now().millisecondsSinceEpoch + 60000) {
+      return token;
+    }
     final nuance = await http.get(Uri.parse(_nuanceUrl));
     if (nuance.statusCode != 200) throw SpotifyAccountException('Could not load Spotify session configuration (${nuance.statusCode}).');
     final raw = jsonDecode(nuance.body);
     if (raw is! List) throw const SpotifyAccountException('Spotify session configuration is invalid.');
-    final entries = raw.whereType<Map>().map(Map<String, dynamic>.from).where((v) =>
+    final entries = raw.whereType<Map<dynamic, dynamic>>().map((v) => Map<String, dynamic>.from(v)).where((v) =>
       v['s'] is String && v['v'] is num && _isBase32(v['s'] as String)).toList();
     if (entries.isEmpty) throw const SpotifyAccountException('No valid Spotify session key is available.');
     entries.sort((a,b) => (a['v'] as num).compareTo(b['v'] as num));
@@ -206,7 +208,9 @@ class SpotifyAccountService {
       Map<String,dynamic>? decoded;
       try { final d = jsonDecode(response.body); if (d is Map) decoded = Map<String,dynamic>.from(d); } catch (_) {}
       if (response.statusCode == 200 && decoded != null &&
-          !(_firstError(decoded)?.contains('PersistedQueryNotFound') ?? false)) return decoded;
+          !(_firstError(decoded)?.contains('PersistedQueryNotFound') ?? false)) {
+        return decoded;
+      }
     }
     throw SpotifyAccountException('Spotify $operation request failed. Its private web API may have changed.');
   }
