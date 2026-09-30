@@ -453,6 +453,10 @@ extension _DownloadQueueEmbedding on DownloadQueueNotifier {
       _log.d(
         'Metadata embedding disabled, skipping $format metadata/cover embed',
       );
+      if (settings.embedReplayGain) {
+        final rg = await ReplayGainService.scanAndApplyToFile(filePath);
+        if (rg != null) _storeTrackReplayGainForAlbum(track, filePath, rg);
+      }
       return null;
     }
 
@@ -827,12 +831,10 @@ extension _DownloadQueueEmbedding on DownloadQueueNotifier {
 
         if (settings.embedReplayGain) {
           try {
-            final rgResult = await FFmpegService.scanReplayGain(filePath);
+            final rgResult = await ReplayGainService.scanAndApplyToFile(
+              filePath,
+            );
             if (rgResult != null) {
-              await PlatformBridge.editFileMetadata(filePath, {
-                'replaygain_track_gain': rgResult.trackGain,
-                'replaygain_track_peak': rgResult.trackPeak,
-              });
               _log.d(
                 'ReplayGain for $format: gain=${rgResult.trackGain}, peak=${rgResult.trackPeak}',
               );

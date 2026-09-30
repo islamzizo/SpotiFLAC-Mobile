@@ -922,7 +922,8 @@ object NativeDownloadFinalizer {
         }
         val deleteScanPath = scanPath != state.filePath
         val scan = try {
-            scanReplayGain(scanPath, shouldCancel) ?: return null
+            scanReplayGain(scanPath, shouldCancel)
+                ?: throw IllegalStateException("ReplayGain analysis produced no valid measurement")
         } finally {
             if (deleteScanPath) File(scanPath).delete()
         }
