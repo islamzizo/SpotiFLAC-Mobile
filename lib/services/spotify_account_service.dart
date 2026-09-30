@@ -214,7 +214,9 @@ class SpotifyAccountService {
   static Map<String,dynamic>? _map(dynamic v) => v is Map ? Map<String,dynamic>.from(v) : null;
   static String? _firstError(Map<String,dynamic> v) {
     final errors = v['errors'];
-    return errors is List && errors.isNotEmpty ? _map(errors.first)?['message']?.toString() : null;
+    if (errors is! List || errors.isEmpty) return null;
+    final first = _map(errors.first);
+    return first == null ? null : first['message']?.toString();
   }
   static String? _image(dynamic value) {
     final m = _map(value);
