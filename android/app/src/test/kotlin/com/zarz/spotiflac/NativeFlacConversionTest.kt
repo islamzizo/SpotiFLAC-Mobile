@@ -174,8 +174,11 @@ class NativeFlacConversionTest {
                         }
                     }, {})
                     assertEquals("unexpected encoder fallback for $sampleRate Hz ($mode)", mode != "remux", encoded)
-                    assertEquals("decoded PCM changed for $sampleRate Hz ($mode); expected $sourceHash", sourceHash, run("-v", "error", "-i", output.path, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-"))
-                    assertEquals("artwork changed for $sampleRate Hz ($mode); expected $coverHash", coverHash, run("-v", "error", "-i", output.path, "-map", "0:v:0", "-f", "hash", "-hash", "sha256", "-"))
+                    val outputHash = run("-v", "error", "-i", output.path, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-")
+                    println("FLAC fixture $sampleRate Hz ($mode): encoded=$encoded sourcePCM=$sourceHash outputPCM=$outputHash")
+                    assertEquals("decoded PCM changed for $sampleRate Hz ($mode)", sourceHash, outputHash)
+                    val outputCoverHash = run("-v", "error", "-i", output.path, "-map", "0:v:0", "-f", "hash", "-hash", "sha256", "-")
+                    assertEquals("artwork changed for $sampleRate Hz ($mode)", coverHash, outputCoverHash)
                     assertTrue(input.exists())
                 }
             }
