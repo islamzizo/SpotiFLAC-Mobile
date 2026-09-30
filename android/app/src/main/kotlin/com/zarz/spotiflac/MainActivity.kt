@@ -536,14 +536,12 @@ class MainActivity: FlutterFragmentActivity() {
         }
     }
 
-    private fun updateDownloadProgressSeq(payload: String) {
-        try {
-            val objectValue = JSONObject(payload)
-            val seq = objectValue.optLong("seq", lastDownloadProgressSeq)
-            if (objectValue.optBoolean("reset", false) || seq > lastDownloadProgressSeq) {
-                lastDownloadProgressSeq = seq
-            }
-        } catch (_: Exception) {}
+    private fun updateDownloadProgressSeq(progress: Any?) {
+        val objectValue = progress as? Map<*, *> ?: return
+        val seq = (objectValue["seq"] as? Number)?.toLong() ?: lastDownloadProgressSeq
+        if (objectValue["reset"] == true || seq > lastDownloadProgressSeq) {
+            lastDownloadProgressSeq = seq
+        }
     }
 
     private fun startDownloadProgressStream(sink: EventChannel.EventSink) {
@@ -557,16 +555,19 @@ class MainActivity: FlutterFragmentActivity() {
             try {
                 while (isActive && downloadProgressConnection === connection) {
                     try {
-                        val payload = withContext(Dispatchers.IO) {
+                        // Decode once on IO. Reset snapshots of large queues
+                        // previously parsed twice on the UI thread.
+                        val (payload, progress) = withContext(Dispatchers.IO) {
                             val reader = connection.get() ?: coreBackend.openDownloadProgress().also { connection.set(it) }
                             ensureActive()
-                            reader.waitDelta(lastDownloadProgressSeq, 15_000L)
+                            val payload = reader.waitDelta(lastDownloadProgressSeq, 15_000L)
+                            payload to if (payload.isEmpty()) null else parseJsonPayload(payload)
                         }
                         if (!isActive || downloadProgressConnection !== connection) break
                         if (payload.isNotEmpty() && payload != lastDownloadProgressPayload) {
-                            updateDownloadProgressSeq(payload)
+                            updateDownloadProgressSeq(progress)
                             lastDownloadProgressPayload = payload
-                            sink.success(parseJsonPayload(payload))
+                            sink.success(progress)
                             delay(250L)
                         }
                     } catch (e: Exception) {

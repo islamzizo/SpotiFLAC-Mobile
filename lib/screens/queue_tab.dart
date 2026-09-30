@@ -476,10 +476,12 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     );
   }
 
+  /// [nonEmptyFallback] is non-null when an in-memory snapshot is available;
+  /// it is only invoked when no cached or live page has content.
   _QueueLibraryPageData _resolveQueueLibraryPageData(
     AsyncValue<_QueueLibraryPageData>? value,
     _QueueLibraryPageRequest request, {
-    _QueueLibraryPageData? nonEmptyFallback,
+    _QueueLibraryPageData Function()? nonEmptyFallback,
   }) {
     void storePage(_QueueLibraryPageData data) {
       final cached = _cachedQueueLibraryPageAt(request, request.offset);
@@ -521,7 +523,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
 
     final combined = _QueueLibraryPageData.combine(pages);
     if (combined.isEmpty && nonEmptyFallback != null) {
-      return nonEmptyFallback;
+      return nonEmptyFallback();
     }
     return combined;
   }
@@ -1430,24 +1432,31 @@ class _QueueTabState extends ConsumerState<QueueTab> {
         ? const AsyncData(_QueueLibraryPageData())
         : ref.watch(_queueLibraryPageProvider(activePageRequest));
 
+    // The in-memory snapshot regroups every history item. It is only needed
+    // when a page is still empty, so build it on demand and at most once per
+    // mode for this build's (immutable) history list.
+    final historySnapshots = <(String, int), _QueueLibraryPageData>{};
     _QueueLibraryPageData pageData(String filterMode) {
       final request = filterMode == historyFilterMode
           ? activePageRequest
           : pageRequest(filterMode);
-      final historySnapshot =
+      final historySnapshotAvailable =
           hasQueueItems &&
-              inMemoryHistoryItems.isNotEmpty &&
-              request.allowsInMemoryHistoryFallback
-          ? _QueueLibraryPageData.fromHistorySnapshot(
-              inMemoryHistoryItems,
-              filterMode: request.filterMode,
-              limit: request.limit,
-            )
-          : null;
+          inMemoryHistoryItems.isNotEmpty &&
+          request.allowsInMemoryHistoryFallback;
       return _resolveQueueLibraryPageData(
         filterMode == historyFilterMode ? activePageValue : null,
         request,
-        nonEmptyFallback: historySnapshot,
+        nonEmptyFallback: historySnapshotAvailable
+            ? () => historySnapshots.putIfAbsent(
+                (request.filterMode, request.limit),
+                () => _QueueLibraryPageData.fromHistorySnapshot(
+                  inMemoryHistoryItems,
+                  filterMode: request.filterMode,
+                  limit: request.limit,
+                ),
+              )
+            : null,
       );
     }
 
