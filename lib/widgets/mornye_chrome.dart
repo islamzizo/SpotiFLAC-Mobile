@@ -259,7 +259,7 @@ class MornyeGlass extends StatelessWidget {
        firstInGroup = true,
        lastInGroup = true;
 
-  /// Shares the navigation bar's tint, blur and visible outer rim.
+  /// Shares the navigation bar's tint, blur and subtle edge reflections.
   const MornyeGlass.navigation({
     super.key,
     required this.child,
@@ -465,8 +465,8 @@ class _MornyeGlassSurface extends StatelessWidget {
   }
 }
 
-/// Static, axis-aligned highlights: bright upper/lower inner edges and a thin
-/// shadow at the sides. No offscreen layer, extra blur, or per-frame readback.
+/// Faint edge reflections define the glass without a bright capsule outline.
+/// No offscreen layer, extra blur, or per-frame readback.
 class _MornyeGlassRim extends CustomPainter {
   const _MornyeGlassRim({
     required this.shape,
@@ -499,24 +499,24 @@ class _MornyeGlassRim extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.5
-        ..color = Colors.black.withValues(alpha: 0.22),
+        ..color = Colors.black.withValues(alpha: illuminated ? 0.10 : 0.22),
     );
     if (illuminated) {
       canvas.drawRRect(
-        outline.deflate(0.9),
+        outline.deflate(0.8),
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.8
+          ..strokeWidth = 0.6
           ..shader = LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            stops: const [0, 0.18, 0.5, 0.82, 1],
+            stops: const [0, 0.14, 0.5, 0.86, 1],
             colors: [
-              firstInGroup ? const Color(0x99ffffff) : Colors.transparent,
-              const Color(0x18ffffff),
-              const Color(0x30000000),
-              const Color(0x18ffffff),
-              lastInGroup ? const Color(0x80ffffff) : Colors.transparent,
+              firstInGroup ? const Color(0x2effffff) : Colors.transparent,
+              const Color(0x08ffffff),
+              const Color(0x0a000000),
+              const Color(0x08ffffff),
+              lastInGroup ? const Color(0x1fffffff) : Colors.transparent,
             ],
           ).createShader(bounds),
       );

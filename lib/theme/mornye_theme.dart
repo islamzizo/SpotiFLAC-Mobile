@@ -45,15 +45,18 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
     );
   }
 
-  static double chromeOpacity(BuildContext context) =>
-      Theme.of(context).extension<MornyeTheme>()?.chromeSurface != null
-      ? 0.42
-      : 0.70;
+  static double chromeOpacity(BuildContext context) {
+    final theme = Theme.of(context);
+    if (theme.extension<MornyeTheme>()?.chromeSurface != null) return 0.36;
+    // Light glass needs more fill to keep dark subtitles readable over black.
+    return theme.brightness == Brightness.dark ? 0.60 : 0.70;
+  }
 
-  static double navigationOpacity(BuildContext context) =>
-      Theme.of(context).extension<MornyeTheme>()?.chromeSurface != null
-      ? 0.28
-      : 0.54;
+  static double navigationOpacity(BuildContext context) {
+    final theme = Theme.of(context);
+    if (theme.extension<MornyeTheme>()?.chromeSurface != null) return 0.24;
+    return theme.brightness == Brightness.dark ? 0.44 : 0.54;
+  }
 
   static const lightAccent = Color.fromRGBO(204, 46, 51, 1);
   static const darkAccent = Color.fromRGBO(224, 61, 60, 1);
