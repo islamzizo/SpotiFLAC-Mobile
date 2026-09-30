@@ -29,7 +29,7 @@ class _Settings extends SettingsNotifier {
 }
 
 class _History extends DownloadHistoryNotifier {
-  final updates = <String, String?>{};
+  final _updates = <String, String?>{};
 
   @override
   DownloadHistoryState build() => DownloadHistoryState();
@@ -55,19 +55,19 @@ class _History extends DownloadHistoryNotifier {
     bool? hasLyrics,
     int? lyricsMetadataScanVersion,
   }) async {
-    updates[id] = isrc;
+    _updates[id] = isrc;
   }
 }
 
 class _Library extends LocalLibraryNotifier {
-  int refreshes = 0;
+  int _refreshes = 0;
 
   @override
   LocalLibraryState build() => LocalLibraryState();
 
   @override
   Future<void> scanAllSources({bool forceFullScan = false}) async {
-    refreshes++;
+    _refreshes++;
   }
 }
 
@@ -198,8 +198,8 @@ void main() {
           ...paths,
           ...paths,
         ]);
-        expect(history.updates, {'download': 'USABC2600001'});
-        expect(library.refreshes, includeLocal ? 1 : 0);
+        expect(history._updates, {'download': 'USABC2600001'});
+        expect(library._refreshes, includeLocal ? 1 : 0);
         expect(completed, isTrue);
         expect(tester.takeException(), isNull);
       },
@@ -333,7 +333,7 @@ void main() {
         // The history refresh also invalidates the disk-backed cover cache.
         for (
           var attempt = 0;
-          attempt < 50 && history.updates.isEmpty;
+          attempt < 50 && history._updates.isEmpty;
           attempt++
         ) {
           await tester.pump(const Duration(milliseconds: 100));
@@ -344,7 +344,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(requests, hasLength(2));
         expect(requests.last['file_path'], path);
-        expect(history.updates, {'track': 'USABC2600001'});
+        expect(history._updates, {'track': 'USABC2600001'});
         expect(find.byType(SelectionBottomBar), findsNothing);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
