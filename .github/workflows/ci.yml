@@ -155,7 +155,8 @@ jobs:
     name: Rust iOS libraries & release application
     runs-on: macos-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ios == 'true'
+    # Keep pull-request validation focused on Android; retain iOS builds for main pushes.
+    if: github.event_name != 'pull_request' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ios == 'true')
 
     steps:
       - name: Checkout repository
