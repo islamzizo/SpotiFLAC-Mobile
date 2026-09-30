@@ -145,6 +145,7 @@ Future<void> reEnrichLocalTracks(
   required Future<void> Function() onSelectionHide,
   required VoidCallback onSelectionRestore,
   required VoidCallback onComplete,
+  Future<void> Function()? refreshLibrary,
 }) async {
   if (selected.isEmpty) return;
   // Capture a stable route context before a caller removes its overlay.
@@ -243,14 +244,18 @@ Future<void> reEnrichLocalTracks(
   if (!context.mounted || !isActive()) return;
   if (!cancelled) BatchProgressDialog.dismiss(context);
 
-  try {
-    if (!ref.read(localLibraryProvider).isScanning) {
-      await ref.read(localLibraryProvider.notifier).scanAllSources();
-    } else {
+  if (refreshLibrary != null) {
+    await refreshLibrary();
+  } else {
+    try {
+      if (!ref.read(localLibraryProvider).isScanning) {
+        await ref.read(localLibraryProvider.notifier).scanAllSources();
+      } else {
+        await ref.read(localLibraryProvider.notifier).reloadFromStorage();
+      }
+    } catch (_) {
       await ref.read(localLibraryProvider.notifier).reloadFromStorage();
     }
-  } catch (_) {
-    await ref.read(localLibraryProvider.notifier).reloadFromStorage();
   }
 
   if (!context.mounted || !isActive()) return;
