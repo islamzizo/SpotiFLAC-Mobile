@@ -7,6 +7,7 @@ import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/screens/main_shell.dart';
 import 'package:spotiflac_android/screens/setup_screen.dart';
 import 'package:spotiflac_android/screens/tutorial_screen.dart';
+import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/app_navigation_service.dart';
 import 'package:spotiflac_android/services/app_orientation.dart';
@@ -46,6 +47,7 @@ final _routerProvider = Provider<GoRouter>((ref) {
     routes: [
       GoRoute(path: '/', builder: (context, state) => const MainShell()),
       GoRoute(path: '/setup', builder: (context, state) => const SetupScreen()),
+      GoRoute(path: '/spotify', builder: (context, state) => const SpotifyAccountScreen()),
       GoRoute(
         path: '/tutorial',
         builder: (context, state) => const TutorialScreen(),
