@@ -35,6 +35,15 @@ class LyricsSettingsPage extends ConsumerWidget {
               child: SettingsGroup(
                 children: [
                   SettingsSwitchItem(
+                    icon: Icons.light_mode_outlined,
+                    title: context.l10n.lyricsKeepScreenOn,
+                    subtitle: context.l10n.lyricsKeepScreenOnSubtitle,
+                    value: settings.keepScreenOnLyrics,
+                    onChanged: (value) => ref
+                        .read(settingsProvider.notifier)
+                        .setKeepScreenOnLyrics(value),
+                  ),
+                  SettingsSwitchItem(
                     icon: Icons.subtitles_outlined,
                     title: context.l10n.optionsEmbedLyrics,
                     subtitle: settings.embedMetadata

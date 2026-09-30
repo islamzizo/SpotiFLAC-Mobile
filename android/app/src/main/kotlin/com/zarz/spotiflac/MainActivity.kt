@@ -81,6 +81,7 @@ class MainActivity: FlutterFragmentActivity() {
     private var concertCalendarChannel: MethodChannel? = null
     internal val coreBackend: CoreBackend by lazy { createCoreBackend(applicationContext) }
     private val nativeBackendMethods = setOf(
+        "setScreenAwake",
         "getBackendImplementations",
         "ensureInstallMarker",
         "prepareRuntimeState",
@@ -1080,6 +1081,15 @@ class MainActivity: FlutterFragmentActivity() {
                         return@launch
                     }
                     when (call.method) {
+                        "setScreenAwake" -> {
+                            val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                            if (call.argument<Boolean>("enabled") == true) {
+                                window.addFlags(flag)
+                            } else {
+                                window.clearFlags(flag)
+                            }
+                            result.success(null)
+                        }
                         "consumeVerificationNotification" -> {
                             val payload = pendingVerificationNotification
                             pendingVerificationNotification = null

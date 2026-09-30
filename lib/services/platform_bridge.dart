@@ -173,6 +173,15 @@ class PlatformBridge {
   static const int notificationPercentTotal = 10000;
 
   static const _channel = MethodChannel('com.zarz.spotiflac/backend');
+
+  static Future<void> setScreenAwake(bool enabled) async {
+    if (defaultTargetPlatform != TargetPlatform.android &&
+        defaultTargetPlatform != TargetPlatform.iOS) {
+      return;
+    }
+    await _channel.invokeMethod<void>('setScreenAwake', {'enabled': enabled});
+  }
+
   static const _jsonResultFileKey = '__json_file';
   static const _backgroundJsonDecodeThresholdBytes = 128 * 1024;
   static const _metadataCacheTtl = Duration(minutes: 20);

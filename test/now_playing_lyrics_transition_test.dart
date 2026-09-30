@@ -63,6 +63,7 @@ void main() {
         .setMockMethodCallHandler(secureStorageChannel, (_) async => null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(backendChannel, (call) async {
+          if (call.method == 'setScreenAwake') return null;
           if (call.method != 'readFileMetadata') {
             fail('Unexpected platform call: ${call.method}');
           }

@@ -262,6 +262,12 @@ import UniformTypeIdentifiers
             "getLibraryScanProgress", "cancelLibraryScan", "parseCueSheet", "extractCoverToFile",
             "rewriteSplitArtistTags", "writeM4AFreeformTags", "ensureAC4Config", "writeAC4Metadata", "reEnrichFile",
             "checkHiResAuthenticity"]
+        if call.method == "setScreenAwake" {
+            let args = call.arguments as? [String: Any]
+            UIApplication.shared.isIdleTimerDisabled = args?["enabled"] as? Bool ?? false
+            result(nil)
+            return
+        }
         if coreBackend.routesApplication && !osMethods.contains(call.method) {
             DispatchQueue.global(qos: .userInitiated).async {
                 do {

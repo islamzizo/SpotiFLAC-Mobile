@@ -42,6 +42,7 @@ import 'package:spotiflac_android/widgets/lyric_supplement_transition.dart';
 import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
 import 'package:spotiflac_android/widgets/audio_output_button.dart';
 import 'package:spotiflac_android/widgets/lyric_gap_indicator.dart';
+import 'package:spotiflac_android/widgets/lyrics_screen_awake.dart';
 import 'package:spotiflac_android/widgets/player_artwork.dart';
 import 'package:spotiflac_android/widgets/player_queue_dismissible.dart';
 import 'package:spotiflac_android/widgets/player_track_swipe.dart';
@@ -549,6 +550,15 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return LyricsScreenAwake(
+      visible:
+          _currentPage == 1 &&
+          ref.watch(currentMediaItemProvider).value != null,
+      child: _buildPlayer(context),
+    );
+  }
+
+  Widget _buildPlayer(BuildContext context) {
     final mornye = context.isMornye;
     final colorScheme = mornye
         ? MornyeTheme.fromContext(

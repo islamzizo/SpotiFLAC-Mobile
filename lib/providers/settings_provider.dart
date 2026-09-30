@@ -613,6 +613,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     }
   }
 
+  void setKeepScreenOnLyrics(bool enabled) {
+    state = state.copyWith(keepScreenOnLyrics: enabled);
+    _saveSettings();
+  }
+
   void setLyricsMode(String mode) {
     if (mode == 'embed' || mode == 'external' || mode == 'both') {
       state = state.copyWith(lyricsMode: mode);
