@@ -30,10 +30,12 @@ Object? _decodeJsonFileInBackground(String path) {
 class LibraryScanNDJSONFile {
   final File file;
   final int expectedCount;
+  final int errorCount;
 
   const LibraryScanNDJSONFile({
     required this.file,
     required this.expectedCount,
+    this.errorCount = 0,
   });
 
   Stream<Map<String, dynamic>> rows() async* {
@@ -2344,11 +2346,6 @@ class PlatformBridge {
           errors != errors.toInt()) {
         throw FormatException('$method returned an invalid error count');
       }
-      if (errors > 0) {
-        throw FormatException(
-          'Library scan could not read $errors files; the existing Library was kept',
-        );
-      }
       final pathValue = result['path'];
       final countValue = result['count'];
       if (pathValue is! String || pathValue.trim().isEmpty) {
@@ -2366,7 +2363,11 @@ class PlatformBridge {
       if (!await file.exists()) {
         throw FormatException('$method did not create its output file');
       }
-      return LibraryScanNDJSONFile(file: file, expectedCount: count);
+      return LibraryScanNDJSONFile(
+        file: file,
+        expectedCount: count,
+        errorCount: errors.toInt(),
+      );
     } catch (_) {
       // Keep partial output; native SAF scan resumes from its sidecar.
       rethrow;

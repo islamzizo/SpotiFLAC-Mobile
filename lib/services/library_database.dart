@@ -1059,6 +1059,7 @@ class LibraryDatabase {
     String sourceId,
     Stream<Map<String, dynamic>> items, {
     int batchSize = 300,
+    bool preserveMissing = false,
   }) async {
     if (batchSize <= 0) {
       throw ArgumentError.value(batchSize, 'batchSize', 'Must be positive');
@@ -1148,15 +1149,11 @@ class LibraryDatabase {
       final selectedColumns = columns.map((column) => 's.$column').join(', ');
 
       await db.transaction((txn) async {
-        await txn.rawDelete(
-          'DELETE FROM library_path_keys WHERE item_id IN '
-          '(SELECT id FROM library WHERE source_id = ?)',
-          [sourceId],
-        );
-        await txn.delete(
-          'library',
-          where: 'source_id = ?',
-          whereArgs: [sourceId],
+        await deleteReplacedLibraryScanRows(
+          txn,
+          sourceId,
+          stageTable: _scanStageTable,
+          preserveMissing: preserveMissing,
         );
         await txn.rawDelete('''
           DELETE FROM library_path_keys

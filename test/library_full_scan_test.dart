@@ -123,7 +123,7 @@ void main() {
 
     for (final count in [0, 2]) {
       test(
-        'partial scan cannot replace the index ($count rows, SAF=$saf)',
+        'partial scan exposes readable rows and errors ($count rows, SAF=$saf)',
         () async {
           messenger.setMockMethodCallHandler(backend, (call) async {
             final output = File(
@@ -132,16 +132,10 @@ void main() {
             await output.writeAsString('{"id":"readable"}\n' * count);
             return {'path': output.path, 'count': count, 'error_count': 3};
           });
-          await expectLater(
-            scan(),
-            throwsA(
-              isA<FormatException>().having(
-                (error) => error.message,
-                'reason',
-                contains('existing Library was kept'),
-              ),
-            ),
-          );
+          final partial = await scan();
+          expect(partial.errorCount, 3);
+          expect(partial.expectedCount, count);
+          expect(await partial.rows().toList(), hasLength(count));
         },
       );
     }

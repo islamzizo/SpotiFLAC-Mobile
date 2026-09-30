@@ -543,6 +543,8 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         scanIsFinalizing: true,
         scanProgress: state.scanProgress >= 99 ? state.scanProgress : 99,
         scanCurrentFile: null,
+        scannedFiles: scanFile.expectedCount,
+        scanErrorCount: scanFile.errorCount,
       );
       Stream<Map<String, dynamic>> validatedRows() async* {
         var decodedRows = 0;
@@ -561,7 +563,11 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         }
       }
 
-      final result = await _db.replaceSourceStream(sourceId, validatedRows());
+      final result = await _db.replaceSourceStream(
+        sourceId,
+        validatedRows(),
+        preserveMissing: scanFile.errorCount > 0,
+      );
       _log.i(
         'Stream-ingested ${result.inserted}/${scanFile.expectedCount} scan rows '
         '(${result.skipped} downloads excluded)',
@@ -970,16 +976,23 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   }
 
   Future<void> _handleLibraryScanProgress(Map<String, dynamic> progress) async {
-    if (_scanCancelRequested) return;
+    // A newly subscribed native stream may still contain the previous scan's
+    // terminal snapshot (including the initial idle snapshot). Only the scan
+    // method's result can start finalization; never stop polling on that replay.
+    if (_scanCancelRequested ||
+        !state.isScanning ||
+        state.scanIsFinalizing ||
+        progress['is_complete'] == true) {
+      return;
+    }
     final nextProgress = (progress['progress_pct'] as num?)?.toDouble() ?? 0;
     final normalizedProgress = ((nextProgress * 10).round() / 10).clamp(
       0.0,
       100.0,
     );
-    final isComplete = progress['is_complete'] == true;
-    final displayProgress = isComplete
+    final displayProgress = normalizedProgress >= 100.0
         ? 99.0
-        : (normalizedProgress >= 100.0 ? 99.0 : normalizedProgress);
+        : normalizedProgress;
     final currentFile = progress['current_file'] as String?;
     final totalFiles = (progress['total_files'] as num?)?.toInt() ?? 0;
     final scannedFiles = (progress['scanned_files'] as num?)?.toInt() ?? 0;
@@ -987,7 +1000,6 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
     final shouldUpdateState =
         state.scanProgress != displayProgress ||
-        state.scanIsFinalizing != isComplete ||
         state.scanCurrentFile != currentFile ||
         state.scanTotalFiles != totalFiles ||
         state.scannedFiles != scannedFiles ||
@@ -995,9 +1007,8 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
     if (shouldUpdateState) {
       state = state.copyWith(
-        scanIsFinalizing: isComplete,
         scanProgress: displayProgress,
-        scanCurrentFile: isComplete ? null : currentFile,
+        scanCurrentFile: currentFile,
         scanTotalFiles: totalFiles,
         scannedFiles: scannedFiles,
         scanErrorCount: errorCount,
@@ -1007,7 +1018,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     if (_shouldShowScanProgressNotification(
       progress: normalizedProgress,
       totalFiles: totalFiles,
-      isComplete: isComplete,
+      isComplete: false,
     )) {
       await _showScanProgressNotification(
         progress: normalizedProgress,
@@ -1015,10 +1026,6 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         totalFiles: totalFiles,
         currentFile: currentFile,
       );
-    }
-
-    if (isComplete) {
-      _stopProgressPolling();
     }
   }
 
