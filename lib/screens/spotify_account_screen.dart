@@ -198,7 +198,8 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
         padding: const EdgeInsets.only(top: 8, bottom: 12),
         itemCount: _playlists.length + 1,
         itemBuilder: (context, index) {
-          if (index == 0) return Padding(
+          if (index == 0) {
+            return Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
             child: Row(children: [
               const Icon(Icons.library_music_outlined),
@@ -209,7 +210,8 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
                 icon: const Icon(Icons.sync), label: const Text('Sync'),
               ),
             ]),
-          );
+            );
+          }
           final playlist = _playlists[index - 1];
           final opening = _openingId == playlist.id;
           final liked = playlist.id == 'liked-songs';
@@ -222,7 +224,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
               : ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: Image.network(playlist.coverUrl!, width: 52, height: 52, fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const CircleAvatar(child: Icon(Icons.music_note))),
+                    errorBuilder: (context, error, stackTrace) => const CircleAvatar(child: Icon(Icons.music_note))),
                 ),
             title: Text(playlist.name, maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text(subtitle.isEmpty ? 'Spotify playlist' : subtitle),
