@@ -32,9 +32,13 @@ pub(super) fn download(
                 stream.discard(check);
                 break stream.response;
             }
-            Ok(stream) => {
+            Ok(mut stream) => {
+                let status = stream.response.status;
                 let mut failure = status_failure(&stream.response, &options.policy, attempts);
-                failure.error = format!("chunked probe HTTP {}", stream.response.status);
+                failure.error = format!("chunked probe HTTP {status}");
+                // Consume small retryable error bodies so HTTP/1.1 can return
+                // the connection to the pool for the next probe attempt.
+                stream.discard(check);
                 failure
             }
             Err(error) => Failure::new(
