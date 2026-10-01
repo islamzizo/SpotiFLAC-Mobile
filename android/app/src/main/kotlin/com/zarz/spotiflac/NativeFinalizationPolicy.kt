@@ -1,7 +1,6 @@
 package com.zarz.spotiflac
 
 import java.util.Locale
-import java.util.regex.Pattern
 import kotlin.math.roundToInt
 
 /**
@@ -374,12 +373,17 @@ internal object NativeFinalizationPolicy {
             ?: ""
     }
 
-    // Same separator set as the Rust writer and Dart's primaryArtistTagValue;
-    // Unicode classes keep \s aligned with their whitespace handling.
-    private val primaryArtistSeparator = Pattern.compile(
-        "\\s*[,;&]\\s*|\\s+x\\s+|\\s+(?:feat(?:uring)?|ft|with)\\.?(?:\\s+|$)",
-        Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CHARACTER_CLASS,
-    ).toRegex()
+    // Same separator set as the Rust writer and Dart's primaryArtistTagValue.
+    // Android's regex engine rejects Pattern.UNICODE_CHARACTER_CLASS when this
+    // object initializes, so Unicode spaces are listed explicitly instead.
+    private const val PRIMARY_ARTIST_SPACE = "[\\s\\p{Z}]"
+    private val primaryArtistSeparator = Regex(
+        "$PRIMARY_ARTIST_SPACE*[,;&]$PRIMARY_ARTIST_SPACE*" +
+            "|$PRIMARY_ARTIST_SPACE+x$PRIMARY_ARTIST_SPACE+" +
+            "|$PRIMARY_ARTIST_SPACE+(?:feat(?:uring)?|ft|with)\\.?" +
+            "(?:$PRIMARY_ARTIST_SPACE+|$)",
+        RegexOption.IGNORE_CASE,
+    )
 
     /**
      * Artist tag value for [mode]. Only "primary" changes the value: the first

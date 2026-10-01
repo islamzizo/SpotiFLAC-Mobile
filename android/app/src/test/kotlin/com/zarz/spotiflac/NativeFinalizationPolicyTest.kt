@@ -21,6 +21,8 @@ class NativeFinalizationPolicyTest {
             "Artist A with Artist B" to "Artist A",
             "Artist A x Artist B" to "Artist A",
             "Artist A X Artist B" to "Artist A",
+            "Artist A\u00A0feat.\u00A0Artist B" to "Artist A",
+            "Artist A\u3000x\u3000Artist B" to "Artist A",
             " , Artist A, Artist B" to "Artist A",
             "Malcolm X" to "Malcolm X",
             "Artist Without Fear" to "Artist Without Fear",
