@@ -24,6 +24,7 @@ class AppSearchField extends StatelessWidget {
     this.suffixIcon,
     this.focusNode,
     this.autofocus = false,
+    this.samplesBackdrop = true,
   });
 
   final TextEditingController controller;
@@ -36,6 +37,10 @@ class AppSearchField extends StatelessWidget {
   final Widget? suffixIcon;
   final FocusNode? focusNode;
   final bool autofocus;
+
+  /// See [MornyeGlass.samplesBackdrop]: false where the field scrolls over
+  /// the plain page background.
+  final bool samplesBackdrop;
 
   @override
   Widget build(BuildContext context) {
@@ -107,6 +112,7 @@ class AppSearchField extends StatelessWidget {
       builder: (context, ref, child) => MornyeGlass.navigation(
         radius: 28,
         blurEnabled: ref.watch(mornyeBlurEnabledProvider),
+        samplesBackdrop: samplesBackdrop,
         child: child!,
       ),
       child: field,

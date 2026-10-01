@@ -128,6 +128,7 @@ class _RepoTabState extends ConsumerState<RepoTab> {
                     controller: _searchController,
                     hintText: context.l10n.storeSearch,
                     clearTooltip: context.l10n.dialogClear,
+                    samplesBackdrop: false,
                     onChanged: (value) =>
                         ref.read(repoProvider.notifier).setSearchQuery(value),
                     onClear: () =>
@@ -657,9 +658,11 @@ class _CategoryChip extends ConsumerWidget {
         label: label,
         onTap: onTap,
         excludeSemantics: true,
+        // Scrolls with the list over the plain page: see ExtensionRepoCard.
         child: MornyeGlass.navigation(
           radius: 24,
           blurEnabled: ref.watch(mornyeBlurEnabledProvider),
+          samplesBackdrop: false,
           child: Material(
             color: Colors.transparent,
             child: InkWell(

@@ -257,7 +257,8 @@ class MornyeGlass extends StatelessWidget {
     this.backdropFilter,
   }) : _useLens = true,
        firstInGroup = true,
-       lastInGroup = true;
+       lastInGroup = true,
+       samplesBackdrop = true;
 
   /// Shares the navigation bar's tint, blur and subtle edge reflections.
   const MornyeGlass.navigation({
@@ -271,10 +272,17 @@ class MornyeGlass extends StatelessWidget {
     this.tintOpacity,
     this.tintColor,
     this.backdropFilter,
+    this.samplesBackdrop = true,
   }) : _useLens = false;
 
   final Widget child;
   final bool blurEnabled;
+
+  /// False for panels that only ever scroll over the plain page background.
+  /// Blurring a uniform backdrop changes nothing visible but re-filters the
+  /// panel's whole area on every scroll frame; the translucent tint, rim and
+  /// clarity preference stay exactly as with sampling.
+  final bool samplesBackdrop;
   final double radius;
   final bool _useLens;
   final bool firstInGroup;
@@ -311,6 +319,7 @@ class MornyeGlass extends StatelessWidget {
       tintOpacity: tintOpacity,
       tintColor: tintColor,
       backdropFilter: backdropFilter,
+      samplesBackdrop: samplesBackdrop,
       child: useGlass ? lens(child) : child,
     );
   }
@@ -389,6 +398,7 @@ class _MornyeGlassSurface extends StatelessWidget {
     this.tintOpacity,
     this.tintColor,
     this.backdropFilter,
+    this.samplesBackdrop = true,
   });
 
   final Widget child;
@@ -400,6 +410,7 @@ class _MornyeGlassSurface extends StatelessWidget {
   final double? tintOpacity;
   final Color? tintColor;
   final ImageFilter? backdropFilter;
+  final bool samplesBackdrop;
 
   @override
   Widget build(BuildContext context) {
@@ -452,7 +463,7 @@ class _MornyeGlassSurface extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: shape,
-          child: useBlur
+          child: useBlur && samplesBackdrop
               ? BackdropFilter(
                   filter:
                       backdropFilter ?? (dark ? _darkBackdrop : _backdropBlur),

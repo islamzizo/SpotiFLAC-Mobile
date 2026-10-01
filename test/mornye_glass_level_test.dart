@@ -5,6 +5,7 @@ import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_switch.dart';
+import 'package:spotiflac_android/widgets/extension_repo_card.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 
 MornyeGlassLevel _levelFor({
@@ -182,6 +183,70 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('plain-page panels keep the glass tint without a backdrop pass', (
+    tester,
+  ) async {
+    Color? tintOf(Finder panel) {
+      final decorated = tester
+          .widgetList<DecoratedBox>(
+            find.descendant(of: panel, matching: find.byType(DecoratedBox)),
+          )
+          .map((box) => box.decoration)
+          .whereType<BoxDecoration>()
+          .firstWhere((decoration) => decoration.color != null);
+      return decorated.color;
+    }
+
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          theme: MornyeTheme.build(Brightness.dark),
+          home: const Scaffold(
+            body: Column(
+              children: [
+                MornyeGlass.navigation(
+                  key: ValueKey('sampled'),
+                  blurEnabled: true,
+                  child: SizedBox(width: 200, height: 40),
+                ),
+                MornyeGlass.navigation(
+                  key: ValueKey('plain-page'),
+                  blurEnabled: true,
+                  samplesBackdrop: false,
+                  child: SizedBox(width: 200, height: 40),
+                ),
+                ExtensionRepoCard(child: SizedBox(width: 200, height: 40)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final sampled = find.byKey(const ValueKey('sampled'));
+    final plain = find.byKey(const ValueKey('plain-page'));
+    expect(
+      find.descendant(of: sampled, matching: find.byType(BackdropFilter)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: plain, matching: find.byType(BackdropFilter)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(ExtensionRepoCard),
+        matching: find.byType(BackdropFilter),
+      ),
+      findsNothing,
+    );
+    // Same translucent material, so the page looks identical behind it.
+    expect(tintOf(plain), tintOf(sampled));
+    expect(tintOf(plain)!.a, lessThan(1));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('liquid level keeps the shader glass', (tester) async {
     await tester.pumpWidget(
