@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -114,6 +116,54 @@ void main() {
     expect(find.text('Library'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'low clarity uses a small blur and mid-range glass caps its radius',
+    (tester) async {
+      Future<ui.ImageFilter?> filterFor(double clarity, bool liquid) async {
+        await tester.pumpWidget(
+          ProviderScope(
+            key: UniqueKey(),
+            overrides: [
+              mornyeGlassLevelProvider.overrideWithValue(
+                liquid ? MornyeGlassLevel.liquid : MornyeGlassLevel.frosted,
+              ),
+            ],
+            child: MaterialApp(
+              theme: MornyeTheme.build(Brightness.light, glassClarity: clarity),
+              home: const MornyeGlass.navigation(
+                blurEnabled: true,
+                child: SizedBox(width: 200, height: 50),
+              ),
+            ),
+          ),
+        );
+        final filters = tester.widgetList<BackdropFilter>(
+          find.byType(BackdropFilter),
+        );
+        return filters.isEmpty ? null : filters.single.filter;
+      }
+
+      expect(await filterFor(0, false), isNull);
+      expect(await filterFor(0.1, false), isNull);
+      expect(
+        await filterFor(0.25, false),
+        ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+      );
+      expect(
+        await filterFor(0.1, true),
+        ui.ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+      );
+      expect(
+        await filterFor(1, false),
+        ui.ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+      );
+      expect(
+        await filterFor(1, true),
+        ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+      );
+    },
+  );
 
   for (final clarity in [0.0, 0.5]) {
     testWidgets('liquid tab and segment pills follow clarity ($clarity)', (

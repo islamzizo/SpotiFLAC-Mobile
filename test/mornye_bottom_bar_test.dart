@@ -137,6 +137,44 @@ void main() {
 
   const albumBlue = Color(0xff464566);
 
+  testWidgets(
+    'player and navbar share a backdrop while moving capsules remain isolated',
+    (tester) async {
+      await pumpShell(tester, blur: true, liquidGlass: false);
+      void expectSharedBackdrop() {
+        final filters = find.descendant(
+          of: find.byType(MornyeBottomBar),
+          matching: find.byType(BackdropFilter),
+        );
+        final renderers = filters
+            .evaluate()
+            .map(
+              (element) => element.findRenderObject()! as RenderBackdropFilter,
+            )
+            .toList();
+        final shared = renderers
+            .where((filter) => filter.backdropKey != null)
+            .toList();
+        expect(shared, hasLength(2));
+        expect(shared[0].backdropKey, same(shared[1].backdropKey));
+        // Side capsules overlap the folding tabs and must not join their group.
+        expect(
+          renderers.where((filter) => filter.backdropKey == null),
+          hasLength(2),
+        );
+      }
+
+      expectSharedBackdrop();
+      chrome.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 190));
+      expectSharedBackdrop();
+      await tester.pumpAndSettle();
+      expectSharedBackdrop();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final liquidGlass in [false, true]) {
     testWidgets(
       'navbar keeps its backdrop blurred throughout motion (liquid: $liquidGlass)',

@@ -357,36 +357,42 @@ class MornyeGlass extends StatelessWidget {
 
 /// Keep the capsule legible independently of the shader renderer. The liquid
 /// lens adds refraction above this frosted base, never above bare page text.
-class _MornyeGlassSurface extends StatelessWidget {
-  static final _backdropBlur = ImageFilter.blur(sigmaX: 18, sigmaY: 18);
+class _MornyeGlassSurface extends ConsumerWidget {
+  // Reuse a small set of filters rather than constructing a new blur for every
+  // slider frame. Nearly opaque glass needs a much smaller sampling radius.
+  static final _backdropBlurs = [
+    for (final sigma in [4.0, 8.0, 12.0, 18.0])
+      ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+  ];
   // Reduce luminance without flattening the backdrop's color differences.
   // Subtract 35% of Rec.709 luma from every channel: white is bounded at 0.65,
   // while colored artwork stays visible without per-frame pixel readback.
-  static final _darkBackdrop = ImageFilter.compose(
-    outer: const ColorFilter.matrix([
-      0.92559,
-      -0.25032,
-      -0.02527,
-      0,
-      0,
-      -0.07441,
-      0.74968,
-      -0.02527,
-      0,
-      0,
-      -0.07441,
-      -0.25032,
-      0.97473,
-      0,
-      0,
-      0,
-      0,
-      0,
-      1,
-      0,
-    ]),
-    inner: _backdropBlur,
-  );
+  static const _darken = ColorFilter.matrix([
+    0.92559,
+    -0.25032,
+    -0.02527,
+    0,
+    0,
+    -0.07441,
+    0.74968,
+    -0.02527,
+    0,
+    0,
+    -0.07441,
+    -0.25032,
+    0.97473,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+  ]);
+  static final _darkBackdrops = [
+    for (final blur in _backdropBlurs)
+      ImageFilter.compose(outer: _darken, inner: blur),
+  ];
 
   const _MornyeGlassSurface({
     required this.child,
@@ -413,12 +419,21 @@ class _MornyeGlassSurface extends StatelessWidget {
   final bool samplesBackdrop;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
     final clarity = MornyeTheme.glassClarityOf(context);
     final useBlur =
         blurEnabled && clarity > 0 && !MediaQuery.highContrastOf(context);
     final dark = scheme.brightness == Brightness.dark;
+    final frosted =
+        ref.watch(mornyeGlassLevelProvider) == MornyeGlassLevel.frosted;
+    final filterIndex = clarity <= 0.25
+        ? 0
+        : frosted || clarity <= 0.50
+        ? 1
+        : clarity <= 0.75
+        ? 2
+        : 3;
     final shape = BorderRadius.vertical(
       top: firstInGroup ? Radius.circular(radius) : Radius.zero,
       bottom: lastInGroup ? Radius.circular(radius) : Radius.zero,
@@ -434,6 +449,10 @@ class _MornyeGlassSurface extends StatelessWidget {
             baseTint,
           )
         : scheme.surfaceContainerHigh;
+    // On mid-range GPUs an almost opaque tint hides the blur anyway. Keep its
+    // translucency and rim without paying for a backdrop pass at low clarity.
+    final sampleBackdrop =
+        useBlur && samplesBackdrop && (!frosted || tint.a < 0.95);
     final surface = DecoratedBox(
       decoration: BoxDecoration(color: tint, borderRadius: shape),
       child: child,
@@ -463,10 +482,13 @@ class _MornyeGlassSurface extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: shape,
-          child: useBlur && samplesBackdrop
-              ? BackdropFilter(
+          child: sampleBackdrop
+              ? BackdropFilter.grouped(
                   filter:
-                      backdropFilter ?? (dark ? _darkBackdrop : _backdropBlur),
+                      backdropFilter ??
+                      (dark
+                          ? _darkBackdrops[filterIndex]
+                          : _backdropBlurs[filterIndex]),
                   child: surface,
                 )
               : surface,

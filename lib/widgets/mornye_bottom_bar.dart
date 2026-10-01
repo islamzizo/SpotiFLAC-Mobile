@@ -283,50 +283,55 @@ class _MornyeBottomBarState extends ConsumerState<MornyeBottomBar>
             return Stack(
               clipBehavior: Clip.none,
               children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (hasPlayer || amount > 0)
-                      Align(
-                        alignment: Alignment.bottomCenter,
-                        // With no track, introducing the row at full height would
-                        // make the bar jump taller on the first animation frame.
-                        heightFactor: hasPlayer ? 1 : amount,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            bottom: hasPlayer
-                                ? tabGap + (8 - tabGap) * amount
-                                : 8,
+                // Only the non-overlapping player and tab surfaces share a
+                // backdrop. Moving side capsules stay outside this group: they
+                // cross the tab bar while folding and need separate samples.
+                BackdropGroup(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (hasPlayer || amount > 0)
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          // With no track, introducing the row at full height would
+                          // make the bar jump taller on the first animation frame.
+                          heightFactor: hasPlayer ? 1 : amount,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              bottom: hasPlayer
+                                  ? tabGap + (8 - tabGap) * amount
+                                  : 8,
+                            ),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 60 * amount,
+                                  height: hasPlayer ? 48 + 4 * amount : 52,
+                                ),
+                                Expanded(child: player),
+                                SizedBox(
+                                  width: 60 * amount,
+                                  height: hasPlayer ? 48 + 4 * amount : 52,
+                                ),
+                              ],
+                            ),
                           ),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 60 * amount,
-                                height: hasPlayer ? 48 + 4 * amount : 52,
-                              ),
-                              Expanded(child: player),
-                              SizedBox(
-                                width: 60 * amount,
-                                height: hasPlayer ? 48 + 4 * amount : 52,
-                              ),
-                            ],
+                        ),
+                      ClipRect(
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          heightFactor: 1 - amount,
+                          child: IgnorePointer(
+                            ignoring: amount > 0.5,
+                            child: ExcludeSemantics(
+                              excluding: amount > 0.5,
+                              child: amount == 0 ? fullTabs : foldingTabs,
+                            ),
                           ),
                         ),
                       ),
-                    ClipRect(
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        heightFactor: 1 - amount,
-                        child: IgnorePointer(
-                          ignoring: amount > 0.5,
-                          child: ExcludeSemantics(
-                            excluding: amount > 0.5,
-                            child: amount == 0 ? fullTabs : foldingTabs,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 movingIcon(leading: true, surface: leadingSurface),
                 movingIcon(leading: false, surface: searchSurface),
