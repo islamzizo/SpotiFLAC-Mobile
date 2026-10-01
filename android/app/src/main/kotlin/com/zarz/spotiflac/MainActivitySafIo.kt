@@ -122,19 +122,27 @@ internal fun MainActivity.extFromMimeType(mime: String?): String {
         }
     }
 
-internal fun MainActivity.copyUriToTemp(uri: Uri, fallbackExt: String? = null): String? {
+/** [displayName] skips a provider name query when the caller already listed it. */
+internal fun MainActivity.copyUriToTemp(
+    uri: Uri,
+    fallbackExt: String? = null,
+    displayName: String? = null,
+): String? {
         var tempFile: File? = null
         var success = false
 
         try {
-            val mime = try { contentResolver.getType(uri) } catch (_: Exception) { null }
             val nameHint = (
-                try { DocumentFile.fromSingleUri(this, uri)?.name } catch (_: Exception) { null }
+                displayName
+                    ?: try { DocumentFile.fromSingleUri(this, uri)?.name } catch (_: Exception) { null }
                     ?: uri.lastPathSegment
                     ?: ""
             ).lowercase(Locale.ROOT)
             val extFromName = extFromFileName(nameHint)
-            val extFromMime = extFromMimeType(mime)
+            // The MIME type only matters when the name has no extension.
+            val extFromMime = if (extFromName.isNotBlank()) "" else extFromMimeType(
+                try { contentResolver.getType(uri) } catch (_: Exception) { null },
+            )
             val ext = if (extFromName.isNotBlank()) extFromName else if (extFromMime.isNotBlank()) extFromMime else (fallbackExt ?: "")
             val suffix = ext.ifBlank { ".tmp" }
             tempFile = coreBackend.createTemporaryMediaFile(this, "saf_", suffix)
