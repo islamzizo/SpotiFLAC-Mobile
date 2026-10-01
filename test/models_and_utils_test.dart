@@ -1355,6 +1355,76 @@ void main() {
       expect(shouldSplitVorbisArtistTags(artistTagModeSplitVorbis), isTrue);
       expect(shouldSplitVorbisArtistTags(artistTagModeJoined), isFalse);
     });
+
+    // Shared with the Rust and Kotlin primary-artist tests; keep in sync.
+    test('primary artist mode keeps the first credited artist', () {
+      for (final (input, expected) in [
+        ('Calle 24, Chino Pacas', 'Calle 24'),
+        ('Calle 24 & Chino Pacas', 'Calle 24'),
+        ('Artist A; Artist B', 'Artist A'),
+        ('Artist A feat. Artist B', 'Artist A'),
+        ('Artist A Feat Artist B', 'Artist A'),
+        ('Artist A ft. Artist B', 'Artist A'),
+        ('Artist A featuring Artist B', 'Artist A'),
+        ('Artist A with Artist B', 'Artist A'),
+        ('Artist A x Artist B', 'Artist A'),
+        ('Artist A X Artist B', 'Artist A'),
+        (' , Artist A, Artist B', 'Artist A'),
+        ('Malcolm X', 'Malcolm X'),
+        ('Artist Without Fear', 'Artist Without Fear'),
+        ('Maxx', 'Maxx'),
+        ('AC/DC', 'AC/DC'),
+        ('  Various Artists  ', 'Various Artists'),
+        ('', ''),
+      ]) {
+        expect(primaryArtistTagValue(input), expected, reason: input);
+        expect(
+          artistTagValueForMode(input, ' Primary '),
+          expected,
+          reason: input,
+        );
+      }
+      for (final mode in [artistTagModeJoined, artistTagModeSplitVorbis]) {
+        expect(artistTagValueForMode('A, B', mode), 'A, B');
+      }
+      expect(artistTagModes, contains(artistTagModePrimary));
+      expect(
+        artistTagModeForExistingTags(artistTagModePrimary),
+        artistTagModeJoined,
+      );
+      expect(
+        artistTagModeForExistingTags(artistTagModeSplitVorbis),
+        artistTagModeSplitVorbis,
+      );
+    });
+
+    test('primary artist mode rewrites every artist key spelling', () {
+      final metadata = {
+        'ARTIST': 'A, B',
+        'album_artist': 'A & B',
+        'ALBUM ARTIST': 'A feat. B',
+        'albumArtist': 'A x B',
+        'TITLE': 'A, B',
+        'COMPOSER': 'A, B',
+        'artist': '',
+      };
+      expect(applyArtistTagModeToMetadata(metadata, artistTagModePrimary), {
+        'ARTIST': 'A',
+        'album_artist': 'A',
+        'ALBUM ARTIST': 'A',
+        'albumArtist': 'A',
+        'TITLE': 'A, B',
+        'COMPOSER': 'A, B',
+        'artist': '',
+      });
+      expect(
+        identical(
+          applyArtistTagModeToMetadata(metadata, artistTagModeJoined),
+          metadata,
+        ),
+        isTrue,
+      );
+    });
   });
 
   group('audio conversion utils', () {

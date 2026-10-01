@@ -607,7 +607,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
   }
 
   void setArtistTagMode(String mode) {
-    if (mode == artistTagModeJoined || mode == artistTagModeSplitVorbis) {
+    if (artistTagModes.contains(mode)) {
       state = state.copyWith(artistTagMode: mode);
       _saveSettings();
     }

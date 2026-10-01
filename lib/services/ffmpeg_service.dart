@@ -1343,8 +1343,13 @@ class FFmpegService {
     required String mp3Path,
     String? coverPath,
     Map<String, String>? metadata,
+    String artistTagMode = artistTagModeJoined,
     bool preserveMetadata = false,
   }) async {
+    // ID3 keeps one artist frame: only the primary mode changes its value.
+    if (metadata != null) {
+      metadata = applyArtistTagModeToMetadata(metadata, artistTagMode);
+    }
     final tempDir = await getTemporaryDirectory();
     final tempOutput = _nextTempEmbedPath(tempDir.path, '.mp3');
     final lyrics = AudioMetadataMapper.extractLyricsForId3(metadata);
@@ -1614,8 +1619,13 @@ class FFmpegService {
     required String m4aPath,
     String? coverPath,
     Map<String, String>? metadata,
+    String artistTagMode = artistTagModeJoined,
     bool preserveMetadata = true,
   }) async {
+    // MP4 keeps one artist atom: only the primary mode changes its value.
+    if (metadata != null) {
+      metadata = applyArtistTagModeToMetadata(metadata, artistTagMode);
+    }
     final tempDir = await getTemporaryDirectory();
     final tempOutput = _nextTempEmbedPath(tempDir.path, '.m4a');
 
@@ -1866,6 +1876,10 @@ class FFmpegService {
       _log.e('Unsupported target format: $targetFormat');
       return null;
     }
+    // Conversion carries existing tags over. Primary mode applies to provider
+    // credits (download, re-enrichment) and must not drop names here; the
+    // download auto-conversion embeds its credits after this step.
+    artistTagMode = artistTagModeForExistingTags(artistTagMode);
 
     final resolvedLosslessQuality = isLosslessConversionTarget(format)
         ? await _resolveLosslessQuality(
@@ -1947,12 +1961,14 @@ class FFmpegService {
           mp3Path: outputPath,
           coverPath: coverPath,
           metadata: metadata,
+          artistTagMode: artistTagMode,
         );
       } else if (format == 'aac') {
         embedResult = await embedMetadataToM4a(
           m4aPath: outputPath,
           coverPath: coverPath,
           metadata: metadata,
+          artistTagMode: artistTagMode,
           preserveMetadata: true,
         );
       } else {

@@ -360,6 +360,8 @@
   "@optionsArtistTagModeSplitVorbisSubtitle": {
     "description": "Subtitle for split Vorbis artist tag mode"
   },
+  "optionsArtistTagModePrimary": "Artis utama saja",
+  "optionsArtistTagModePrimarySubtitle": "Tulis hanya artis pertama, seperti \"Artis A\", ke Artis dan Artis Album di semua format, agar pemutar menampilkan satu artis.",
   "optionsExtensionStore": "Repo Ekstensi",
   "@optionsExtensionStore": {
     "description": "Show/hide repo tab"

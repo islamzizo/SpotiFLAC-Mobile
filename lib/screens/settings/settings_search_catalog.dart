@@ -275,7 +275,11 @@ class SettingsSearchCatalog {
         SettingsSearchEntry(
           icon: Icons.people_alt_outlined,
           title: l10n.optionsArtistTagMode,
-          keywords: const ['artist separator', 'multiple artists'],
+          keywords: const [
+            'artist separator',
+            'multiple artists',
+            'primary artist',
+          ],
         ),
         SettingsSearchEntry(
           icon: Icons.photo_size_select_large_outlined,

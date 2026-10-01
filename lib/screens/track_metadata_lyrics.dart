@@ -546,7 +546,11 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
           }
         } catch (_) {}
 
-        final artistTagMode = ref.read(settingsProvider).artistTagMode;
+        // Embedding lyrics rewrites the tags read above; it must not drop
+        // existing artist credits, so the primary mode keeps them joined.
+        final artistTagMode = artistTagModeForExistingTags(
+          ref.read(settingsProvider).artistTagMode,
+        );
         String? ffmpegResult;
         if (isMp3) {
           ffmpegResult = await FFmpegService.embedMetadataToMp3(
@@ -1110,12 +1114,14 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
               mp3Path: ffmpegTarget,
               coverPath: effectiveCoverPath,
               metadata: metadata,
+              artistTagMode: artistTagMode,
             );
           } else if (lower.endsWith('.m4a') || lower.endsWith('.aac')) {
             ffmpegResult = await FFmpegService.embedMetadataToM4a(
               m4aPath: ffmpegTarget,
               coverPath: effectiveCoverPath,
               metadata: metadata,
+              artistTagMode: artistTagMode,
             );
           } else if (lower.endsWith('.opus') || lower.endsWith('.ogg')) {
             ffmpegResult = await FFmpegService.embedMetadataToOpus(

@@ -639,11 +639,19 @@ extension _DownloadQueueEmbedding on DownloadQueueNotifier {
       // no-op for non-AC-4 files, so other m4a downloads fall through to FFmpeg.
       if (isM4a) {
         try {
+          // The AC-4 writer takes no artist mode; resolve it here.
           final ac4Meta = <String, String>{
             'title': track.name,
-            'artist': track.artistName,
+            'artist': artistTagValueForMode(
+              track.artistName,
+              settings.artistTagMode,
+            ),
             'album': track.albumName,
-            'albumArtist': ?albumArtist,
+            if (albumArtist != null)
+              'albumArtist': artistTagValueForMode(
+                albumArtist,
+                settings.artistTagMode,
+              ),
             if (track.releaseDate != null) 'date': track.releaseDate!,
             if (resolvedGenre != null && resolvedGenre.isNotEmpty)
               'genre': resolvedGenre,
@@ -761,12 +769,14 @@ extension _DownloadQueueEmbedding on DownloadQueueNotifier {
             m4aPath: filePath,
             coverPath: validCover,
             metadata: metadata,
+            artistTagMode: settings.artistTagMode,
           );
         } else if (isMp3) {
           ffmpegResult = await FFmpegService.embedMetadataToMp3(
             mp3Path: filePath,
             coverPath: validCover,
             metadata: metadata,
+            artistTagMode: settings.artistTagMode,
           );
         } else {
           ffmpegResult = await FFmpegService.embedMetadataToOpus(

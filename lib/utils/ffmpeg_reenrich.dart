@@ -97,6 +97,7 @@ Future<bool> applyFfmpegReEnrichResult({
         mp3Path: ffmpegTarget,
         coverPath: effectiveCoverPath,
         metadata: metadata,
+        artistTagMode: artistTagMode,
         preserveMetadata: true,
       );
     } else if (isM4A) {
@@ -104,6 +105,7 @@ Future<bool> applyFfmpegReEnrichResult({
         m4aPath: ffmpegTarget,
         coverPath: effectiveCoverPath,
         metadata: metadata,
+        artistTagMode: artistTagMode,
         preserveMetadata: true,
       );
     } else if (isOpus) {

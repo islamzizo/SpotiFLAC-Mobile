@@ -26,7 +26,7 @@ class AppSettings {
   /// Zero preserves the provider's original image.
   final int embeddedCoverMaxDimension;
   final String
-  artistTagMode; // 'joined' or 'split_vorbis' for Vorbis-based formats
+  artistTagMode; // 'joined', 'split_vorbis' (Vorbis formats), or 'primary'
   final bool embedLyrics;
   final bool embedReplayGain;
   // Apply ReplayGain/R128 tags as volume normalization in the built-in player.

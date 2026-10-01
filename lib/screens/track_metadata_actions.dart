@@ -69,7 +69,10 @@ extension _TrackMetadataFileActions on _TrackMetadataScreenState {
         durationMs: initialDurationSeconds > 0
             ? initialDurationSeconds * 1000
             : 0,
-        artistTagMode: ref.read(settingsProvider).artistTagMode,
+        // Typed artist names are saved as entered, even in primary mode.
+        artistTagMode: artistTagModeForExistingTags(
+          ref.read(settingsProvider).artistTagMode,
+        ),
       ),
     );
 
