@@ -16,6 +16,7 @@ import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/ffmpeg_reenrich.dart';
+import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
@@ -507,4 +508,64 @@ Future<({List<Track> tracks, int skipped})> matchLocalTracksForFlac(
     }
   }
   return (tracks: tracks, skipped: skipped);
+}
+
+/// Confirms, then deletes the files behind [selected] and removes their
+/// history or local-index rows. Files that cannot be deleted keep their rows.
+Future<void> deleteLibraryTracks(
+  BuildContext context,
+  WidgetRef ref,
+  List<UnifiedLibraryItem> selected, {
+  required bool Function() isActive,
+  required VoidCallback onComplete,
+}) async {
+  if (selected.isEmpty) return;
+  final confirmed = await showAppDialog<bool>(
+    context: context,
+    builder: (ctx) => AppAlertDialog(
+      title: Text(context.l10n.dialogDeleteSelectedTitle),
+      content: Text(context.l10n.dialogDeleteSelectedMessage(selected.length)),
+      actions: [
+        AppDialogAction(
+          isDefault: true,
+          onPressed: () => Navigator.pop(ctx, false),
+          child: Text(context.l10n.dialogCancel),
+        ),
+        AppDialogAction(
+          filled: true,
+          isDestructive: true,
+          onPressed: () => Navigator.pop(ctx, true),
+          style: FilledButton.styleFrom(
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+          child: Text(context.l10n.dialogDelete),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !isActive() || !context.mounted) return;
+
+  final historyNotifier = ref.read(downloadHistoryProvider.notifier);
+  final messenger = ScaffoldMessenger.of(context);
+  final l10n = context.l10n;
+  var deletedCount = 0;
+  for (final item in selected) {
+    final cleanPath = DownloadedEmbeddedCoverResolver.cleanFilePath(
+      item.filePath,
+    );
+    if (!await deleteFile(cleanPath)) continue;
+    if (item.source == LibraryItemSource.downloaded) {
+      historyNotifier.removeFromHistory(item.historyItem!.id);
+    } else {
+      await LibraryDatabase.instance.deleteByPath(item.filePath);
+    }
+    deletedCount++;
+  }
+  if (selected.any((item) => item.source == LibraryItemSource.local)) {
+    ref.read(localLibraryProvider.notifier).reloadFromStorage();
+  }
+  onComplete();
+  messenger.showSnackBar(
+    SnackBar(content: Text(l10n.snackbarDeletedTracks(deletedCount))),
+  );
 }

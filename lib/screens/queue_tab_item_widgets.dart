@@ -11,11 +11,8 @@ extension _QueueTabItemWidgets on _QueueTabState {
     final allSelected =
         selectedCount == unifiedItems.length && unifiedItems.isNotEmpty;
     final localOnlySelection = _isLocalOnlySelection(unifiedItems);
-    final flacEligibleCount = _selectedFlacEligibleLocalItems(
-      unifiedItems,
-    ).length;
 
-    return SelectionBottomBar(
+    return LibraryTrackSelectionBar(
       selectedCount: selectedCount,
       allSelected: allSelected,
       onClose: _exitSelectionMode,
@@ -27,106 +24,15 @@ extension _QueueTabItemWidgets on _QueueTabState {
         }
       },
       bottomPadding: bottomPadding,
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            const spacing = 8.0;
-            final columns = (constraints.maxWidth / 320).floor().clamp(2, 4);
-            final itemWidth =
-                (constraints.maxWidth - spacing * (columns - 1)) / columns;
-            final actions = <Widget>[];
-
-            if (localOnlySelection && flacEligibleCount > 0) {
-              actions.add(
-                SelectionActionButton(
-                  icon: Icons.download_for_offline_outlined,
-                  label: '${context.l10n.queueFlacAction} ($flacEligibleCount)',
-                  onPressed: () => _queueSelectedLocalAsFlac(unifiedItems),
-                  colorScheme: colorScheme,
-                ),
-              );
-            }
-
-            actions.add(
-              SelectionActionButton(
-                icon: Icons.auto_fix_high_outlined,
-                label: '${context.l10n.trackReEnrich} ($selectedCount)',
-                onPressed: selectedCount > 0
-                    ? () => _reEnrichSelectedFromQueue(unifiedItems)
-                    : null,
-                colorScheme: colorScheme,
-              ),
-            );
-
-            actions.add(
-              SelectionActionButton(
-                icon: Icons.swap_horiz,
-                label: context.l10n.selectionConvertCount(selectedCount),
-                onPressed: selectedCount > 0
-                    ? () => _showBatchConvertSheet(context, unifiedItems)
-                    : null,
-                colorScheme: colorScheme,
-              ),
-            );
-
-            for (final remove in [false, true]) {
-              actions.add(
-                SelectionActionButton(
-                  icon: remove ? Icons.remove_circle_outline : Icons.graphic_eq,
-                  label: remove
-                      ? context.l10n.selectionRemoveReplayGainCount(
-                          selectedCount,
-                        )
-                      : context.l10n.selectionReplayGainCount(selectedCount),
-                  onPressed: selectedCount > 0
-                      ? () => _runBatchReplayGain(unifiedItems, remove: remove)
-                      : null,
-                  colorScheme: colorScheme,
-                ),
-              );
-            }
-
-            return Wrap(
-              spacing: spacing,
-              runSpacing: spacing,
-              children: [
-                for (final action in actions)
-                  SizedBox(width: itemWidth, child: action),
-              ],
-            );
-          },
-        ),
-
-        const SizedBox(height: 8),
-
-        SizedBox(
-          width: double.infinity,
-          child: AppActionButton(
-            isDestructive: true,
-            onPressed: selectedCount > 0
-                ? () => _deleteSelected(unifiedItems)
-                : null,
-            icon: const Icon(Icons.delete_outline),
-            label: Text(
-              selectedCount > 0
-                  ? context.l10n.selectionDeleteTracksCount(selectedCount)
-                  : context.l10n.selectionSelectToDelete,
-            ),
-            style: FilledButton.styleFrom(
-              backgroundColor: selectedCount > 0
-                  ? colorScheme.error
-                  : colorScheme.surfaceContainerHighest,
-              foregroundColor: selectedCount > 0
-                  ? colorScheme.onError
-                  : colorScheme.onSurfaceVariant,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-          ),
-        ),
-      ],
+      flacEligibleCount: localOnlySelection
+          ? _selectedFlacEligibleLocalItems(unifiedItems).length
+          : 0,
+      onQueueFlac: () => _queueSelectedLocalAsFlac(unifiedItems),
+      onReEnrich: () => _reEnrichSelectedFromQueue(unifiedItems),
+      onConvert: () => _showBatchConvertSheet(context, unifiedItems),
+      onReplayGain: ({required remove}) =>
+          _runBatchReplayGain(unifiedItems, remove: remove),
+      onDelete: () => _deleteSelected(unifiedItems),
     );
   }
 
