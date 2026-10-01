@@ -1,6 +1,7 @@
 package com.zarz.spotiflac
 
 import java.util.Locale
+import java.util.regex.Pattern
 import kotlin.math.roundToInt
 
 /**
@@ -371,6 +372,27 @@ internal object NativeFinalizationPolicy {
             ?: normalizeOptional(trackValue)
             ?: normalizeOptional(providerResultValue)
             ?: ""
+    }
+
+    // Same separator set as the Rust writer and Dart's primaryArtistTagValue;
+    // Unicode classes keep \s aligned with their whitespace handling.
+    private val primaryArtistSeparator = Pattern.compile(
+        "\\s*[,;&]\\s*|\\s+x\\s+|\\s+(?:feat(?:uring)?|ft|with)\\.?(?:\\s+|$)",
+        Pattern.CASE_INSENSITIVE or Pattern.UNICODE_CHARACTER_CLASS,
+    ).toRegex()
+
+    /**
+     * Artist tag value for [mode]. Only "primary" changes the value: the first
+     * credited artist for every format. Joined and split values pass through;
+     * the backend writer owns Vorbis splitting.
+     */
+    fun artistTagValue(value: String, mode: String?): String {
+        if (!mode.orEmpty().trim().equals("primary", ignoreCase = true)) return value
+        val trimmed = value.trim()
+        return trimmed.split(primaryArtistSeparator)
+            .map(String::trim)
+            .firstOrNull(String::isNotEmpty)
+            ?: trimmed
     }
 
     private fun audioFormatForPath(filePath: String, fileName: String): String? {
