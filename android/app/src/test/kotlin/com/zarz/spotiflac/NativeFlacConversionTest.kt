@@ -164,10 +164,13 @@ class NativeFlacConversionTest {
                                     check(lastMetadataBlock && offset < bytes.size) {
                                         "FLAC output has no audio frame to corrupt"
                                     }
-                                    val audioLength = bytes.size - offset
-                                    check(audioLength > 32) { "FLAC audio payload is unexpectedly short" }
-                                    val index = offset + audioLength / 2
-                                    bytes[index] = (bytes[index].toInt() xor 0x55).toByte()
+                                    check(bytes.size - offset > 32) {
+                                        "FLAC audio payload is unexpectedly short"
+                                    }
+                                    // Break the first frame's sync code so the validation decoder
+                                    // must reject the remux instead of relying on version-specific
+                                    // handling of damaged compressed sample data.
+                                    bytes[offset] = (bytes[offset].toInt() xor 0xff).toByte()
                                     output.writeBytes(bytes)
                                 }
                             }
