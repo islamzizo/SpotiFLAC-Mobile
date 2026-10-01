@@ -1328,6 +1328,42 @@ class PlatformBridge {
     await _channel.invokeMethod('stopDownloadService');
   }
 
+  /// Keeps user-started work of [kind] alive with the screen off: an Android
+  /// foreground service, or an iOS background-task grace period. Returns
+  /// whether the platform accepted it.
+  static Future<bool> startBackgroundWork(
+    String kind, {
+    required String title,
+    String text = '',
+  }) async {
+    final started = await _channel.invokeMethod<bool>('startBackgroundWork', {
+      'kind': kind,
+      'title': title,
+      'text': text,
+    });
+    return started ?? false;
+  }
+
+  /// Updates the Android work notification; [progress] is a percentage, or
+  /// negative while indeterminate.
+  static Future<void> updateBackgroundWork(
+    String kind, {
+    required String title,
+    String text = '',
+    int progress = -1,
+  }) async {
+    await _channel.invokeMethod('updateBackgroundWork', {
+      'kind': kind,
+      'title': title,
+      'text': text,
+      'progress': progress,
+    });
+  }
+
+  static Future<void> stopBackgroundWork(String kind) async {
+    await _channel.invokeMethod('stopBackgroundWork', {'kind': kind});
+  }
+
   static Future<void> updateDownloadServiceProgress({
     required String trackName,
     required String artistName,

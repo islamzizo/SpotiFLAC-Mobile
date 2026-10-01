@@ -39,6 +39,9 @@ import UniformTypeIdentifiers
     /// Main-thread only.
     private var downloadsActive = false
     private var downloadBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    /// Library scans and similar user-started work, by kind. Separate from
+    /// downloads so ending one never drops the other's assertion.
+    private var backgroundWorkTasks: [String: UIBackgroundTaskIdentifier] = [:]
 
     /// Strong reference to the in-flight ASWebAuthenticationSession; the
     /// session is deallocated (and its sheet dismissed) without it.
@@ -257,6 +260,7 @@ import UniformTypeIdentifiers
 
     private func handleMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
         let osMethods: Set<String> = ["getBackendImplementations", "startWebAuthSession", "beginBackgroundDownloadTask", "endBackgroundDownloadTask",
+            "startBackgroundWork", "updateBackgroundWork", "stopBackgroundWork",
             "pickIosDirectory", "startAccessingIosBookmark", "stopAccessingIosBookmark", "downloadCoverToFile", "releaseMemory", "releaseMemoryUnderPressure",
             "setLibraryCoverCacheDir", "scanLibraryFolderToNDJSONFile", "scanLibraryFolderIncremental",
             "getLibraryScanProgress", "cancelLibraryScan", "parseCueSheet", "extractCoverToFile",
@@ -291,6 +295,19 @@ import UniformTypeIdentifiers
         case "endBackgroundDownloadTask":
             downloadsActive = false
             endBackgroundDownloadTask()
+            result(nil)
+            return
+        case "startBackgroundWork":
+            let kind = (call.arguments as? [String: Any])?["kind"] as? String ?? ""
+            beginBackgroundWorkTask(kind: kind)
+            result(true)
+            return
+        case "updateBackgroundWork":
+            result(nil)
+            return
+        case "stopBackgroundWork":
+            let kind = (call.arguments as? [String: Any])?["kind"] as? String ?? ""
+            endBackgroundWorkTask(kind: kind)
             result(nil)
             return
         case "pickIosDirectory":
@@ -416,6 +433,29 @@ import UniformTypeIdentifiers
         if downloadBackgroundTask != .invalid {
             UIApplication.shared.endBackgroundTask(downloadBackgroundTask)
             downloadBackgroundTask = .invalid
+        }
+    }
+
+    /// iOS grants a short grace period after the app leaves the foreground,
+    /// enough for a screen lock during a small scan. On expiry a scan is
+    /// cancelled cleanly instead of being suspended mid-write.
+    private func beginBackgroundWorkTask(kind: String) {
+        guard !kind.isEmpty, backgroundWorkTasks[kind] == nil else { return }
+        backgroundWorkTasks[kind] = UIApplication.shared.beginBackgroundTask(
+            withName: "SpotiFLAC-\(kind)"
+        ) { [weak self] in
+            NSLog("SpotiFLAC: \(kind) background task expired")
+            if kind == "library_scan" {
+                try? self?.coreBackend.cancelLibraryScan()
+            }
+            self?.endBackgroundWorkTask(kind: kind)
+        }
+    }
+
+    private func endBackgroundWorkTask(kind: String) {
+        guard let task = backgroundWorkTasks.removeValue(forKey: kind) else { return }
+        if task != .invalid {
+            UIApplication.shared.endBackgroundTask(task)
         }
     }
 

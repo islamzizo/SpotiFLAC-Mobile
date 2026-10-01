@@ -153,6 +153,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Library scans and app update downloads with the screen off -->
+        <service
+            android:name=".BackgroundWorkService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <receiver
             android:name=".DownloadQueueWidgetProvider"
             android:exported="false">

@@ -634,6 +634,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       scanningSourceId: activeSourceId,
     );
     _resetScanNotificationTracking();
+    // Hold before the first progress notification so Android shows a single
+    // foreground-service notification; released in the final cleanup below.
+    await _notificationService.beginLibraryScanWork();
     if (_shouldShowScanProgressNotification(
       progress: 0,
       totalFiles: 0,
@@ -944,6 +947,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       );
       await _showScanFailedNotification(e.toString());
     } finally {
+      await _notificationService.endBackgroundWork(
+        NotificationService.libraryScanWorkKind,
+      );
       if (securityAccess != null) {
         await PlatformBridge.stopAccessingIosBookmark(securityAccess);
         _log.i('Stopped iOS security-scoped access');

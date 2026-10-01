@@ -135,6 +135,9 @@ class MainActivity: FlutterFragmentActivity() {
         "stopDownloadService",
         "updateDownloadServiceProgress",
         "isDownloadServiceRunning",
+        "startBackgroundWork",
+        "updateBackgroundWork",
+        "stopBackgroundWork",
         "startNativeDownloadWorker",
         "appendNativeDownloadWorkerRequests",
         "finishNativeDownloadWorkerPreparation",
@@ -1780,6 +1783,29 @@ class MainActivity: FlutterFragmentActivity() {
                         }
                         "isDownloadServiceRunning" -> {
                             result.success(DownloadService.isServiceRunning())
+                        }
+                        "startBackgroundWork" -> {
+                            result.success(
+                                BackgroundWorkService.start(
+                                    this@MainActivity,
+                                    call.argument<String>("kind") ?: "",
+                                    call.argument<String>("title") ?: "",
+                                    call.argument<String>("text") ?: "",
+                                ),
+                            )
+                        }
+                        "updateBackgroundWork" -> {
+                            BackgroundWorkService.update(
+                                call.argument<String>("kind") ?: "",
+                                call.argument<String>("title") ?: "",
+                                call.argument<String>("text") ?: "",
+                                call.argument<Int>("progress") ?: -1,
+                            )
+                            result.success(null)
+                        }
+                        "stopBackgroundWork" -> {
+                            BackgroundWorkService.stop(call.argument<String>("kind") ?: "")
+                            result.success(null)
                         }
                         "startNativeDownloadWorker" -> {
                             val requestsJson = call.argument<String>("requests_json") ?: "[]"
