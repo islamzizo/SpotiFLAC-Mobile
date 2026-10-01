@@ -909,6 +909,7 @@ class LibraryDatabase {
 
     try {
       final batch = db.batch();
+      final stagedIds = <String>{};
       for (final json in items) {
         final id = json['id'] as String?;
         if (id == null || id.trim().isEmpty) {
@@ -924,6 +925,8 @@ class LibraryDatabase {
           _incrementalStagePathKeysTable,
           id,
           json['filePath'] as String?,
+          // The stage starts empty: only a repeated id has keys to replace.
+          replaceExisting: !stagedIds.add(id),
         );
       }
       await batch.commit(noResult: true);
@@ -1056,6 +1059,7 @@ class LibraryDatabase {
         pending = 0;
       }
 
+      final stagedIds = <String>{};
       await for (final json in items) {
         final id = json['id'] as String?;
         if (id == null || id.trim().isEmpty) {
@@ -1071,6 +1075,8 @@ class LibraryDatabase {
           _scanStagePathKeysTable,
           id,
           json['filePath'] as String?,
+          // The stage starts empty: only a repeated id has keys to replace.
+          replaceExisting: !stagedIds.add(id),
         );
         streamed++;
         pending++;
@@ -2166,31 +2172,26 @@ class LibraryDatabase {
     final db = await database;
     var totalDeleted = 0;
     const chunkSize = 500;
-    for (var i = 0; i < filePaths.length; i += chunkSize) {
-      final end = (i + chunkSize < filePaths.length)
-          ? i + chunkSize
-          : filePaths.length;
-      final chunk = filePaths.sublist(i, end);
-      final placeholders = List.filled(chunk.length, '?').join(',');
-      final rows = await db.rawQuery(
-        'SELECT id FROM library WHERE file_path IN ($placeholders)',
-        chunk,
-      );
-      final ids = rows
-          .map((row) => row['id'] as String)
-          .toList(growable: false);
-      if (ids.isNotEmpty) {
-        final idPlaceholders = List.filled(ids.length, '?').join(',');
-        await db.rawDelete(
-          'DELETE FROM library_path_keys WHERE item_id IN ($idPlaceholders)',
-          ids,
+    // One commit for the whole removal; a rescan that dropped a folder can
+    // otherwise pay several WAL commits per chunk.
+    await db.transaction((txn) async {
+      for (var i = 0; i < filePaths.length; i += chunkSize) {
+        final end = (i + chunkSize < filePaths.length)
+            ? i + chunkSize
+            : filePaths.length;
+        final chunk = filePaths.sublist(i, end);
+        final placeholders = List.filled(chunk.length, '?').join(',');
+        await txn.rawDelete(
+          'DELETE FROM library_path_keys WHERE item_id IN '
+          '(SELECT id FROM library WHERE file_path IN ($placeholders))',
+          chunk,
+        );
+        totalDeleted += await txn.rawDelete(
+          'DELETE FROM library WHERE file_path IN ($placeholders)',
+          chunk,
         );
       }
-      totalDeleted += await db.rawDelete(
-        'DELETE FROM library WHERE file_path IN ($placeholders)',
-        chunk,
-      );
-    }
+    });
     if (totalDeleted > 0) {
       _log.i('Deleted $totalDeleted items from library');
     }
