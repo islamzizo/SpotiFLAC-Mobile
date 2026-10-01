@@ -49,6 +49,8 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       final playlists = await _spotify.getPlaylists();
       if (!mounted) return;
       setState(() { _signedIn = signed; _playlists = playlists; });
+      // Refresh the saved Spotify library whenever this screen is opened.
+      if (signed) await _syncPlaylists();
     } catch (error) {
       if (mounted) setState(() => _error = 'Could not load saved Spotify session: $error');
     }
@@ -186,17 +188,22 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   ]);
 
   Widget _buildLibrary() {
-    if (_playlists.isEmpty && !_loading) {
-      return Center(child: FilledButton.icon(
-        onPressed: _syncPlaylists, icon: const Icon(Icons.sync),
-        label: const Text('Sync playlists'),
+    if (_playlists.isEmpty && _loading) {
+      return const Center(child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 12),
+          Text('Syncing Spotify library…'),
+        ],
       ));
     }
     return RefreshIndicator(
       onRefresh: _syncPlaylists,
       child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.only(top: 8, bottom: 12),
-        itemCount: _playlists.length + 1,
+        itemCount: _playlists.isEmpty ? 2 : _playlists.length + 1,
         itemBuilder: (context, index) {
           if (index == 0) {
             return Padding(
@@ -205,11 +212,13 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
               const Icon(Icons.library_music_outlined),
               const SizedBox(width: 10),
               Expanded(child: Text('${_playlists.length} Spotify playlists', style: Theme.of(context).textTheme.titleMedium)),
-              TextButton.icon(
-                onPressed: _loading ? null : _syncPlaylists,
-                icon: const Icon(Icons.sync), label: const Text('Sync'),
-              ),
             ]),
+            );
+          }
+          if (_playlists.isEmpty) {
+            return const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: Text('No playlists loaded. Pull down to refresh.')),
             );
           }
           final playlist = _playlists[index - 1];
@@ -250,21 +259,29 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
             child: Text(_error!, textAlign: TextAlign.center,
               style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
-          SizedBox(
-            width: double.infinity,
-            child: _signedIn
-              ? OutlinedButton.icon(
-                  onPressed: _loading ? null : _syncPlaylists,
-                  icon: const Icon(Icons.sync),
-                  label: Text(_loading ? 'Syncing playlists…' : 'Sync playlists'),
-                )
-              : FilledButton.icon(
-                  onPressed: _loading ? null : _startLogin,
-                  icon: const Icon(Icons.login), label: const Text('Log in with Spotify'),
-                ),
-          ),
+          if (_signedIn && _loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(width: 8),
+                  Text('Syncing Spotify library…'),
+                ],
+              ),
+            ),
+          if (!_signedIn)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _loading ? null : _startLogin,
+                icon: const Icon(Icons.login),
+                label: const Text('Log in with Spotify'),
+              ),
+            ),
           const SizedBox(height: 6),
-          Text(_signedIn ? 'Library synced from the Spotify web session.' : 'Uses the Spotify web login session; no developer client ID is required.',
+          Text(_signedIn ? 'Library syncs automatically when you open this screen.' : 'Uses the Spotify web login session; no developer client ID is required.',
             textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
         ]),
       ),
