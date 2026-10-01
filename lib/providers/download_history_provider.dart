@@ -214,6 +214,15 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
               item.lyricsMetadataScanVersion,
               existing.lyricsMetadataScanVersion,
             ),
+            hasReplayGain:
+                item.replayGainMetadataScanVersion >=
+                    existing.replayGainMetadataScanVersion
+                ? item.hasReplayGain
+                : existing.hasReplayGain,
+            replayGainMetadataScanVersion: max(
+              item.replayGainMetadataScanVersion,
+              existing.replayGainMetadataScanVersion,
+            ),
           );
     return (item: mergedItem, existingId: existing?.id);
   }
@@ -493,6 +502,8 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     bool? explicit,
     bool? hasLyrics,
     int? lyricsMetadataScanVersion,
+    bool? hasReplayGain,
+    int? replayGainMetadataScanVersion,
   }) async {
     final target = await _historyItemForUpdate(id);
     if (target == null) {
@@ -518,6 +529,8 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       explicit: explicit,
       hasLyrics: hasLyrics,
       lyricsMetadataScanVersion: lyricsMetadataScanVersion,
+      hasReplayGain: hasReplayGain,
+      replayGainMetadataScanVersion: replayGainMetadataScanVersion,
     );
 
     if (updated.quality == current.quality &&
@@ -534,7 +547,10 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
         updated.explicit == current.explicit &&
         updated.hasLyrics == current.hasLyrics &&
         updated.lyricsMetadataScanVersion ==
-            current.lyricsMetadataScanVersion) {
+            current.lyricsMetadataScanVersion &&
+        updated.hasReplayGain == current.hasReplayGain &&
+        updated.replayGainMetadataScanVersion ==
+            current.replayGainMetadataScanVersion) {
       return;
     }
 

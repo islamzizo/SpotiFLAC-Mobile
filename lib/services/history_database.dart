@@ -8,6 +8,7 @@ import 'package:spotiflac_android/utils/isrc_utils.dart' as isrc;
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/utils/path_match_keys.dart';
+import 'package:spotiflac_android/utils/audio_format_utils.dart';
 
 final _log = AppLogger('HistoryDatabase');
 final Future<SharedPreferences> _prefs = SharedPreferences.getInstance();
@@ -91,10 +92,10 @@ class _HistoryBatchLookupSnapshot extends HistoryBatchLookupRequest {
 
 class HistoryDatabase {
   // The FTS table is a derived, optional index and is initialized lazily after
-  // the existing schema migration. Keep this contract at v13 because the
-  // background native writer shares history.db and must accept the same
+  // the existing schema migration. The background native writer shares
+  // history.db and must accept the same schema contract and
   // user_version without depending on FTS5.
-  static const int schemaVersion = 13;
+  static const int schemaVersion = 14;
   static const String searchFtsTable = 'history_search_fts';
   static final HistoryDatabase instance = HistoryDatabase._init();
   static final sqlite.SingleFlightInitializer<Database> _database =
@@ -162,6 +163,8 @@ class HistoryDatabase {
         explicit INTEGER NOT NULL DEFAULT 0,
         has_lyrics INTEGER NOT NULL DEFAULT 0,
         lyrics_metadata_scan_version INTEGER NOT NULL DEFAULT 0,
+        has_replaygain INTEGER NOT NULL DEFAULT 0,
+        replaygain_metadata_scan_version INTEGER NOT NULL DEFAULT 0,
         spotify_id_norm TEXT,
         isrc_norm TEXT,
         match_key TEXT,
@@ -296,6 +299,21 @@ class HistoryDatabase {
         'INTEGER NOT NULL DEFAULT 0',
       );
       _log.i('Added indexed lyrics availability metadata');
+    }
+    if (oldVersion < 14) {
+      await sqlite.addColumnIfMissing(
+        db,
+        'history',
+        'has_replaygain',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
+      await sqlite.addColumnIfMissing(
+        db,
+        'history',
+        'replaygain_metadata_scan_version',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
+      _log.i('Added indexed ReplayGain availability metadata');
     }
   }
 
@@ -678,6 +696,9 @@ class HistoryDatabase {
       'lyrics_metadata_scan_version':
           (json['lyricsMetadataScanVersion'] as num?)?.toInt() ??
           (json.containsKey('hasLyrics') ? 1 : 0),
+      'has_replaygain': metadataHasReplayGain(json) ? 1 : 0,
+      'replaygain_metadata_scan_version':
+          (json['replayGainMetadataScanVersion'] as num?)?.toInt() ?? 0,
     };
     row.addAll(
       _queueSortColumns(
@@ -739,6 +760,10 @@ class HistoryDatabase {
       'explicit': row['explicit'] == 1 || row['explicit'] == true,
       'hasLyrics': row['has_lyrics'] == 1 || row['has_lyrics'] == true,
       'lyricsMetadataScanVersion': row['lyrics_metadata_scan_version'] ?? 0,
+      'hasReplayGain':
+          row['has_replaygain'] == 1 || row['has_replaygain'] == true,
+      'replayGainMetadataScanVersion':
+          row['replaygain_metadata_scan_version'] ?? 0,
     };
   }
 

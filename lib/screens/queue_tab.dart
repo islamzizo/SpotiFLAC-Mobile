@@ -1070,6 +1070,17 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                   () => tempMetadata = 'missing-lyrics',
                                 ),
                               ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context
+                                      .l10n
+                                      .libraryFilterMetadataMissingReplayGain,
+                                ),
+                                selected: tempMetadata == 'missing-replaygain',
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata = 'missing-replaygain',
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 16),

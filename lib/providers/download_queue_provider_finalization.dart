@@ -308,6 +308,8 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     String? copyright,
     required bool hasLyrics,
     required int lyricsMetadataScanVersion,
+    required bool hasReplayGain,
+    required int replayGainMetadataScanVersion,
   }) {
     final backendTitle = result['title'] as String?;
     final backendArtist = result['artist'] as String?;
@@ -394,19 +396,35 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
           parseExplicitFlag(result['explicit']) == true,
       hasLyrics: hasLyrics,
       lyricsMetadataScanVersion: lyricsMetadataScanVersion,
+      hasReplayGain: hasReplayGain,
+      replayGainMetadataScanVersion: replayGainMetadataScanVersion,
     );
   }
 
-  Future<({bool hasLyrics, int scanVersion})> _resolveFinalLyricsAvailability({
+  Future<
+    ({
+      bool hasLyrics,
+      int scanVersion,
+      bool hasReplayGain,
+      int replayGainScanVersion,
+    })
+  >
+  _resolveFinalLyricsAvailability({
     required String filePath,
     Map<String, dynamic>? probedMetadata,
     bool externalLrcWritten = false,
   }) async {
     var metadataScanned = false;
     var hasEmbeddedLyrics = false;
+    var hasReplayGain = false;
+    var replayGainScanVersion = 0;
     try {
       final metadata =
           probedMetadata ?? await PlatformBridge.readFileMetadata(filePath);
+      if (replayGainMetadataWasRead(metadata)) {
+        hasReplayGain = metadataHasReplayGain(metadata);
+        replayGainScanVersion = 1;
+      }
       if (metadata['error'] == null &&
           (metadata.containsKey('lyrics') ||
               metadata.containsKey('hasLyrics'))) {
@@ -439,6 +457,8 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     return (
       hasLyrics: hasLyrics,
       scanVersion: hasLyrics || metadataScanned ? 1 : 0,
+      hasReplayGain: hasReplayGain,
+      replayGainScanVersion: replayGainScanVersion,
     );
   }
 

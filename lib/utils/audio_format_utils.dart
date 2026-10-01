@@ -40,6 +40,32 @@ Map<String, dynamic> normalizeScannedAudioMetadata(
   return normalized;
 }
 
+/// Whether scanned or probed tags carry a usable ReplayGain value. Library scans
+/// and readFileMetadata both use the snake_case `replaygain_*` keys; persisted
+/// rows round-trip through `hasReplayGain`.
+bool metadataHasReplayGain(Map<String, dynamic> metadata) {
+  final stored = metadata['hasReplayGain'];
+  if (stored == true || stored == 1) return true;
+  for (final key in const ['replaygain_track_gain', 'replaygain_album_gain']) {
+    final value = metadata[key];
+    final gain = double.tryParse(
+      (value?.toString() ?? '')
+          .replaceFirst(RegExp(r'\s*dB\s*$', caseSensitive: false), '')
+          .trim(),
+    );
+    if (gain != null && gain.isFinite) return true;
+  }
+  return false;
+}
+
+bool replayGainMetadataWasRead(Map<String, dynamic> metadata) =>
+    metadata['error'] == null &&
+    metadata['metadataFromFilename'] != true &&
+    (metadata['audio_codec'] != null ||
+        metadata['format'] != null ||
+        metadata.containsKey('replaygain_track_gain') ||
+        metadata.containsKey('replaygain_album_gain'));
+
 int? readPositiveBitrateKbps(dynamic value) {
   final parsed = readPositiveInt(value);
   if (parsed == null) return null;

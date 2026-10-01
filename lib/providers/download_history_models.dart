@@ -35,6 +35,11 @@ class DownloadHistoryItem {
   final bool explicit;
   final bool hasLyrics;
   final int lyricsMetadataScanVersion;
+  final bool hasReplayGain;
+
+  /// 0 until the finished file's tags were read; only then is a false
+  /// [hasReplayGain] a confirmed absence.
+  final int replayGainMetadataScanVersion;
 
   const DownloadHistoryItem({
     required this.id,
@@ -71,6 +76,8 @@ class DownloadHistoryItem {
     this.explicit = false,
     this.hasLyrics = false,
     this.lyricsMetadataScanVersion = 0,
+    this.hasReplayGain = false,
+    this.replayGainMetadataScanVersion = 0,
   });
 
   Map<String, dynamic> toJson() => {
@@ -108,6 +115,8 @@ class DownloadHistoryItem {
     'explicit': explicit,
     'hasLyrics': hasLyrics,
     'lyricsMetadataScanVersion': lyricsMetadataScanVersion,
+    'hasReplayGain': hasReplayGain,
+    'replayGainMetadataScanVersion': replayGainMetadataScanVersion,
   };
 
   factory DownloadHistoryItem.fromJson(Map<String, dynamic> json) =>
@@ -147,6 +156,10 @@ class DownloadHistoryItem {
         hasLyrics: json['hasLyrics'] == true || json['hasLyrics'] == 1,
         lyricsMetadataScanVersion:
             (json['lyricsMetadataScanVersion'] as num?)?.toInt() ?? 0,
+        hasReplayGain:
+            json['hasReplayGain'] == true || json['hasReplayGain'] == 1,
+        replayGainMetadataScanVersion:
+            (json['replayGainMetadataScanVersion'] as num?)?.toInt() ?? 0,
       );
 
   DownloadHistoryItem copyWith({
@@ -181,6 +194,8 @@ class DownloadHistoryItem {
     bool? explicit,
     bool? hasLyrics,
     int? lyricsMetadataScanVersion,
+    bool? hasReplayGain,
+    int? replayGainMetadataScanVersion,
   }) {
     return DownloadHistoryItem(
       id: id,
@@ -218,6 +233,9 @@ class DownloadHistoryItem {
       hasLyrics: hasLyrics ?? this.hasLyrics,
       lyricsMetadataScanVersion:
           lyricsMetadataScanVersion ?? this.lyricsMetadataScanVersion,
+      hasReplayGain: hasReplayGain ?? this.hasReplayGain,
+      replayGainMetadataScanVersion:
+          replayGainMetadataScanVersion ?? this.replayGainMetadataScanVersion,
     );
   }
 }

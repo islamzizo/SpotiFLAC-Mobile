@@ -381,6 +381,14 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               ? resolvedHasLyrics != _localLibraryItem?.hasLyrics
               : resolvedHasLyrics != _downloadItem?.hasLyrics ||
                     (_downloadItem?.lyricsMetadataScanVersion ?? 0) < 1);
+      final resolvedHasReplayGain = metadataHasReplayGain(metadata);
+      final hasResolvedReplayGainValue = replayGainMetadataWasRead(metadata);
+      final needsReplayGainAvailability =
+          hasResolvedReplayGainValue &&
+          (_isLocalItem
+              ? resolvedHasReplayGain != _localLibraryItem?.hasReplayGain
+              : resolvedHasReplayGain != _downloadItem?.hasReplayGain ||
+                    (_downloadItem?.replayGainMetadataScanVersion ?? 0) < 1);
       final needsTrackNumber =
           resolvedTrackNumber != null &&
           resolvedTrackNumber > 0 &&
@@ -443,6 +451,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               needsComposer ||
               needsExplicit ||
               needsLyricsAvailability ||
+              needsReplayGainAvailability ||
               (isPlaceholderQualityLabel(_quality) && resolvedQuality != null));
       final localItem = _localLibraryItem;
       final localAudioMetadataChanged =
@@ -455,6 +464,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
                   resolvedBitrate != localItem.bitrate) ||
               needsExplicit ||
               needsLyricsAvailability ||
+              needsReplayGainAvailability ||
               needsDuration ||
               formatChanged);
 
@@ -534,6 +544,12 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               explicit: needsExplicit ? resolvedExplicit : null,
               hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
               lyricsMetadataScanVersion: hasResolvedLyricsValue ? 1 : null,
+              hasReplayGain: hasResolvedReplayGainValue
+                  ? resolvedHasReplayGain
+                  : null,
+              replayGainMetadataScanVersion: hasResolvedReplayGainValue
+                  ? 1
+                  : null,
             );
         if (mounted && _downloadItem != null) {
           setState(() {
@@ -552,6 +568,12 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               explicit: needsExplicit ? resolvedExplicit : null,
               hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
               lyricsMetadataScanVersion: hasResolvedLyricsValue ? 1 : null,
+              hasReplayGain: hasResolvedReplayGainValue
+                  ? resolvedHasReplayGain
+                  : null,
+              replayGainMetadataScanVersion: hasResolvedReplayGainValue
+                  ? 1
+                  : null,
             );
           });
         }
@@ -564,6 +586,9 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
           bitrate: resolvedBitrate,
           explicit: needsExplicit ? resolvedExplicit : null,
           hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
+          hasReplayGain: hasResolvedReplayGainValue
+              ? resolvedHasReplayGain
+              : null,
           format: formatChanged ? resolvedFormat : null,
         );
         if (mounted &&
@@ -577,6 +602,9 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               bitrate: resolvedBitrate,
               explicit: needsExplicit ? resolvedExplicit : null,
               hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
+              hasReplayGain: hasResolvedReplayGainValue
+                  ? resolvedHasReplayGain
+                  : null,
               format: resolvedFormat,
             );
           });

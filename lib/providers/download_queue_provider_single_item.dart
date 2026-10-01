@@ -1673,6 +1673,9 @@ class _DownloadRun {
                   copyright: effectiveCopyright,
                   hasLyrics: lyricsAvailability.hasLyrics,
                   lyricsMetadataScanVersion: lyricsAvailability.scanVersion,
+                  hasReplayGain: lyricsAvailability.hasReplayGain,
+                  replayGainMetadataScanVersion:
+                      lyricsAvailability.replayGainScanVersion,
                 ),
                 preserveTrackVariant: item.preserveQualityVariant,
               );

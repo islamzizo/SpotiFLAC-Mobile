@@ -21,7 +21,7 @@ class LibraryDatabase {
   static final LibraryDatabase instance = LibraryDatabase._init();
   // The FTS table is a derived, optional index and is initialized lazily after
   // the existing schema migration, so it does not require a user_version bump.
-  static const int schemaVersion = 14;
+  static const int schemaVersion = 15;
   static const String legacySourceId = LocalLibraryItem.legacySourceId;
   static const String visibleLibraryView = 'library_visible';
   static const String searchFtsTable = 'library_search_fts';
@@ -33,7 +33,11 @@ class LibraryDatabase {
       'library_incremental_path_keys_stage';
   static const String _downloadedLibraryIdsStageTable =
       'library_downloaded_ids_stage';
-  static const int audioMetadataScanVersion = 3;
+  // v4 records ReplayGain availability; older rows rescan once.
+  static const int audioMetadataScanVersion = 4;
+
+  /// First scan version whose rows record lyrics availability (v3).
+  static const int lyricsMetadataScanVersion = 3;
   static final sqlite.SingleFlightInitializer<Database> _database =
       sqlite.SingleFlightInitializer<Database>();
   bool _historyAttached = false;
@@ -190,8 +194,9 @@ class LibraryDatabase {
         copyright TEXT,
         explicit INTEGER NOT NULL DEFAULT 0,
         has_lyrics INTEGER NOT NULL DEFAULT 0,
+        has_replaygain INTEGER NOT NULL DEFAULT 0,
         format TEXT,
-        audio_metadata_scan_version INTEGER NOT NULL DEFAULT 3,
+        audio_metadata_scan_version INTEGER NOT NULL DEFAULT 4,
         track_name_norm TEXT,
         artist_name_norm TEXT,
         album_name_norm TEXT,
@@ -331,6 +336,17 @@ class LibraryDatabase {
     if (oldVersion < 14) {
       await _createLookupSummary(db);
       _log.i('Added incremental Library lookup summary');
+    }
+    if (oldVersion < 15) {
+      // Rows keep their older audio_metadata_scan_version, so the next
+      // incremental scan re-reads them once and fills the real value.
+      await sqlite.addColumnIfMissing(
+        db,
+        'library',
+        'has_replaygain',
+        'INTEGER NOT NULL DEFAULT 0',
+      );
+      _log.i('Added indexed ReplayGain availability metadata');
     }
   }
 
@@ -721,10 +737,11 @@ class LibraryDatabase {
       'copyright': json['copyright'],
       'explicit': json['explicit'] == true || json['explicit'] == 1 ? 1 : 0,
       'has_lyrics': json['hasLyrics'] == true || json['hasLyrics'] == 1 ? 1 : 0,
+      'has_replaygain': metadataHasReplayGain(json) ? 1 : 0,
       'format': json['format'],
       'audio_metadata_scan_version':
           (json['audioMetadataScanVersion'] as num?)?.toInt() ??
-          audioMetadataScanVersion,
+          (json['metadataFromFilename'] == true ? 0 : audioMetadataScanVersion),
     };
     row.addAll(
       _queueColumns(
@@ -777,6 +794,8 @@ class LibraryDatabase {
       'copyright': row['copyright'],
       'explicit': row['explicit'] == 1 || row['explicit'] == true,
       'hasLyrics': row['has_lyrics'] == 1 || row['has_lyrics'] == true,
+      'hasReplayGain':
+          row['has_replaygain'] == 1 || row['has_replaygain'] == true,
       'format': row['format'],
     };
   }
@@ -1937,9 +1956,9 @@ class LibraryDatabase {
       ..['fileModTime'] = stat?.modified?.millisecondsSinceEpoch
       ..['format'] = normalizedFormat
       ..['bitrate'] = convertedBitrate
-      ..['audioMetadataScanVersion'] = convertedBitrate != null
-          ? audioMetadataScanVersion
-          : 0;
+      // Conversion may rewrite gain tags; rescan the resulting file.
+      ..['hasReplayGain'] = false
+      ..['audioMetadataScanVersion'] = 0;
 
     if (normalizedFormat == 'mp3' ||
         normalizedFormat == 'opus' ||
@@ -1987,6 +2006,7 @@ class LibraryDatabase {
     int? bitrate,
     bool? explicit,
     bool? hasLyrics,
+    bool? hasReplayGain,
     String? format,
   }) async {
     final values = <String, dynamic>{};
@@ -2008,15 +2028,42 @@ class LibraryDatabase {
     if (hasLyrics != null) {
       values['has_lyrics'] = hasLyrics ? 1 : 0;
     }
+    if (hasReplayGain != null) {
+      values['has_replaygain'] = hasReplayGain ? 1 : 0;
+    }
     final normalizedFormat = normalizeAudioFormatValue(format);
     if (normalizedFormat != null) {
       values['format'] = normalizedFormat;
     }
     if (values.isEmpty) return;
-    values['audio_metadata_scan_version'] = audioMetadataScanVersion;
 
     final db = await database;
-    await db.update('library', values, where: 'id = ?', whereArgs: [id]);
+    if (hasReplayGain == null && hasLyrics == null) {
+      await db.update('library', values, where: 'id = ?', whereArgs: [id]);
+      return;
+    }
+    // A quality-only update must not confirm absent tags. ReplayGain-only
+    // writes can advance lyrics-aware rows, while older rows still rescan.
+    final replayGainOnly = hasReplayGain != null && hasLyrics == null;
+    final scanVersion = hasReplayGain != null
+        ? audioMetadataScanVersion
+        : lyricsMetadataScanVersion;
+    final versionSql = replayGainOnly
+        ? 'CASE WHEN COALESCE(audio_metadata_scan_version, 0) >= ? '
+              'THEN MAX(COALESCE(audio_metadata_scan_version, 0), ?) '
+              'ELSE COALESCE(audio_metadata_scan_version, 0) END'
+        : 'MAX(COALESCE(audio_metadata_scan_version, 0), ?)';
+    final columns = values.keys.toList(growable: false);
+    await db.rawUpdate(
+      'UPDATE library SET ${columns.map((column) => '$column = ?').join(', ')}, '
+      'audio_metadata_scan_version = $versionSql WHERE id = ?',
+      [
+        ...columns.map((column) => values[column]),
+        if (replayGainOnly) lyricsMetadataScanVersion,
+        scanVersion,
+        id,
+      ],
+    );
   }
 
   Future<void> delete(String id) async {

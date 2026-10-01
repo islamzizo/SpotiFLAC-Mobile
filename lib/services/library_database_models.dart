@@ -40,6 +40,7 @@ class LocalLibraryItem {
   final String? copyright;
   final bool explicit;
   final bool hasLyrics;
+  final bool hasReplayGain;
   final String? format; // flac, alac, eac3, ac3, ac4, mp3, opus, m4a
 
   const LocalLibraryItem({
@@ -69,6 +70,7 @@ class LocalLibraryItem {
     this.copyright,
     this.explicit = false,
     this.hasLyrics = false,
+    this.hasReplayGain = false,
     this.format,
   });
 
@@ -99,6 +101,7 @@ class LocalLibraryItem {
     'copyright': copyright,
     'explicit': explicit,
     'hasLyrics': hasLyrics,
+    'hasReplayGain': hasReplayGain,
     'format': format,
   };
 
@@ -130,6 +133,8 @@ class LocalLibraryItem {
         copyright: json['copyright'] as String?,
         explicit: json['explicit'] == true || json['explicit'] == 1,
         hasLyrics: json['hasLyrics'] == true || json['hasLyrics'] == 1,
+        // Scan results carry the raw replaygain_* tags; stored rows the flag.
+        hasReplayGain: metadataHasReplayGain(json),
         format: json['format'] as String?,
       );
 
@@ -140,6 +145,7 @@ class LocalLibraryItem {
     int? bitrate,
     bool? explicit,
     bool? hasLyrics,
+    bool? hasReplayGain,
     String? format,
   }) {
     return LocalLibraryItem(
@@ -169,6 +175,7 @@ class LocalLibraryItem {
       copyright: copyright,
       explicit: explicit ?? this.explicit,
       hasLyrics: hasLyrics ?? this.hasLyrics,
+      hasReplayGain: hasReplayGain ?? this.hasReplayGain,
       format: format ?? this.format,
     );
   }

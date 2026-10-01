@@ -230,6 +230,99 @@ void main() {
     });
   });
 
+  group('ReplayGain metadata availability', () {
+    test(
+      'recognizes track or album gain including zero, but not peak alone',
+      () {
+        for (final value in ['0.00 dB', '-7.25 dB', ' +2.1 DB ', 0, -4.5]) {
+          expect(
+            metadataHasReplayGain({'replaygain_track_gain': value}),
+            isTrue,
+          );
+          expect(
+            metadataHasReplayGain({'replaygain_album_gain': value}),
+            isTrue,
+          );
+        }
+        for (final value in [null, '', 'dB', 'NaN', 'Infinity', 'not a gain']) {
+          expect(
+            metadataHasReplayGain({'replaygain_track_gain': value}),
+            isFalse,
+          );
+        }
+        expect(
+          metadataHasReplayGain({'replaygain_track_peak': '0.99'}),
+          isFalse,
+        );
+      },
+    );
+
+    test('unreadable or filename-only metadata is not a confirmed absence', () {
+      expect(replayGainMetadataWasRead({}), isFalse);
+      expect(
+        replayGainMetadataWasRead({
+          'error': 'permission denied',
+          'format': 'FLAC',
+        }),
+        isFalse,
+      );
+      expect(
+        replayGainMetadataWasRead({
+          'metadataFromFilename': true,
+          'format': 'FLAC',
+        }),
+        isFalse,
+      );
+      expect(replayGainMetadataWasRead({'audio_codec': 'flac'}), isTrue);
+      expect(replayGainMetadataWasRead({'replaygain_track_gain': ''}), isTrue);
+    });
+
+    test('history round-trip preserves known absence after removing gain', () {
+      final item = DownloadHistoryItem(
+        id: 'gain',
+        trackName: 'Track',
+        artistName: 'Artist',
+        albumName: 'Album',
+        filePath: '/music/track.flac',
+        service: 'test',
+        downloadedAt: DateTime.utc(2026),
+        hasReplayGain: true,
+        replayGainMetadataScanVersion: 1,
+      );
+      final tagged = DownloadHistoryItem.fromJson(item.toJson());
+      expect(tagged.hasReplayGain, isTrue);
+      final removed = DownloadHistoryItem.fromJson(
+        tagged.copyWith(hasReplayGain: false).toJson(),
+      );
+      expect(removed.hasReplayGain, isFalse);
+      expect(removed.replayGainMetadataScanVersion, 1);
+      final legacy = item.toJson()
+        ..remove('hasReplayGain')
+        ..remove('replayGainMetadataScanVersion');
+      expect(
+        DownloadHistoryItem.fromJson(legacy).replayGainMetadataScanVersion,
+        0,
+      );
+    });
+
+    test('local scan flags survive serialization and tag removal', () {
+      final item = LocalLibraryItem.fromJson({
+        'id': 'local-gain',
+        'trackName': 'Track',
+        'artistName': 'Artist',
+        'albumName': 'Album',
+        'filePath': '/music/track.flac',
+        'scannedAt': DateTime.utc(2026).toIso8601String(),
+        'replaygain_album_gain': '-6.2 dB',
+        'hasLyrics': true,
+      });
+      expect(LocalLibraryItem.fromJson(item.toJson()).hasReplayGain, isTrue);
+      final removed = item.withAudioMetadata(hasReplayGain: false);
+      expect(removed.hasReplayGain, isFalse);
+      expect(removed.hasLyrics, isTrue);
+    });
+  });
+
   group('missing lyrics filter', () {
     test(
       'requires a completed lyrics scan before treating false as missing',

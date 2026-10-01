@@ -542,7 +542,7 @@ Future<void> _performBatchConversion(
 /// selection UI around the confirmation dialog; [onConfirmClosed] receives
 /// whether the user confirmed.
 Future<void> runBatchReplayGain(
-  BuildContext context,
+  BuildContext sourceContext,
   List<UnifiedLibraryItem> selectedItems, {
   required VoidCallback onExitSelectionMode,
   bool remove = false,
@@ -550,6 +550,10 @@ Future<void> runBatchReplayGain(
   Future<void> Function(bool confirmed)? onConfirmClosed,
 }) async {
   if (selectedItems.isEmpty) return;
+
+  final container = ProviderScope.containerOf(sourceContext, listen: false);
+  // The selection overlay can disappear when opening the confirmation dialog.
+  final context = Navigator.of(sourceContext, rootNavigator: true).context;
 
   onConfirmOpen?.call();
 
@@ -618,11 +622,36 @@ Future<void> runBatchReplayGain(
               item.filePath,
               onUnsupportedDecoder: () => unsupportedDecoder = true,
             );
-      if (ok) successCount++;
+      if (ok) {
+        successCount++;
+        try {
+          if (item.historyItem case final history?) {
+            await container
+                .read(downloadHistoryProvider.notifier)
+                .updateAudioMetadataForItem(
+                  id: history.id,
+                  hasReplayGain: !remove,
+                  replayGainMetadataScanVersion: 1,
+                );
+          }
+          if (item.localItem case final local?) {
+            await LibraryDatabase.instance.updateAudioMetadata(
+              local.id,
+              hasReplayGain: !remove,
+            );
+          }
+        } catch (e) {
+          _batchActionsLog.w('Could not refresh ReplayGain availability: $e');
+        }
+      }
     } catch (_) {}
   }
 
   onExitSelectionMode();
+
+  if (successCount > 0 && context.mounted) {
+    await container.read(localLibraryProvider.notifier).reloadFromStorage();
+  }
 
   if (!context.mounted) return;
   if (!cancelled) {

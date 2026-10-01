@@ -194,6 +194,9 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
             copyright: normalizeOptionalString(result['copyright']?.toString()),
             hasLyrics: lyricsAvailability.hasLyrics,
             lyricsMetadataScanVersion: lyricsAvailability.scanVersion,
+            hasReplayGain: lyricsAvailability.hasReplayGain,
+            replayGainMetadataScanVersion:
+                lyricsAvailability.replayGainScanVersion,
           ),
           preserveTrackVariant: context.item.preserveQualityVariant,
         );
@@ -1555,6 +1558,9 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
                 ),
                 hasLyrics: lyricsAvailability.hasLyrics,
                 lyricsMetadataScanVersion: lyricsAvailability.scanVersion,
+                hasReplayGain: lyricsAvailability.hasReplayGain,
+                replayGainMetadataScanVersion:
+                    lyricsAvailability.replayGainScanVersion,
               ),
               preserveTrackVariant: item.preserveQualityVariant,
             );
