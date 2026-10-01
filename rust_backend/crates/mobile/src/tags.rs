@@ -145,6 +145,18 @@ impl ExtensionManager {
             .map_err(ExtensionManagerError::Operation)
     }
 
+    pub fn pause_library_scan(&self) -> Result<(), ExtensionManagerError> {
+        self.inner
+            .pause_library_scan()
+            .map_err(ExtensionManagerError::Operation)
+    }
+
+    pub fn resume_library_scan(&self) -> Result<(), ExtensionManagerError> {
+        self.inner
+            .resume_library_scan()
+            .map_err(ExtensionManagerError::Operation)
+    }
+
     pub fn rewrite_split_artist_tags(
         &self,
         path: String,

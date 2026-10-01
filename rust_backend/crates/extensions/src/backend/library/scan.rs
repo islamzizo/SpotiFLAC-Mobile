@@ -8,16 +8,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, TryLockError, mpsc};
+use std::sync::{Arc, Condvar, Mutex, TryLockError, mpsc};
 use std::thread;
 use std::time::Duration;
 
 type Check<'a> = &'a (dyn Fn() -> Result<(), String> + Sync);
 
+/// How often a paused scan re-checks backend shutdown and its request lease.
+const PAUSE_POLL: Duration = Duration::from_millis(250);
+
 #[derive(Default)]
 pub(in crate::backend) struct ScanState {
     current: Mutex<Option<Arc<Run>>>,
     owner: Mutex<()>,
+    // Pausing is scan-wide rather than per run so a pause requested just
+    // before the native scan starts still holds it at its first checkpoint.
+    paused: Mutex<bool>,
+    resumed: Condvar,
 }
 
 #[derive(Default)]
@@ -71,6 +78,51 @@ impl Backend {
             .as_ref()
         {
             run.cancelled.store(true, Ordering::Release);
+        }
+        // Wake paused workers so they observe the cancellation.
+        self.set_library_scan_paused(false);
+        Ok(())
+    }
+
+    /// Holds the scan at its next checkpoint. Workers keep their position in
+    /// memory, so [`Self::resume_library_scan`] continues with the next file.
+    pub fn pause_library_scan(&self) -> Result<(), String> {
+        let _operation = self.enter()?;
+        self.set_library_scan_paused(true);
+        Ok(())
+    }
+
+    pub fn resume_library_scan(&self) -> Result<(), String> {
+        let _operation = self.enter()?;
+        self.set_library_scan_paused(false);
+        Ok(())
+    }
+
+    fn set_library_scan_paused(&self, paused: bool) {
+        *self
+            .library_scan
+            .paused
+            .lock()
+            .expect("library scan pause lock") = paused;
+        self.library_scan.resumed.notify_all();
+    }
+
+    fn wait_while_library_scan_paused(&self, run: &Run, check: Check<'_>) -> Result<(), String> {
+        let state = &self.library_scan;
+        let mut paused = state.paused.lock().expect("library scan pause lock");
+        while *paused && !run.cancelled.load(Ordering::Acquire) {
+            paused = state
+                .resumed
+                .wait_timeout(paused, PAUSE_POLL)
+                .expect("library scan pause lock")
+                .0;
+            if *paused {
+                drop(paused);
+                // Shutdown and released request leases still end a paused scan.
+                self.check()?;
+                check()?;
+                paused = state.paused.lock().expect("library scan pause lock");
+            }
         }
         Ok(())
     }
@@ -321,6 +373,9 @@ impl Backend {
             previous.cancelled.store(true, Ordering::Release);
         }
         let check = || {
+            // Wait before taking the failure lock so paused workers do not
+            // serialize on it.
+            self.wait_while_library_scan_paused(&run, check)?;
             let mut failure = run.failure.lock().expect("scan failure lock");
             if let Some(error) = failure.as_ref() {
                 return Err(error.clone());
@@ -682,5 +737,71 @@ mod tests {
             error,
             "native media path must not contain symlinks or special files"
         );
+    }
+
+    fn paused_library(root: &Path) -> (Backend, String) {
+        let library = fs::canonicalize(root).unwrap().join("library");
+        fs::create_dir_all(&library).unwrap();
+        for index in 0..3 {
+            fs::write(library.join(format!("{index}.mp3")), b"not audio").unwrap();
+        }
+        let backend = backend(root, &library);
+        backend.pause_library_scan().unwrap();
+        (backend, library.to_string_lossy().into_owned())
+    }
+
+    fn wait_for_run(backend: &Backend) {
+        while backend
+            .library_scan
+            .current
+            .lock()
+            .expect("library scan lock")
+            .is_none()
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn paused_scan_holds_its_position_until_resumed() {
+        let root = tempfile::tempdir().unwrap();
+        let (backend, folder) = paused_library(root.path());
+
+        thread::scope(|scope| {
+            let scan =
+                scope.spawn(|| backend.scan_library_folder_incremental(&folder, "{}", &|| Ok(())));
+            wait_for_run(&backend);
+            thread::sleep(Duration::from_millis(300));
+            assert!(!scan.is_finished());
+            let progress = backend.get_library_scan_progress().unwrap();
+            assert_eq!(progress["scanned_files"], 0);
+            assert_eq!(progress["is_complete"], false);
+
+            backend.resume_library_scan().unwrap();
+            let result = scan.join().unwrap().unwrap();
+            assert_eq!(result["totalFiles"], 3);
+        });
+        let progress = backend.get_library_scan_progress().unwrap();
+        assert_eq!(progress["scanned_files"], 3);
+        assert_eq!(progress["is_complete"], true);
+    }
+
+    #[test]
+    fn cancel_releases_a_paused_scan() {
+        let root = tempfile::tempdir().unwrap();
+        let (backend, folder) = paused_library(root.path());
+
+        thread::scope(|scope| {
+            let scan =
+                scope.spawn(|| backend.scan_library_folder_incremental(&folder, "{}", &|| Ok(())));
+            wait_for_run(&backend);
+            backend.cancel_library_scan().unwrap();
+            assert_eq!(scan.join().unwrap().unwrap_err(), "scan cancelled");
+        });
+        // Cancelling also clears the pause, so the next scan is not held.
+        let result = backend
+            .scan_library_folder_incremental(&folder, "{}", &|| Ok(()))
+            .unwrap();
+        assert_eq!(result["totalFiles"], 3);
     }
 }

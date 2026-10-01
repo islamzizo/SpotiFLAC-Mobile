@@ -263,7 +263,8 @@ import UniformTypeIdentifiers
             "startBackgroundWork", "updateBackgroundWork", "stopBackgroundWork",
             "pickIosDirectory", "startAccessingIosBookmark", "stopAccessingIosBookmark", "downloadCoverToFile", "releaseMemory", "releaseMemoryUnderPressure",
             "setLibraryCoverCacheDir", "scanLibraryFolderToNDJSONFile", "scanLibraryFolderIncremental",
-            "getLibraryScanProgress", "cancelLibraryScan", "parseCueSheet", "extractCoverToFile",
+            "getLibraryScanProgress", "cancelLibraryScan", "pauseLibraryScan", "resumeLibraryScan",
+            "parseCueSheet", "extractCoverToFile",
             "rewriteSplitArtistTags", "writeM4AFreeformTags", "ensureAC4Config", "writeAC4Metadata", "reEnrichFile",
             "checkHiResAuthenticity"]
         if call.method == "setScreenAwake" {
@@ -614,6 +615,14 @@ import UniformTypeIdentifiers
 
         case "cancelLibraryScan":
             try coreBackend.cancelLibraryScan()
+            return nil
+
+        case "pauseLibraryScan":
+            try coreBackend.pauseLibraryScan()
+            return nil
+
+        case "resumeLibraryScan":
+            try coreBackend.resumeLibraryScan()
             return nil
 
 

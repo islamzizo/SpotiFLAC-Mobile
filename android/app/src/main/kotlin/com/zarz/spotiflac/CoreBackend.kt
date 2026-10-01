@@ -203,6 +203,8 @@ internal interface CoreBackend {
     fun scanLibraryFolderIncrementalFromSnapshot(folder: String, snapshot: String): String
     fun getLibraryScanProgress(): String
     fun cancelLibraryScan()
+    fun pauseLibraryScan()
+    fun resumeLibraryScan()
     fun parseCueSheet(path: String, audioDirectory: String): String
     fun parseCueSheetWithResolvedAudio(path: String, audioPath: String): String
     fun scanCueForLibrary(path: String, audioDirectory: String, virtualPrefix: String, modTime: Long, cacheKey: String): String

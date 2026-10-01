@@ -335,6 +335,10 @@ internal object RustCoreBackend : CoreBackend {
 
     override fun cancelLibraryScan() { synchronized(this) { manager }?.cancelLibraryScan() }
 
+    override fun pauseLibraryScan() { synchronized(this) { manager }?.pauseLibraryScan() }
+
+    override fun resumeLibraryScan() { synchronized(this) { manager }?.resumeLibraryScan() }
+
     override fun parseCueSheet(path: String, audioDirectory: String): String {
         val cue = File(path).canonicalFile
         val audio = if (audioDirectory.isEmpty()) cue.parentFile!! else File(audioDirectory).canonicalFile

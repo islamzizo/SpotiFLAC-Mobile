@@ -177,6 +177,8 @@ protocol CoreBackend {
     func scanLibraryFolderIncremental(folder: String, existing: String) throws -> String
     func getLibraryScanProgress() throws -> String
     func cancelLibraryScan() throws
+    func pauseLibraryScan() throws
+    func resumeLibraryScan() throws
     func parseCueSheet(path: String, audioDirectory: String) throws -> String
     func openDownloadDirectory(path: String) throws -> CoreDirectoryScope
     func createTemporaryMediaFile(prefix: String, suffix: String) throws -> URL
@@ -376,6 +378,20 @@ final class RustCoreBackend: CoreBackend {
         let current = manager
         ownerLock.unlock()
         try current?.cancelLibraryScan()
+    }
+
+    func pauseLibraryScan() throws {
+        ownerLock.lock()
+        let current = manager
+        ownerLock.unlock()
+        try current?.pauseLibraryScan()
+    }
+
+    func resumeLibraryScan() throws {
+        ownerLock.lock()
+        let current = manager
+        ownerLock.unlock()
+        try current?.resumeLibraryScan()
     }
 
     func parseCueSheet(path: String, audioDirectory: String) throws -> String {

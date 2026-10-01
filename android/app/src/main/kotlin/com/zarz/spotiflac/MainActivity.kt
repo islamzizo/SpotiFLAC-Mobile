@@ -101,6 +101,8 @@ class MainActivity: FlutterFragmentActivity() {
         "scanSafTreeIncrementalFromSnapshot",
         "getLibraryScanProgress",
         "cancelLibraryScan",
+        "pauseLibraryScan",
+        "resumeLibraryScan",
         "parseCueSheet",
         "pickSafTree",
         "safExists",
@@ -167,6 +169,7 @@ class MainActivity: FlutterFragmentActivity() {
     private val playbackLeaseLock = Any()
     private val playbackLeases = LinkedHashMap<String, ParcelFileDescriptor>()
     @Volatile internal var safScanCancel = false
+    @Volatile internal var safScanPaused = false
     @Volatile internal var safScanActive = false
     private val safTreeLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -2018,7 +2021,22 @@ class MainActivity: FlutterFragmentActivity() {
                         "cancelLibraryScan" -> {
                             withContext(Dispatchers.IO) {
                                 safScanCancel = true
+                                safScanPaused = false
                                 coreBackend.cancelLibraryScan()
+                            }
+                            result.success(null)
+                        }
+                        "pauseLibraryScan" -> {
+                            withContext(Dispatchers.IO) {
+                                safScanPaused = true
+                                coreBackend.pauseLibraryScan()
+                            }
+                            result.success(null)
+                        }
+                        "resumeLibraryScan" -> {
+                            withContext(Dispatchers.IO) {
+                                safScanPaused = false
+                                coreBackend.resumeLibraryScan()
                             }
                             result.success(null)
                         }

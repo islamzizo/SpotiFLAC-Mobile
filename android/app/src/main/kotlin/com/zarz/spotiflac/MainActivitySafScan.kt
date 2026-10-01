@@ -590,6 +590,18 @@ private fun rememberCueDirectoryListing(
 // Provider round trips dominate on SD cards, USB drives and network shares.
 private const val SAF_LIST_CONCURRENCY = 4
 private const val SAF_READ_WORKERS = 6
+private const val SAF_SCAN_PAUSE_POLL_MS = 100L
+
+/**
+ * Holds a SAF scan at its checkpoint while paused, keeping its position in
+ * memory. Returns true when the scan should stop because it was cancelled.
+ */
+internal fun MainActivity.safScanStopRequested(): Boolean {
+    while (safScanPaused && !safScanCancel) {
+        Thread.sleep(SAF_SCAN_PAUSE_POLL_MS)
+    }
+    return safScanCancel
+}
 
 /**
  * Prefetches the listings of directories already waiting in a breadth-first
@@ -892,7 +904,7 @@ internal fun MainActivity.scanSafTree(
         val lister = SafTreeLister(this)
 
         while (queue.isNotEmpty()) {
-            if (safScanCancel) {
+            if (safScanStopRequested()) {
                 return cancelledResult()
             }
 
@@ -916,7 +928,7 @@ internal fun MainActivity.scanSafTree(
             rememberCueDirectoryListing(dir, children, safChildLookupCache)
 
             for (child in children) {
-                if (safScanCancel) {
+                if (safScanStopRequested()) {
                     return cancelledResult()
                 }
 
@@ -1036,7 +1048,7 @@ internal fun MainActivity.scanSafTree(
             val parentDir = cue.parentDir
             val cueUri = cueDoc.uri.toString()
             val cueAlreadyIndexed = checkpointed(cueUri, cue.lastModified)
-            if (safScanCancel) {
+            if (safScanStopRequested()) {
                 ndjsonWriter?.close()
                 spill?.abandon()
                 return cancelledResult()
@@ -1148,7 +1160,7 @@ internal fun MainActivity.scanSafTree(
         // Skip resumable and CUE entries before parallel reads.
         for (audio in audioFiles) {
             val doc = audio.doc
-            if (safScanCancel) {
+            if (safScanStopRequested()) {
                 ndjsonWriter?.close()
                 spill?.abandon()
                 return cancelledResult()
@@ -1176,7 +1188,7 @@ internal fun MainActivity.scanSafTree(
         // pool is bounded by provider round trips rather than copy memory.
         val completed = runSafReadsInOrder(
             pendingAudio,
-            cancelled = { safScanCancel },
+            cancelled = { safScanStopRequested() },
             task = { audio ->
                 val doc = audio.doc
                 val stableUri = doc.uri.toString()
@@ -1326,7 +1338,7 @@ internal fun MainActivity.scanSafTreeIncremental(
         val lister = SafTreeLister(this)
 
         while (queue.isNotEmpty()) {
-            if (safScanCancel) {
+            if (safScanStopRequested()) {
                 updateSafScanProgress { it.isComplete = true }
                 val result = JSONObject()
                 result.put("files", JSONArray())
@@ -1357,7 +1369,7 @@ internal fun MainActivity.scanSafTreeIncremental(
             rememberCueDirectoryListing(dir, children, safChildLookupCache)
 
             for (child in children) {
-                if (safScanCancel) {
+                if (safScanStopRequested()) {
                     updateSafScanProgress { it.isComplete = true }
                     val result = JSONObject()
                     result.put("files", JSONArray())
@@ -1461,7 +1473,7 @@ internal fun MainActivity.scanSafTreeIncremental(
         val cueReferencedAudioUris = mutableSetOf<String>()
 
         for ((cueDoc, parentDir, cueName, cueLastModified) in cueFilesToScan) {
-            if (safScanCancel) {
+            if (safScanStopRequested()) {
                 updateSafScanProgress { it.isComplete = true }
                 spill.abandon()
                 val result = JSONObject()
@@ -1620,7 +1632,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
         val pendingAudio = mutableListOf<ChangedAudio>()
         for (audio in audioFiles) {
-            if (safScanCancel) return cancelledIncrementalResult()
+            if (safScanStopRequested()) return cancelledIncrementalResult()
             if (cueReferencedAudioUris.contains(audio.doc.uri.toString())) {
                 scanned++
                 reportProcessed()
@@ -1631,7 +1643,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
         val completed = runSafReadsInOrder(
             pendingAudio,
-            cancelled = { safScanCancel },
+            cancelled = { safScanStopRequested() },
             task = { audio ->
                 val ext = audio.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 val fallbackExt = if (ext.isNotBlank()) ".${ext}" else null
