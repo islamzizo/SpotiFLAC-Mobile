@@ -2346,6 +2346,15 @@ class PlatformBridge {
     await _channel.invokeMethod('cancelLibraryScan');
   }
 
+  /// Holds the running native scan at its next file; it keeps its position.
+  static Future<void> pauseLibraryScan() async {
+    await _channel.invokeMethod('pauseLibraryScan');
+  }
+
+  static Future<void> resumeLibraryScan() async {
+    await _channel.invokeMethod('resumeLibraryScan');
+  }
+
   static Object? _decodeJsonResult(dynamic result) {
     if (result is String) {
       if (result.isEmpty) return null;

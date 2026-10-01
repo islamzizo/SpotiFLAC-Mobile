@@ -2803,6 +2803,10 @@
   "@libraryScanFinalizing": {
     "description": "Status shown after file scanning finishes but library persistence is still running"
   },
+  "libraryScanPaused": "Pindai dijeda",
+  "@libraryScanPaused": {
+    "description": "Status shown while a library scan is paused by the user"
+  },
   "libraryScanProgress": "{progress}% dari {total} file",
   "@libraryScanProgress": {
     "description": "Scan progress display",
@@ -5301,6 +5305,19 @@
   "notifLibraryScanStopped": "Pindai dihentikan sebelum selesai.",
   "@notifLibraryScanStopped": {
     "description": "Notification body when library scan is cancelled"
+  },
+  "notifLibraryScanPaused": "Pindai koleksi dijeda",
+  "@notifLibraryScanPaused": {
+    "description": "Notification title when the user pauses a library scan"
+  },
+  "notifLibraryScanPausedBody": "{count} file sudah dipindai. Ketuk Lanjutkan di pengaturan Koleksi Lokal untuk meneruskan dari sini.",
+  "@notifLibraryScanPausedBody": {
+    "description": "Notification body for a paused library scan - files scanned so far",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "notifDownloadingUpdate": "Mendownload SpotiFLAC Mobile v{version}",
   "@notifDownloadingUpdate": {

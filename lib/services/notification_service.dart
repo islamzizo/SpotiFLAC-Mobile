@@ -539,6 +539,25 @@ class NotificationService {
     );
   }
 
+  Future<void> showLibraryScanPaused({required int scannedFiles}) async {
+    if (!_isInitialized) await initialize();
+
+    await _showSafely(
+      id: libraryScanId,
+      title: _l10n?.notifLibraryScanPaused ?? 'Library scan paused',
+      body:
+          _l10n?.notifLibraryScanPausedBody(scannedFiles) ??
+          '$scannedFiles files scanned. Resume in Local Library settings to '
+              'continue from here.',
+      details: _details(library: true),
+    );
+  }
+
+  /// Clears a paused-scan notice once the foreground service shows progress.
+  Future<void> cancelLibraryScanNotification() async {
+    await _notifications.cancel(id: libraryScanId);
+  }
+
   Future<void> showUpdateDownloadProgress({
     required String version,
     required int received,

@@ -2846,6 +2846,10 @@
   "@libraryScanFinalizing": {
     "description": "Status shown after file scanning finishes but library persistence is still running"
   },
+  "libraryScanPaused": "Scan paused",
+  "@libraryScanPaused": {
+    "description": "Status shown while a library scan is paused by the user"
+  },
   "libraryScanProgress": "{progress}% of {total} files",
   "@libraryScanProgress": {
     "description": "Scan progress display",
@@ -5395,6 +5399,19 @@
   "notifLibraryScanStopped": "Scan stopped before completion.",
   "@notifLibraryScanStopped": {
     "description": "Notification body when library scan is cancelled"
+  },
+  "notifLibraryScanPaused": "Library scan paused",
+  "@notifLibraryScanPaused": {
+    "description": "Notification title when the user pauses a library scan"
+  },
+  "notifLibraryScanPausedBody": "{count} files scanned. Resume in Local Library settings to continue from here.",
+  "@notifLibraryScanPausedBody": {
+    "description": "Notification body for a paused library scan - files scanned so far",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "notifDownloadingUpdate": "Downloading SpotiFLAC Mobile v{version}",
   "@notifDownloadingUpdate": {

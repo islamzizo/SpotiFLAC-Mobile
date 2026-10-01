@@ -21,6 +21,7 @@ final _prefs = SharedPreferences.getInstance();
 class LocalLibraryState {
   final bool isScanning;
   final bool scanIsFinalizing;
+  final bool scanIsPaused;
   final double scanProgress;
   final String? scanCurrentFile;
   final int scanTotalFiles;
@@ -39,6 +40,7 @@ class LocalLibraryState {
   LocalLibraryState({
     this.isScanning = false,
     this.scanIsFinalizing = false,
+    this.scanIsPaused = false,
     this.scanProgress = 0,
     this.scanCurrentFile,
     this.scanTotalFiles = 0,
@@ -76,6 +78,7 @@ class LocalLibraryState {
   LocalLibraryState copyWith({
     bool? isScanning,
     bool? scanIsFinalizing,
+    bool? scanIsPaused,
     double? scanProgress,
     String? scanCurrentFile,
     int? scanTotalFiles,
@@ -96,6 +99,7 @@ class LocalLibraryState {
     return LocalLibraryState(
       isScanning: isScanning ?? this.isScanning,
       scanIsFinalizing: scanIsFinalizing ?? this.scanIsFinalizing,
+      scanIsPaused: scanIsPaused ?? this.scanIsPaused,
       scanProgress: scanProgress ?? this.scanProgress,
       scanCurrentFile: scanCurrentFile ?? this.scanCurrentFile,
       scanTotalFiles: scanTotalFiles ?? this.scanTotalFiles,
@@ -144,6 +148,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   bool _hasLoadedFromDatabase = false;
   Future<void>? _loadFuture;
   bool _scanCancelRequested = false;
+  bool _scanPauseRequested = false;
   bool _scanInProgress = false;
   StreamSubscription<void>? _storageEventsSubscription;
   Timer? _storageEventDebounce;
@@ -539,6 +544,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     var ingested = false;
     try {
       if (_scanCancelRequested) return null;
+      await _endPauseForFinalization();
       state = state.copyWith(
         scanIsFinalizing: true,
         scanProgress: state.scanProgress >= 99 ? state.scanProgress : 99,
@@ -613,6 +619,10 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
     _scanInProgress = true;
     _scanCancelRequested = false;
+    _scanPauseRequested = false;
+    // A pause left behind by an interrupted Dart session would hold the new
+    // native scan forever; clear it before the pause control becomes visible.
+    await _releaseNativeScanPause();
     try {
       final prefs = await _prefs;
       await prefs.setString(localLibraryActiveScanSourceKey, activeSourceId);
@@ -625,6 +635,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     state = state.copyWith(
       isScanning: true,
       scanIsFinalizing: false,
+      scanIsPaused: false,
       scanProgress: 0,
       scanCurrentFile: null,
       scanTotalFiles: 0,
@@ -821,6 +832,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           return;
         }
 
+        await _endPauseForFinalization();
         state = state.copyWith(
           scanIsFinalizing: true,
           scanProgress: state.scanProgress >= 99 ? state.scanProgress : 99,
@@ -955,6 +967,10 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         _log.i('Stopped iOS security-scoped access');
       }
       _stopProgressPolling();
+      if (_scanPauseRequested) {
+        _scanPauseRequested = false;
+        await _releaseNativeScanPause();
+      }
       _scanInProgress = false;
       try {
         final prefs = await _prefs;
@@ -965,7 +981,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       } catch (e) {
         _log.w('Failed to clear active library scan marker: $e');
       }
-      state = state.copyWith(clearScanningSourceId: true);
+      state = state.copyWith(clearScanningSourceId: true, scanIsPaused: false);
     }
   }
 
@@ -1021,11 +1037,14 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       );
     }
 
-    if (_shouldShowScanProgressNotification(
-      progress: normalizedProgress,
-      totalFiles: totalFiles,
-      isComplete: false,
-    )) {
+    // Files already in flight still finish after a pause; count them, but
+    // keep the paused notice instead of reposting progress.
+    if (!state.scanIsPaused &&
+        _shouldShowScanProgressNotification(
+          progress: normalizedProgress,
+          totalFiles: totalFiles,
+          isComplete: false,
+        )) {
       await _showScanProgressNotification(
         progress: normalizedProgress,
         scannedFiles: scannedFiles,
@@ -1073,10 +1092,95 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
     _log.i('Cancelling library scan');
     _scanCancelRequested = true;
+    // Native cancel also releases a paused scan.
+    _scanPauseRequested = false;
     await PlatformBridge.cancelLibraryScan();
-    state = state.copyWith(scanIsFinalizing: false, scanWasCancelled: true);
+    state = state.copyWith(
+      scanIsFinalizing: false,
+      scanIsPaused: false,
+      scanWasCancelled: true,
+    );
     _stopProgressPolling();
     await _showScanCancelledNotification();
+  }
+
+  /// Holds the running scan in place. Files already processed stay in the
+  /// native scan's memory, so [resumeScan] continues with the next file.
+  Future<void> pauseScan() async {
+    if (!state.isScanning ||
+        state.scanIsFinalizing ||
+        state.scanIsPaused ||
+        _scanCancelRequested) {
+      return;
+    }
+    _log.i('Pausing library scan at ${state.scannedFiles} files');
+    _scanPauseRequested = true;
+    state = state.copyWith(scanIsPaused: true);
+    try {
+      await PlatformBridge.pauseLibraryScan();
+    } catch (e) {
+      _log.w('Failed to pause library scan: $e');
+      _scanPauseRequested = false;
+      state = state.copyWith(scanIsPaused: false);
+      return;
+    }
+    // A paused scan does no work; release the foreground service and wake
+    // lock (iOS background task) until the user resumes.
+    await _notificationService.endBackgroundWork(
+      NotificationService.libraryScanWorkKind,
+    );
+    await _showScanPausedNotification(state.scannedFiles);
+  }
+
+  Future<void> resumeScan() async {
+    if (!state.isScanning || !state.scanIsPaused || !_scanPauseRequested) {
+      return;
+    }
+    _log.i('Resuming library scan from ${state.scannedFiles} files');
+    // Reacquire background work first so resumed reads survive screen-off.
+    await _notificationService.beginLibraryScanWork();
+    await _cancelScanPausedNotification();
+    _scanPauseRequested = false;
+    _resetScanNotificationTracking();
+    state = state.copyWith(scanIsPaused: false);
+    await _releaseNativeScanPause();
+  }
+
+  Future<void> _releaseNativeScanPause() async {
+    try {
+      await PlatformBridge.resumeLibraryScan();
+    } catch (e) {
+      _log.w('Failed to release library scan pause: $e');
+    }
+  }
+
+  /// The native scan can finish while paused when the pause lands after its
+  /// last file. Ingestion then runs normally, so restore background work.
+  Future<void> _endPauseForFinalization() async {
+    if (!_scanPauseRequested) return;
+    _scanPauseRequested = false;
+    state = state.copyWith(scanIsPaused: false);
+    await _notificationService.beginLibraryScanWork();
+    await _cancelScanPausedNotification();
+    await _releaseNativeScanPause();
+  }
+
+  Future<void> _showScanPausedNotification(int scannedFiles) async {
+    try {
+      await _notificationService.showLibraryScanPaused(
+        scannedFiles: scannedFiles,
+      );
+    } catch (e) {
+      _log.w('Failed to show scan paused notification: $e');
+    }
+  }
+
+  Future<void> _cancelScanPausedNotification() async {
+    try {
+      await _notificationService.cancelLibraryScanNotification();
+    } catch (e) {
+      _log.w('Failed to clear scan paused notification: $e');
+    }
   }
 
   Future<void> _showScanProgressNotification({
