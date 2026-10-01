@@ -485,7 +485,7 @@ impl HttpStream {
         }
         let _ = self
             .service
-            .run(self.generation, Duration::from_millis(20), &check, async {
+            .run(self.generation, Duration::from_millis(50), &check, async {
                 let mut buffer = [0; 2048];
                 let mut received = 0;
                 loop {
@@ -895,7 +895,7 @@ impl NetworkSession {
                             .is_some_and(|length| length <= 2048)
                     {
                         let mut body = response.into_body();
-                        let _ = tokio::time::timeout(Duration::from_millis(20), async {
+                        let _ = tokio::time::timeout(Duration::from_millis(50), async {
                             let mut received = 0;
                             while let Some(Ok(frame)) = body.frame().await {
                                 received += frame.data_ref().map_or(0, Bytes::len);
