@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
+import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/providers/library_search_provider.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/playback_provider.dart';
@@ -8,11 +10,16 @@ import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
 import 'package:spotiflac_android/screens/library_tracks_folder_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
 import 'package:spotiflac_android/screens/track_metadata_screen.dart';
+import 'package:spotiflac_android/services/batch_track_actions.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/library_search.dart';
+import 'package:spotiflac_android/services/local_track_batch_actions.dart';
+import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
+import 'package:spotiflac_android/widgets/library_track_selection_bar.dart';
+import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
 import 'package:spotiflac_android/widgets/track_card.dart';
 
 /// Slivers shared by Material's Library and Mornye's Library/Songs screens.
@@ -37,10 +44,165 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
   LibrarySearchKind? _kind;
   int _pages = 1;
 
+  // Long-pressed songs, keyed by UnifiedLibraryItem.id in selection order.
+  // Only resolved records are kept, so every bar action sees real files.
+  final Map<String, UnifiedLibraryItem> _selected = {};
+  final SelectionOverlayController _selectionOverlay =
+      SelectionOverlayController();
+  // Hidden while a sheet or dialog opened from the bar is on screen.
+  bool _suppressSelectionBar = false;
+  List<LibrarySearchHit> _visibleSongs = const [];
+
+  bool get _selecting => _selected.isNotEmpty;
+
   @override
   void didUpdateWidget(covariant LibrarySearchResults oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.query != widget.query) _pages = 1;
+    if (oldWidget.query != widget.query) {
+      _pages = 1;
+      // A selection belongs to the results it was made in.
+      if (_selecting) {
+        _selected.clear();
+        _selectionOverlay.hide();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _selectionOverlay.dispose();
+    super.dispose();
+  }
+
+  static String _itemId(LibrarySearchHit hit) =>
+      hit.source == 'local' ? 'local_${hit.id}' : 'dl_${hit.id}';
+
+  Future<UnifiedLibraryItem?> _resolve(LibrarySearchHit hit) => ref.read(
+    librarySearchTrackProvider((source: hit.source, id: hit.id)).future,
+  );
+
+  Future<void> _toggleSelection(LibrarySearchHit hit) async {
+    final id = _itemId(hit);
+    if (_selected.containsKey(id)) {
+      setState(() => _selected.remove(id));
+      return;
+    }
+    final item = await _resolve(hit);
+    if (!mounted || item == null) return;
+    if (_selected.isEmpty) {
+      FocusScope.of(context).unfocus();
+      HapticFeedback.mediumImpact();
+    }
+    setState(() => _selected[item.id] = item);
+  }
+
+  Future<void> _selectAllVisible() async {
+    final items = await Future.wait(
+      _visibleSongs
+          .where((hit) => !_selected.containsKey(_itemId(hit)))
+          .map(_resolve),
+    );
+    if (!mounted) return;
+    setState(() {
+      for (final item in items.whereType<UnifiedLibraryItem>()) {
+        _selected[item.id] = item;
+      }
+    });
+  }
+
+  void _exitSelection() {
+    if (!mounted) return;
+    setState(_selected.clear);
+    _selectionOverlay.hide();
+  }
+
+  void _finishSelectionAction() {
+    _exitSelection();
+    ref.invalidate(librarySearchProvider);
+  }
+
+  void _hideSelectionBar() {
+    _suppressSelectionBar = true;
+    _selectionOverlay.hide();
+  }
+
+  Future<void> _restoreSelectionBar({Duration delay = Duration.zero}) async {
+    // Wait out the sheet/dialog exit so the bar does not cover it.
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    _suppressSelectionBar = false;
+    if (mounted) setState(() {});
+  }
+
+  void _syncSelectionBar() {
+    if (!mounted) return;
+    if (!_selecting || _suppressSelectionBar) {
+      _selectionOverlay.hide();
+      return;
+    }
+    _selectionOverlay.show(context, _buildSelectionBar);
+  }
+
+  Widget _buildSelectionBar(BuildContext _) {
+    final items = _selected.values.toList(growable: false);
+    final visibleIds = _visibleSongs.map(_itemId).toSet();
+    final allSelected =
+        visibleIds.isNotEmpty && visibleIds.every(_selected.containsKey);
+    final flacEligible = items.every((item) => item.localItem != null)
+        ? items
+              .map((item) => item.localItem!)
+              .where(LocalTrackRedownloadService.isFlacUpgradeEligible)
+              .toList(growable: false)
+        : const <LocalLibraryItem>[];
+    return LibraryTrackSelectionBar(
+      selectedCount: items.length,
+      allSelected: allSelected,
+      onClose: _exitSelection,
+      onToggleSelectAll: allSelected ? _exitSelection : _selectAllVisible,
+      bottomPadding: MediaQuery.paddingOf(context).bottom,
+      flacEligibleCount: flacEligible.length,
+      onQueueFlac: () => queueLocalTracksAsFlac(
+        context,
+        ref,
+        flacEligible,
+        isActive: () => mounted,
+        onComplete: _exitSelection,
+      ),
+      onReEnrich: () => reEnrichLibraryTracks(
+        context,
+        ref,
+        items,
+        isActive: () => mounted,
+        onSelectionHide: () async => _hideSelectionBar(),
+        onSelectionRestore: _restoreSelectionBar,
+        onComplete: _finishSelectionAction,
+      ),
+      onConvert: () => showBatchConvertSheet(
+        context,
+        ref,
+        items,
+        onExitSelectionMode: _finishSelectionAction,
+        onSheetOpen: _hideSelectionBar,
+        onSheetClosed: (_) =>
+            _restoreSelectionBar(delay: const Duration(milliseconds: 260)),
+      ),
+      onReplayGain: ({required remove}) => runBatchReplayGain(
+        context,
+        items,
+        remove: remove,
+        onExitSelectionMode: _exitSelection,
+        onConfirmOpen: _hideSelectionBar,
+        onConfirmClosed: (confirmed) => _restoreSelectionBar(
+          delay: confirmed ? Duration.zero : const Duration(milliseconds: 220),
+        ),
+      ),
+      onDelete: () => deleteLibraryTracks(
+        context,
+        ref,
+        items,
+        isActive: () => mounted,
+        onComplete: _finishSelectionAction,
+      ),
+    );
   }
 
   String _label(LibrarySearchKind kind) => switch (kind) {
@@ -148,6 +310,7 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
       child: Center(child: Icon(icon)),
     );
+    final song = hit.kind == LibrarySearchKind.songs;
     return TrackCard(
       key: ValueKey('${hit.kind.name}:${hit.source}:${hit.id}'),
       style: hit.kind == LibrarySearchKind.songs && !context.isMornye
@@ -166,14 +329,23 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
       ),
       title: hit.title,
       subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
-      trailing: hit.kind == LibrarySearchKind.songs
+      trailing: song
           ? IconButton(
               tooltip: context.l10n.tooltipPlay,
               icon: const Icon(Icons.play_arrow_rounded),
               onPressed: () => _open(hit, play: true),
             )
           : const Icon(Icons.chevron_right),
-      onTap: () => _open(hit),
+      // Long-press selects songs for the Library batch actions; while
+      // selecting, song taps toggle and other results stay inert.
+      isSelectionMode: song && _selecting,
+      isSelected: song && _selected.containsKey(_itemId(hit)),
+      onTap: !_selecting
+          ? () => _open(hit)
+          : song
+          ? () => _toggleSelection(hit)
+          : null,
+      onLongPress: song ? () => _toggleSelection(hit) : null,
     );
   }
 
@@ -204,6 +376,7 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
     var hasResults = false;
     var loading = false;
     var failed = false;
+    final visibleSongs = <LibrarySearchHit>[];
     for (final kind in _kind == null ? LibrarySearchKind.values : [_kind!]) {
       for (var page = 0; page < (_kind == null ? 1 : _pages); page++) {
         final pageSize = _kind == null ? 5 : 40;
@@ -217,6 +390,9 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
         loading |= result.isLoading;
         failed |= result.hasError;
         final hits = result.value ?? const <LibrarySearchHit>[];
+        if (kind == LibrarySearchKind.songs) {
+          visibleSongs.addAll(hits.take(pageSize));
+        }
         if (hits.isNotEmpty) {
           hasResults = true;
           if (page == 0) {
@@ -293,6 +469,21 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
         ),
       );
     }
-    return SliverMainAxisGroup(slivers: slivers);
+    if (_selecting) {
+      // Same reserve as the Library list, so the last rows can scroll clear
+      // of the selection bar.
+      slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 100)));
+    }
+    _visibleSongs = visibleSongs;
+    if (_selecting || _selectionOverlay.isVisible) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _syncSelectionBar());
+    }
+    return PopScope(
+      canPop: !_selecting,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _selecting) _exitSelection();
+      },
+      child: SliverMainAxisGroup(slivers: slivers),
+    );
   }
 }

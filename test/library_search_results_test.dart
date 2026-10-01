@@ -259,4 +259,112 @@ void main() {
     expect(find.text('old songs 0'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  for (final mornye in [false, true]) {
+    testWidgets(
+      'long-press selects songs for Library batch actions ($mornye)',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        FlutterSecureStorage.setMockInitialValues({});
+        // Tall enough that the selection bar never covers a result row.
+        tester.view.physicalSize = const Size(800, 1600);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        UnifiedLibraryItem local(String id) =>
+            UnifiedLibraryItem.fromLocalLibrary(
+              LocalLibraryItem(
+                id: id,
+                trackName: 'Song $id',
+                artistName: 'Artist',
+                albumName: 'Album',
+                filePath: '/music/$id.mp3',
+                scannedAt: DateTime(2026),
+              ),
+            );
+        final query = ValueNotifier('Song');
+        addTearDown(query.dispose);
+        final player = _PlaybackRecorder();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              playbackProvider.overrideWith(() => player),
+              librarySearchProvider.overrideWith(
+                (ref, request) async => switch (request.kind) {
+                  LibrarySearchKind.songs => [
+                    for (final id in ['a', 'b'])
+                      LibrarySearchHit(
+                        kind: LibrarySearchKind.songs,
+                        id: id,
+                        title: 'Song $id',
+                        source: 'local',
+                      ),
+                  ],
+                  LibrarySearchKind.albums => [
+                    _hit(LibrarySearchKind.albums, 0, query: 'Song'),
+                  ],
+                  _ => [],
+                },
+              ),
+              librarySearchTrackProvider.overrideWith(
+                (ref, key) async => local(key.id),
+              ),
+            ],
+            child: MaterialApp(
+              theme: mornye ? MornyeTheme.build(Brightness.dark) : ThemeData(),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: ValueListenableBuilder(
+                  valueListenable: query,
+                  builder: (context, value, _) => CustomScrollView(
+                    slivers: [
+                      LibrarySearchResults(query: value, onOpenArtist: (_) {}),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byTooltip('Play'), findsNWidgets(2));
+
+        await tester.longPress(find.text('Song a'));
+        await tester.pumpAndSettle();
+        expect(find.text('1 selected'), findsOneWidget);
+        expect(find.text('Re-enrich (1)'), findsOneWidget);
+        expect(find.text('Convert 1 track'), findsOneWidget);
+        expect(find.text('Delete 1 track'), findsOneWidget);
+        // Selecting hides row actions and keeps taps on the selection.
+        expect(find.byTooltip('Play'), findsNothing);
+        await tester.tap(find.text('Song b'));
+        await tester.pumpAndSettle();
+        expect(find.text('2 selected'), findsOneWidget);
+        expect(find.text('All tracks selected'), findsOneWidget);
+        await tester.tap(find.text('Song albums 0'));
+        await tester.pumpAndSettle();
+        expect(find.byType(LibrarySearchResults), findsOneWidget);
+        expect(find.text('2 selected'), findsOneWidget);
+        expect(player.paths, isEmpty);
+
+        await tester.tap(find.text('Song b'));
+        await tester.pumpAndSettle();
+        expect(find.text('1 selected'), findsOneWidget);
+        // Back leaves selection mode instead of the screen.
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.textContaining('selected'), findsNothing);
+        expect(find.byTooltip('Play'), findsNWidgets(2));
+
+        // A new query starts without the previous selection.
+        await tester.longPress(find.text('Song a'));
+        await tester.pumpAndSettle();
+        expect(find.text('1 selected'), findsOneWidget);
+        query.value = 'Song ';
+        await tester.pumpAndSettle();
+        expect(find.textContaining('selected'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
