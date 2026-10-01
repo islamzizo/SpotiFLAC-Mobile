@@ -474,7 +474,7 @@ impl HttpStream {
     }
 
     /// Release an unwanted body (a range probe or retryable error). A small
-    /// HTTP/1.1 body is finished within 20 ms so its connection can return to
+    /// HTTP/1.1 body is finished within 50 ms so its connection can return to
     /// the pool; HTTP/2, compressed, large or slow bodies are dropped at once.
     pub fn discard(&mut self, check: impl Fn() -> Result<(), String>) {
         let Some(mut body) = self.body.take() else {
