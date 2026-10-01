@@ -7,6 +7,41 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeFinalizationPolicyTest {
+    // Shared with the Rust and Dart primary-artist tests; keep in sync.
+    @Test
+    fun primaryArtistModeKeepsTheFirstCreditedArtist() {
+        for ((input, expected) in listOf(
+            "Calle 24, Chino Pacas" to "Calle 24",
+            "Calle 24 & Chino Pacas" to "Calle 24",
+            "Artist A; Artist B" to "Artist A",
+            "Artist A feat. Artist B" to "Artist A",
+            "Artist A Feat Artist B" to "Artist A",
+            "Artist A ft. Artist B" to "Artist A",
+            "Artist A featuring Artist B" to "Artist A",
+            "Artist A with Artist B" to "Artist A",
+            "Artist A x Artist B" to "Artist A",
+            "Artist A X Artist B" to "Artist A",
+            "Artist A\u00A0feat.\u00A0Artist B" to "Artist A",
+            "Artist A\u3000x\u3000Artist B" to "Artist A",
+            " , Artist A, Artist B" to "Artist A",
+            "Malcolm X" to "Malcolm X",
+            "Artist Without Fear" to "Artist Without Fear",
+            "Maxx" to "Maxx",
+            "AC/DC" to "AC/DC",
+            "  Various Artists  " to "Various Artists",
+            "" to "",
+        )) {
+            assertEquals(input, expected, NativeFinalizationPolicy.artistTagValue(input, " Primary "))
+        }
+        // Joined and split values are left to the backend writer unchanged.
+        for (mode in listOf("joined", "split_vorbis", "", null)) {
+            assertEquals(
+                "Artist A, Artist B",
+                NativeFinalizationPolicy.artistTagValue("Artist A, Artist B", mode),
+            )
+        }
+    }
+
     @Test
     fun durationUsesDeclaredUnitsForShortTracksAndLongPerformances() {
         assertEquals(250L, NativeFinalizationPolicy.durationMilliseconds(250, 0))

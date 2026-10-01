@@ -3,6 +3,26 @@ import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
+/// Removes rows superseded by a staged scan inside the caller's transaction.
+/// On partial scans, an unreadable file is not evidence that it was deleted.
+Future<void> deleteReplacedLibraryScanRows(
+  DatabaseExecutor db,
+  String sourceId, {
+  required String stageTable,
+  required bool preserveMissing,
+}) async {
+  final where = preserveMissing
+      ? 'source_id = ? AND (id IN (SELECT id FROM $stageTable) '
+            'OR file_path IN (SELECT file_path FROM $stageTable))'
+      : 'source_id = ?';
+  await db.rawDelete(
+    'DELETE FROM library_path_keys WHERE item_id IN '
+    '(SELECT id FROM library WHERE $where)',
+    [sourceId],
+  );
+  await db.rawDelete('DELETE FROM library WHERE $where', [sourceId]);
+}
+
 /// Deletes a selection atomically without exceeding SQLite's parameter budget.
 Future<void> deleteLibraryItemsByIds(Database db, Iterable<String> ids) async {
   final uniqueIds = ids.toSet().toList();

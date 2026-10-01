@@ -1,6 +1,9 @@
 group = "com.ryanheise.audioservice"
 version = "1.0-SNAPSHOT"
-val args = listOf("-Xlint:deprecation", "-Xlint:unchecked")
+// androidx.media 1.8 deprecates its whole compat media-session API in favor of
+// Media3. This plugin is built on that API, so per-use deprecation listings
+// only bury real warnings; javac still prints a one-line deprecation note.
+val args = listOf("-Xlint:unchecked")
 
 buildscript {
     // Uncomment when moving to Kotlin

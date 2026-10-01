@@ -275,7 +275,11 @@ class SettingsSearchCatalog {
         SettingsSearchEntry(
           icon: Icons.people_alt_outlined,
           title: l10n.optionsArtistTagMode,
-          keywords: const ['artist separator', 'multiple artists'],
+          keywords: const [
+            'artist separator',
+            'multiple artists',
+            'primary artist',
+          ],
         ),
         SettingsSearchEntry(
           icon: Icons.photo_size_select_large_outlined,
@@ -307,6 +311,12 @@ class SettingsSearchCatalog {
         ),
       ],
       lyrics = [
+        SettingsSearchEntry(
+          icon: Icons.light_mode_outlined,
+          title: l10n.lyricsKeepScreenOn,
+          subtitle: l10n.lyricsKeepScreenOnSubtitle,
+          keywords: const ['screen timeout', 'awake', 'sleep', 'layar'],
+        ),
         SettingsSearchEntry(
           icon: Icons.subtitles_outlined,
           title: l10n.optionsEmbedLyrics,

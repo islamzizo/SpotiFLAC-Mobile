@@ -339,6 +339,31 @@ extension ExtensionNotifierProviderPriority on ExtensionNotifier {
     }
   }
 
+  /// Priority lists for the extensions section of a backup. Empty lists are
+  /// omitted so restoring them never replaces a device's own order.
+  Map<String, dynamic> providerPriorityBackup() => {
+    if (state.providerPriority.isNotEmpty)
+      _providerPriorityKey: List<String>.from(state.providerPriority),
+    if (state.metadataProviderPriority.isNotEmpty)
+      _metadataProviderPriorityKey: List<String>.from(
+        state.metadataProviderPriority,
+      ),
+  };
+
+  /// Applies backed-up priority lists. Call after restored extensions are
+  /// installed: the setters drop IDs that are not available yet, and later
+  /// installs would otherwise be appended after the defaults.
+  Future<void> restoreProviderPriorityBackup(Map<String, dynamic> data) async {
+    final download = _backupProviderIds(data[_providerPriorityKey]);
+    if (download.isNotEmpty) await setProviderPriority(download);
+    final metadata = _backupProviderIds(data[_metadataProviderPriorityKey]);
+    if (metadata.isNotEmpty) await setMetadataProviderPriority(metadata);
+  }
+
+  List<String> _backupProviderIds(Object? raw) => raw is List
+      ? _distinctProviderIds(raw.whereType<String>())
+      : const <String>[];
+
   Future<void> cleanup() async {
     if (_cleanupInFlight) return;
     _cleanupInFlight = true;

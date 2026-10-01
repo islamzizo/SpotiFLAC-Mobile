@@ -10,6 +10,44 @@ import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/screens/track_metadata_screen.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
 
+class _History extends DownloadHistoryNotifier {
+  _History(this._item);
+  final DownloadHistoryItem _item;
+
+  @override
+  DownloadHistoryState build() => DownloadHistoryState(items: [_item]);
+
+  @override
+  Future<void> updateAudioMetadataForItem({
+    required String id,
+    String? quality,
+    int? bitDepth,
+    int? sampleRate,
+    int? bitrate,
+    String? format,
+    int? trackNumber,
+    int? totalTracks,
+    int? discNumber,
+    int? totalDiscs,
+    int? duration,
+    String? composer,
+    bool? explicit,
+    bool? hasLyrics,
+    int? lyricsMetadataScanVersion,
+    bool? hasReplayGain,
+    int? replayGainMetadataScanVersion,
+  }) async {
+    state = state.copyWith(
+      items: [
+        state.items.single.copyWith(
+          hasReplayGain: hasReplayGain,
+          replayGainMetadataScanVersion: replayGainMetadataScanVersion,
+        ),
+      ],
+    );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('com.zarz.spotiflac/backend');
@@ -71,6 +109,9 @@ void main() {
       );
       await tester.pumpWidget(
         ProviderScope(
+          overrides: [
+            downloadHistoryProvider.overrideWith(() => _History(item)),
+          ],
           child: MaterialApp(
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
@@ -79,6 +120,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(TrackMetadataScreen)),
+      );
+      expect(
+        container.read(downloadHistoryProvider).items.single.hasReplayGain,
+        hasTags,
+      );
       for (final text in [
         'ReplayGain Track Gain',
         'ReplayGain Track Peak',
@@ -121,6 +169,9 @@ void main() {
       expect(find.text('ReplayGain tags removed'), findsOneWidget);
       expect(find.text('ReplayGain Track Gain'), findsNothing);
       expect(find.text('ReplayGain Album Gain'), findsNothing);
+      final updated = container.read(downloadHistoryProvider).items.single;
+      expect(updated.hasReplayGain, isFalse);
+      expect(updated.replayGainMetadataScanVersion, 1);
       expect(tester.takeException(), isNull);
     });
   }

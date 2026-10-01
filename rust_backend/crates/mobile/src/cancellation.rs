@@ -59,16 +59,8 @@ impl CancellationRegistry {
         self.inner.cancel(&id).map_err(Into::into)
     }
 
-    pub fn cancel_active(&self) -> Result<Vec<String>, CancellationError> {
-        self.inner.cancel_active().map_err(Into::into)
-    }
-
     pub fn is_cancelled(&self, id: String) -> Result<bool, CancellationError> {
         self.inner.is_cancelled(&id).map_err(Into::into)
-    }
-
-    pub fn reset_if_idle(&self, id: String) -> Result<(), CancellationError> {
-        self.inner.reset_if_idle(&id).map_err(Into::into)
     }
 
     pub fn shutdown(&self) {
@@ -85,14 +77,6 @@ pub struct RequestLease {
 impl RequestLease {
     pub fn is_cancelled(&self) -> Result<bool, CancellationError> {
         self.inner.is_cancelled().map_err(Into::into)
-    }
-
-    pub fn check_active(&self) -> Result<(), CancellationError> {
-        self.inner.check_active().map_err(Into::into)
-    }
-
-    pub fn wait_cancelled(&self, timeout_ms: i64) -> Result<bool, CancellationError> {
-        self.inner.wait_cancelled(timeout_ms).map_err(Into::into)
     }
 
     pub fn release(&self) {

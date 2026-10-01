@@ -60,17 +60,6 @@ impl Backend {
             .unwrap_or_else(|error| native_error_response(&error).to_string()))
     }
 
-    pub fn download_with_extensions_json(
-        &self,
-        raw: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        let _operation = self.enter()?;
-        let request =
-            DownloadRequest::parse(raw).map_err(|error| format!("invalid request: {error}"))?;
-        self.download_request(request, check)
-    }
-
     fn download_request(
         &self,
         mut request: DownloadRequest,

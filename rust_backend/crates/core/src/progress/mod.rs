@@ -240,10 +240,6 @@ impl ProgressRegistry {
         self.update(id, mark_downloading)
     }
 
-    pub fn set_total(&self, id: &str, total: i64) -> Result<(), ProgressError> {
-        self.update(id, |item| item.bytes_total = total)
-    }
-
     pub fn set_received(&self, id: &str, received: i64) -> Result<(), ProgressError> {
         self.update(id, |item| set_received(item, received))
     }
@@ -322,15 +318,6 @@ impl ProgressRegistry {
         Ok(())
     }
 
-    pub fn clear(&self) -> Result<(), ProgressError> {
-        let mut state = self.shared.state.lock().expect("progress state lock");
-        state.check()?;
-        state.items.clear();
-        state.removed.clear();
-        state.reset = state.next(&self.shared.changed);
-        Ok(())
-    }
-
     pub fn item(&self, id: &str) -> Result<String, ProgressError> {
         let state = self.shared.state.lock().expect("progress state lock");
         state.check()?;
@@ -359,12 +346,6 @@ impl ProgressRegistry {
             state.dirty = false;
         }
         Ok(state.cached.clone())
-    }
-
-    pub fn delta(&self, since: i64) -> Result<String, ProgressError> {
-        let state = self.shared.state.lock().expect("progress state lock");
-        state.check()?;
-        Ok(state.delta(since))
     }
 
     pub fn subscribe(&self) -> Result<ProgressSubscription, ProgressError> {

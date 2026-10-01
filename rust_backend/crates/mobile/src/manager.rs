@@ -81,18 +81,6 @@ impl ExtensionManager {
         })
     }
 
-    pub fn get_app_version(&self) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_app_version()
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn set_app_version(&self, version: String) -> Result<(), ExtensionManagerError> {
-        self.inner
-            .set_app_version(&version)
-            .map_err(ExtensionManagerError::Operation)
-    }
-
     pub fn install(&self, package_path: String) -> Result<String, ExtensionManagerError> {
         self.inner
             .install(Path::new(&package_path))
@@ -168,15 +156,6 @@ impl ExtensionManager {
             .map_err(ExtensionManagerError::Operation)
     }
 
-    pub fn download_with_extensions_json(
-        &self,
-        request_json: String,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .download_with_extensions_json(&request_json, &|| Ok(()))
-            .map_err(ExtensionManagerError::Operation)
-    }
-
     pub fn check_extension_health_json(
         &self,
         extension_id: String,
@@ -197,12 +176,6 @@ impl ExtensionManager {
         })?;
         self.inner
             .download(&extension_id, request, resolution_timeout_ms)
-            .map_err(Into::into)
-    }
-
-    pub fn release_idle_download_runtimes(&self) -> Result<u64, ExtensionManagerError> {
-        self.inner
-            .release_idle_download_runtimes()
             .map_err(Into::into)
     }
 
@@ -244,32 +217,6 @@ impl ExtensionManager {
                 serde_json::from_str(&metadata_json).unwrap_or_default(),
                 timeout_ms,
             )
-            .map_err(Into::into)
-    }
-
-    pub fn check_availability(
-        &self,
-        extension_id: String,
-        request_json: String,
-        timeout_ms: u64,
-    ) -> Result<String, ExtensionManagerError> {
-        let request = serde_json::from_str(&request_json).map_err(|error| {
-            ExtensionManagerError::Operation(format!("invalid availability request: {error}"))
-        })?;
-        self.inner
-            .check_availability(&extension_id, request, timeout_ms)
-            .map_err(Into::into)
-    }
-
-    pub fn enrich_track(
-        &self,
-        extension_id: String,
-        track_json: String,
-        item_id: String,
-        timeout_ms: u64,
-    ) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .enrich_track(&extension_id, &track_json, &item_id, timeout_ms)
             .map_err(Into::into)
     }
 
@@ -333,10 +280,6 @@ impl ExtensionManager {
             .map_err(Into::into)
     }
 
-    pub fn provider_ids(&self, kind: String) -> Result<Vec<String>, ExtensionManagerError> {
-        self.inner.provider_ids(&kind).map_err(Into::into)
-    }
-
     pub fn provider_call(
         &self,
         extension_id: String,
@@ -377,12 +320,6 @@ impl ExtensionManager {
         self.inner.provider_priorities().map_err(Into::into)
     }
 
-    pub fn fallback_allowed(&self, extension_id: String) -> Result<bool, ExtensionManagerError> {
-        self.inner
-            .fallback_allowed(&extension_id)
-            .map_err(Into::into)
-    }
-
     pub fn find_url_handler(&self, url: String) -> Result<Option<String>, ExtensionManagerError> {
         self.inner.find_url_handler(&url).map_err(Into::into)
     }
@@ -394,14 +331,6 @@ impl ExtensionManager {
         self.inner
             .get_extension_pending_auth_json(&extension_id)
             .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn unload(&self, extension_id: String) -> Result<(), ExtensionManagerError> {
-        self.inner.unload(&extension_id).map_err(Into::into)
-    }
-
-    pub fn unload_all(&self) -> Result<(), ExtensionManagerError> {
-        self.inner.unload_all().map_err(Into::into)
     }
 
     pub fn remove(&self, extension_id: String) -> Result<(), ExtensionManagerError> {

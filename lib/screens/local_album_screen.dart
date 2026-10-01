@@ -26,6 +26,7 @@ import 'package:spotiflac_android/screens/selection_mode_mixin.dart';
 import 'package:spotiflac_android/widgets/collection_scaffold.dart';
 import 'package:spotiflac_android/widgets/album_track_tile.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/destructive_selection_button.dart';
 import 'package:spotiflac_android/widgets/selection_action_button.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
@@ -154,15 +155,7 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
           .read(playbackProvider.notifier)
           .playLocalLibraryQueue(_sortedTracksCache, startItem: track);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-            ),
-          ),
-        );
-      }
+      if (mounted) showCannotOpenFileSnackBar(context, e);
     }
   }
 

@@ -99,31 +99,6 @@ void main() {
       expect(liftAt(1200, end: 500), 0);
     });
 
-    test('graphemes rise in sweep order and converge after the word', () {
-      double glyph(int time, double offset) => syncedLyricSegmentLift(
-        position: Duration(milliseconds: time),
-        start: const Duration(seconds: 1),
-        end: const Duration(milliseconds: 1500),
-        progressOffset: offset,
-      );
-      expect(glyph(1300, 0), greaterThan(glyph(1300, 0.33)));
-      expect(glyph(1300, 0.33), greaterThan(glyph(1300, 0.66)));
-      expect(glyph(1500, 0.75), lessThan(1));
-      expect(glyph(2100, 0), 1);
-      expect(glyph(2100, 0.75), 1);
-      for (var time = 800; time < 2100; time += 16) {
-        final change = glyph(time + 16, 0.75) - glyph(time, 0.75);
-        expect(change, inInclusiveRange(0, 0.034));
-      }
-      final held = syncedLyricSegmentLift(
-        position: const Duration(milliseconds: 5500),
-        start: const Duration(seconds: 3),
-        end: const Duration(seconds: 6),
-        progressOffset: 0.75,
-      );
-      expect(held, greaterThan(1));
-    });
-
     test('interpolates position only while playback is advancing', () {
       expect(
         interpolatedSyncedLyricsPosition(
@@ -187,21 +162,6 @@ void main() {
           end: end,
         ),
         1,
-      );
-    });
-
-    test('moves the reveal boundary from left to right', () {
-      expect(
-        syncedLyricsLeftToRightBoundary(left: 10, right: 110, progress: 0),
-        10,
-      );
-      expect(
-        syncedLyricsLeftToRightBoundary(left: 10, right: 110, progress: 0.5),
-        60,
-      );
-      expect(
-        syncedLyricsLeftToRightBoundary(left: 10, right: 110, progress: 1),
-        110,
       );
     });
   });

@@ -184,22 +184,6 @@ impl Backend {
         Arc::clone(&self.availability)
     }
 
-    pub fn get_app_version(&self) -> Result<String, String> {
-        let _operation = self.enter()?;
-        self.manager
-            .environment()
-            .get_app_version()
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn set_app_version(&self, version: &str) -> Result<(), String> {
-        let _operation = self.enter()?;
-        self.manager
-            .environment()
-            .set_app_version(version)
-            .map_err(|error| error.to_string())
-    }
-
     pub fn get_extension_pending_auth_json(&self, id: &str) -> Result<String, String> {
         let _operation = self.enter()?;
         let id = id.trim();

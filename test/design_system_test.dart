@@ -8,6 +8,8 @@ import 'package:analyzer/source/line_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart'
+    show LiquidGlassTabBar;
 import 'package:spotiflac_android/l10n/app_localizations.dart';
 import 'package:spotiflac_android/theme/app_theme.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
@@ -263,6 +265,41 @@ void main() {
       );
     }
 
+    testWidgets('theme selector skips the glass tab bar with reduced motion', (
+      tester,
+    ) async {
+      var selected = 0;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            theme: MornyeTheme.build(Brightness.dark),
+            home: MediaQuery(
+              data: const MediaQueryData(disableAnimations: true),
+              child: Scaffold(
+                body: StatefulBuilder(
+                  builder: (context, setState) => MornyeSegmentedControl(
+                    labels: const ['System', 'Light', 'Dark'],
+                    selectedIndex: selected,
+                    onChanged: (index) => setState(() => selected = index),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(LiquidGlassTabBar), findsNothing);
+      expect(find.text('Dark'), findsOneWidget);
+      await tester.tap(find.text('Dark'));
+      await tester.pump();
+      expect(selected, 2);
+      expect(
+        tester.getCenter(find.text('System')).dx <
+            tester.getCenter(find.text('Dark')).dx,
+        isTrue,
+      );
+      expect(tester.takeException(), isNull);
+    });
     testWidgets('glass search keeps text editing, submit and clear usable', (
       tester,
     ) async {
@@ -554,64 +591,6 @@ void main() {
       expect(find.text('Open on'), findsOneWidget);
       expect(find.text('Track - Artist'), findsOneWidget);
       expect(find.text('body'), findsOneWidget);
-    });
-
-    testWidgets('draggable content moves as one surface and dismisses', (
-      tester,
-    ) async {
-      const sheetKey = ValueKey<String>('scrollable-sheet');
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.light(),
-          home: Scaffold(
-            body: Builder(
-              builder: (context) => ElevatedButton(
-                onPressed: () => showModalBottomSheet<void>(
-                  context: context,
-                  isScrollControlled: true,
-                  // Disable the route recognizer so the draggable surface,
-                  // rather than the modal's fallback gesture, is under test.
-                  enableDrag: false,
-                  builder: (_) => AppDraggableSheet(
-                    builder: (_, scrollController) => Material(
-                      key: sheetKey,
-                      child: ListView(
-                        controller: scrollController,
-                        children: const [
-                          SizedBox(height: 800, child: Text('sheet body')),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                child: const Text('open'),
-              ),
-            ),
-          ),
-        ),
-      );
-
-      await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
-      expect(find.byKey(sheetKey), findsOneWidget);
-
-      final initialTop = tester.getTopLeft(find.byKey(sheetKey)).dy;
-      final gesture = await tester.startGesture(
-        tester.getCenter(find.byKey(sheetKey)),
-      );
-      await gesture.moveBy(const Offset(0, 160));
-      await tester.pump();
-
-      expect(
-        tester.getTopLeft(find.byKey(sheetKey)).dy,
-        greaterThan(initialTop + 100),
-      );
-
-      await gesture.moveBy(const Offset(0, 260));
-      await gesture.up();
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(sheetKey), findsNothing);
     });
 
     testWidgets('sheet shape comes from the token scale', (tester) async {

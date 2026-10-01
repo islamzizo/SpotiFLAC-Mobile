@@ -505,16 +505,6 @@ class FFmpegService {
     }.contains(normalized);
   }
 
-  /// Probes the source audio bit depth (bits_per_raw_sample, falling back to
-  /// bits_per_sample). Returns null when unknown.
-  static Future<int?> probeBitDepth(String filePath) async {
-    return (await _probePrimaryAudioProperties(filePath)).bitDepth;
-  }
-
-  static Future<int?> probeSampleRate(String filePath) async {
-    return (await _probePrimaryAudioProperties(filePath)).sampleRate;
-  }
-
   /// Returns `true` when [filePath] starts with the native FLAC magic bytes
   /// (`fLaC`). Useful to distinguish a real FLAC file from a FLAC-in-MP4
   /// container that carries a `.flac` extension or claims codec=flac.
@@ -1353,8 +1343,13 @@ class FFmpegService {
     required String mp3Path,
     String? coverPath,
     Map<String, String>? metadata,
+    String artistTagMode = artistTagModeJoined,
     bool preserveMetadata = false,
   }) async {
+    // ID3 keeps one artist frame: only the primary mode changes its value.
+    if (metadata != null) {
+      metadata = applyArtistTagModeToMetadata(metadata, artistTagMode);
+    }
     final tempDir = await getTemporaryDirectory();
     final tempOutput = _nextTempEmbedPath(tempDir.path, '.mp3');
     final lyrics = AudioMetadataMapper.extractLyricsForId3(metadata);
@@ -1624,8 +1619,13 @@ class FFmpegService {
     required String m4aPath,
     String? coverPath,
     Map<String, String>? metadata,
+    String artistTagMode = artistTagModeJoined,
     bool preserveMetadata = true,
   }) async {
+    // MP4 keeps one artist atom: only the primary mode changes its value.
+    if (metadata != null) {
+      metadata = applyArtistTagModeToMetadata(metadata, artistTagMode);
+    }
     final tempDir = await getTemporaryDirectory();
     final tempOutput = _nextTempEmbedPath(tempDir.path, '.m4a');
 
@@ -1876,6 +1876,10 @@ class FFmpegService {
       _log.e('Unsupported target format: $targetFormat');
       return null;
     }
+    // Conversion carries existing tags over. Primary mode applies to provider
+    // credits (download, re-enrichment) and must not drop names here; the
+    // download auto-conversion embeds its credits after this step.
+    artistTagMode = artistTagModeForExistingTags(artistTagMode);
 
     final resolvedLosslessQuality = isLosslessConversionTarget(format)
         ? await _resolveLosslessQuality(
@@ -1957,12 +1961,14 @@ class FFmpegService {
           mp3Path: outputPath,
           coverPath: coverPath,
           metadata: metadata,
+          artistTagMode: artistTagMode,
         );
       } else if (format == 'aac') {
         embedResult = await embedMetadataToM4a(
           m4aPath: outputPath,
           coverPath: coverPath,
           metadata: metadata,
+          artistTagMode: artistTagMode,
           preserveMetadata: true,
         );
       } else {
@@ -2102,8 +2108,9 @@ class FFmpegService {
   }
 
   /// Convert to uncompressed PCM (WAV or AIFF), preserving bit depth when known.
-  /// Tags and cover are written natively into an embedded ID3 chunk by the Go
-  /// backend (RIFF "id3 " for WAV, "ID3 " for AIFF) for full-fidelity tagging.
+  /// Tags and cover are written natively into an embedded ID3 chunk by the
+  /// native backend (RIFF "id3 " for WAV, "ID3 " for AIFF) for full-fidelity
+  /// tagging.
   static Future<String?> _convertToPcm({
     required String inputPath,
     required Map<String, String> metadata,
@@ -2125,7 +2132,7 @@ class FFmpegService {
     final outputPath = outputPlan.workingPath;
     var depth = targetBitDepth ?? sourceBitDepth;
     if (depth == null || depth <= 0) {
-      depth = await probeBitDepth(inputPath);
+      depth = (await _probePrimaryAudioProperties(inputPath)).bitDepth;
     }
     final use24 = depth != null && depth >= 24;
     final codec = isAiff
@@ -2198,9 +2205,9 @@ class FFmpegService {
     );
   }
 
-  /// Writes tags + cover into a WAV/AIFF file via the Go native ID3-chunk
+  /// Writes tags + cover into a WAV/AIFF file via the native backend ID3-chunk
   /// writer (PlatformBridge.editFileMetadata). Maps Vorbis-style metadata keys
-  /// to the lowercase field names the Go editor expects.
+  /// to the lowercase field names the native editor expects.
   static Future<bool> _embedChunkTagsNative(
     String path,
     Map<String, String> vorbisMetadata,
@@ -2284,7 +2291,7 @@ class FFmpegService {
   /// Each track is extracted with `-c copy` (no re-encoding) and metadata is embedded.
   /// [audioPath] is the source audio file (FLAC, WAV, etc.)
   /// [outputDir] is where individual track files will be saved
-  /// [tracks] is the list of track split info from the Go CUE parser
+  /// [tracks] is the list of track split info from the native CUE parser
   /// [albumMetadata] contains album-level metadata (artist, album, genre, date)
   static Future<List<String>?> splitCueToTracks({
     required String audioPath,

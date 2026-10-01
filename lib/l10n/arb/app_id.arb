@@ -70,6 +70,12 @@
   "appearanceAccentBlue": "Biru",
   "appearanceAccentPurple": "Ungu",
   "appearanceAccentPink": "Merah muda",
+  "appearanceGlassClarity": "Kebeningan kaca",
+  "appearanceGlassClaritySubtitle": "Atur transparansi menu dan navigasi Mornye. Kontras tulisan tetap dijaga.",
+  "appearanceGlassTinted": "Pekat",
+  "appearanceGlassClear": "Bening",
+  "appearanceGlassClarityBlurOff": "Kaca dibuat pekat di perangkat ini. Aktifkan “{setting}” untuk mengatur kebeningan.",
+  "appearanceGlassClarityHighContrast": "Kaca tetap pekat selama pengaturan kontras tinggi sistem aktif.",
   "appearanceUseSystemFont": "Gunakan font sistem",
   "appearanceUseSystemFontSubtitle": "Gunakan jenis huruf bawaan perangkat untuk teks aplikasi.",
   "@appearanceStyle": {
@@ -354,6 +360,8 @@
   "@optionsArtistTagModeSplitVorbisSubtitle": {
     "description": "Subtitle for split Vorbis artist tag mode"
   },
+  "optionsArtistTagModePrimary": "Artis utama saja",
+  "optionsArtistTagModePrimarySubtitle": "Tulis hanya artis pertama, seperti \"Artis A\", ke Artis dan Artis Album di semua format, agar pemutar menampilkan satu artis.",
   "optionsExtensionStore": "Repo Ekstensi",
   "@optionsExtensionStore": {
     "description": "Show/hide repo tab"
@@ -1512,6 +1520,8 @@
   "@sectionLyrics": {
     "description": "Settings section header"
   },
+  "lyricsKeepScreenOn": "Layar tetap menyala saat melihat lirik",
+  "lyricsKeepScreenOnSubtitle": "Cegah layar mati otomatis selama lirik terbuka, termasuk saat lagu dijeda.",
   "lyricsMode": "Mode Lirik",
   "@lyricsMode": {
     "description": "Setting - how to save lyrics"
@@ -2792,6 +2802,10 @@
   "libraryScanFinalizing": "Menyelesaikan koleksi...",
   "@libraryScanFinalizing": {
     "description": "Status shown after file scanning finishes but library persistence is still running"
+  },
+  "libraryScanPaused": "Pindai dijeda",
+  "@libraryScanPaused": {
+    "description": "Status shown while a library scan is paused by the user"
   },
   "libraryScanProgress": "{progress}% dari {total} file",
   "@libraryScanProgress": {
@@ -5292,6 +5306,19 @@
   "@notifLibraryScanStopped": {
     "description": "Notification body when library scan is cancelled"
   },
+  "notifLibraryScanPaused": "Pindai koleksi dijeda",
+  "@notifLibraryScanPaused": {
+    "description": "Notification title when the user pauses a library scan"
+  },
+  "notifLibraryScanPausedBody": "{count} file sudah dipindai. Ketuk Lanjutkan di pengaturan Koleksi Lokal untuk meneruskan dari sini.",
+  "@notifLibraryScanPausedBody": {
+    "description": "Notification body for a paused library scan - files scanned so far",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "notifDownloadingUpdate": "Mendownload SpotiFLAC Mobile v{version}",
   "@notifDownloadingUpdate": {
     "description": "Notification title while downloading an app update",
@@ -6796,6 +6823,10 @@
   "libraryFilterMetadataMissingLyrics": "Lirik hilang",
   "@libraryFilterMetadataMissingLyrics": {
     "description": "Filter option for tracks without embedded or sidecar lyrics"
+  },
+  "libraryFilterMetadataMissingReplayGain": "Tanpa ReplayGain",
+  "@libraryFilterMetadataMissingReplayGain": {
+    "description": "Filter option for scanned tracks without ReplayGain gain tags"
   },
   "trackOptionCopyTrackName": "Salin nama lagu",
   "@trackOptionCopyTrackName": {

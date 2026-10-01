@@ -2,7 +2,7 @@
 
 mod cache;
 mod native_files;
-pub use cache::{FileStamp, IndexCache, IndexFiles, TrackExistence, TrackQuery, parse_tracks};
+pub use cache::{FileStamp, IndexCache, IndexFiles};
 pub use native_files::NativeFiles;
 
 use std::io::{Read, Seek, SeekFrom};

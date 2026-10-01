@@ -32,16 +32,6 @@ impl ExtensionManager {
             .map_err(|failure| error(failure.to_string()))
     }
 
-    pub fn check_availability(
-        &self,
-        id: &str,
-        request: ProviderAvailabilityRequest,
-        timeout_ms: u64,
-    ) -> Result<String, ManagerError> {
-        let lease = self.item_lease(&request.item_id)?;
-        self.check_availability_with_lease(id, request, timeout_ms, lease)
-    }
-
     pub(crate) fn check_availability_with_lease(
         &self,
         id: &str,
@@ -68,52 +58,6 @@ impl ExtensionManager {
             timeout_ms,
             &request.item_id,
         )
-    }
-
-    /// Best-effort enrichment preserves the original provider attribution.
-    /// Cancellation remains an error, allowing the download worker to stop.
-    pub fn enrich_track(
-        &self,
-        id: &str,
-        track_json: &str,
-        item_id: &str,
-        timeout_ms: u64,
-    ) -> Result<String, ManagerError> {
-        self.enrich_track_with_lease(
-            id,
-            track_json,
-            item_id,
-            timeout_ms,
-            self.item_lease(item_id)?,
-        )
-    }
-
-    pub(crate) fn enrich_track_export(
-        &self,
-        id: &str,
-        track_json: &str,
-    ) -> Result<String, ManagerError> {
-        self.check()?;
-        let Ok(entry) = self.get(id) else {
-            return Ok(track_json.into());
-        };
-        if !entry.manifest.has_type("metadata_provider") {
-            return Ok(track_json.into());
-        }
-        // This export unmarshals into a value struct, unlike the nullable
-        // provider argument used by the internal download API.
-        let input = if track_json.trim() == "null" {
-            "{}"
-        } else {
-            track_json
-        };
-        self.enrich_track(id, input, "", 30_000).map_err(|failure| {
-            if let Some(message) = failure.0.strip_prefix("invalid track: ") {
-                error(format!("failed to parse track: {message}"))
-            } else {
-                failure
-            }
-        })
     }
 
     pub(crate) fn enrich_track_with_lease(

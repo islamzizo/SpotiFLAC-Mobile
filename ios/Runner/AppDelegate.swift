@@ -39,6 +39,9 @@ import UniformTypeIdentifiers
     /// Main-thread only.
     private var downloadsActive = false
     private var downloadBackgroundTask: UIBackgroundTaskIdentifier = .invalid
+    /// Library scans and similar user-started work, by kind. Separate from
+    /// downloads so ending one never drops the other's assertion.
+    private var backgroundWorkTasks: [String: UIBackgroundTaskIdentifier] = [:]
 
     /// Strong reference to the in-flight ASWebAuthenticationSession; the
     /// session is deallocated (and its sheet dismissed) without it.
@@ -257,11 +260,19 @@ import UniformTypeIdentifiers
 
     private func handleMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
         let osMethods: Set<String> = ["getBackendImplementations", "startWebAuthSession", "beginBackgroundDownloadTask", "endBackgroundDownloadTask",
-            "pickIosDirectory", "createIosBookmarkFromPath", "resolveIosBookmark", "startAccessingIosBookmark", "stopAccessingIosBookmark", "downloadCoverToFile", "releaseMemory", "releaseMemoryUnderPressure",
-            "setLibraryCoverCacheDir", "scanLibraryFolder", "scanLibraryFolderToNDJSONFile", "scanLibraryFolderIncremental",
-            "getLibraryScanProgress", "cancelLibraryScan", "parseCueSheet", "extractCoverToFile",
+            "startBackgroundWork", "updateBackgroundWork", "stopBackgroundWork",
+            "pickIosDirectory", "startAccessingIosBookmark", "stopAccessingIosBookmark", "downloadCoverToFile", "releaseMemory", "releaseMemoryUnderPressure",
+            "setLibraryCoverCacheDir", "scanLibraryFolderToNDJSONFile", "scanLibraryFolderIncremental",
+            "getLibraryScanProgress", "cancelLibraryScan", "pauseLibraryScan", "resumeLibraryScan",
+            "parseCueSheet", "extractCoverToFile",
             "rewriteSplitArtistTags", "writeM4AFreeformTags", "ensureAC4Config", "writeAC4Metadata", "reEnrichFile",
             "checkHiResAuthenticity"]
+        if call.method == "setScreenAwake" {
+            let args = call.arguments as? [String: Any]
+            UIApplication.shared.isIdleTimerDisabled = args?["enabled"] as? Bool ?? false
+            result(nil)
+            return
+        }
         if coreBackend.routesApplication && !osMethods.contains(call.method) {
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
@@ -285,6 +296,19 @@ import UniformTypeIdentifiers
         case "endBackgroundDownloadTask":
             downloadsActive = false
             endBackgroundDownloadTask()
+            result(nil)
+            return
+        case "startBackgroundWork":
+            let kind = (call.arguments as? [String: Any])?["kind"] as? String ?? ""
+            beginBackgroundWorkTask(kind: kind)
+            result(true)
+            return
+        case "updateBackgroundWork":
+            result(nil)
+            return
+        case "stopBackgroundWork":
+            let kind = (call.arguments as? [String: Any])?["kind"] as? String ?? ""
+            endBackgroundWorkTask(kind: kind)
             result(nil)
             return
         case "pickIosDirectory":
@@ -410,6 +434,29 @@ import UniformTypeIdentifiers
         if downloadBackgroundTask != .invalid {
             UIApplication.shared.endBackgroundTask(downloadBackgroundTask)
             downloadBackgroundTask = .invalid
+        }
+    }
+
+    /// iOS grants a short grace period after the app leaves the foreground,
+    /// enough for a screen lock during a small scan. On expiry a scan is
+    /// cancelled cleanly instead of being suspended mid-write.
+    private func beginBackgroundWorkTask(kind: String) {
+        guard !kind.isEmpty, backgroundWorkTasks[kind] == nil else { return }
+        backgroundWorkTasks[kind] = UIApplication.shared.beginBackgroundTask(
+            withName: "SpotiFLAC-\(kind)"
+        ) { [weak self] in
+            NSLog("SpotiFLAC: \(kind) background task expired")
+            if kind == "library_scan" {
+                try? self?.coreBackend.cancelLibraryScan()
+            }
+            self?.endBackgroundWorkTask(kind: kind)
+        }
+    }
+
+    private func endBackgroundWorkTask(kind: String) {
+        guard let task = backgroundWorkTasks.removeValue(forKey: kind) else { return }
+        if task != .invalid {
+            UIApplication.shared.endBackgroundTask(task)
         }
     }
 
@@ -540,11 +587,6 @@ import UniformTypeIdentifiers
             try coreBackend.setLibraryCoverCacheDirectory(path: cacheDir)
             return nil
 
-        case "scanLibraryFolder":
-            let args = call.arguments as! [String: Any]
-            let folderPath = args["folder_path"] as! String
-            return bridgeJsonResult(try coreBackend.scanLibraryFolder(folder: folderPath))
-
         case "scanLibraryFolderToNDJSONFile":
             guard
                 let args = call.arguments as? [String: Any],
@@ -575,11 +617,14 @@ import UniformTypeIdentifiers
             try coreBackend.cancelLibraryScan()
             return nil
 
+        case "pauseLibraryScan":
+            try coreBackend.pauseLibraryScan()
+            return nil
 
-        case "resolveIosBookmark":
-            let args = call.arguments as! [String: Any]
-            let bookmarkBase64 = args["bookmark"] as! String
-            return try resolveIosBookmark(bookmarkBase64)
+        case "resumeLibraryScan":
+            try coreBackend.resumeLibraryScan()
+            return nil
+
 
         case "startAccessingIosBookmark":
             guard
@@ -601,11 +646,6 @@ import UniformTypeIdentifiers
             }
             stopAccessingIosBookmark(token: token)
             return nil
-
-        case "createIosBookmarkFromPath":
-            let args = call.arguments as! [String: Any]
-            let path = args["path"] as! String
-            return try createIosBookmarkFromPath(path)
 
 
         case "parseCueSheet":
@@ -656,68 +696,6 @@ import UniformTypeIdentifiers
     }
 
     // MARK: - iOS Security-Scoped Bookmark Helpers
-
-    /// Create a security-scoped bookmark from a filesystem path (e.g. from FilePicker).
-    /// The path must currently be accessible (within the same picker session).
-    /// Returns base64-encoded bookmark data.
-    private func createIosBookmarkFromPath(_ path: String) throws -> String {
-        let url = URL(fileURLWithPath: path)
-        do {
-            #if os(macOS)
-            let options: URL.BookmarkCreationOptions = .withSecurityScope
-            #else
-            let options: URL.BookmarkCreationOptions = []
-            #endif
-            let bookmarkData = try url.bookmarkData(
-                options: options,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            return bookmarkData.base64EncodedString()
-        } catch {
-            throw NSError(
-                domain: "SpotiFLAC",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to create bookmark for path \(path): \(error.localizedDescription)"]
-            )
-        }
-    }
-
-    /// Resolve a base64-encoded security-scoped bookmark and return the resolved path.
-    /// Does NOT start accessing the resource.
-    private func resolveIosBookmark(_ bookmarkBase64: String) throws -> String {
-        guard let bookmarkData = Data(base64Encoded: bookmarkBase64) else {
-            throw NSError(
-                domain: "SpotiFLAC",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Invalid base64 bookmark data"]
-            )
-        }
-
-        var isStale = false
-        let url: URL
-        do {
-            #if os(macOS)
-            let options: URL.BookmarkResolutionOptions = .withSecurityScope
-            #else
-            let options: URL.BookmarkResolutionOptions = []
-            #endif
-            url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: options,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-        } catch {
-            throw NSError(
-                domain: "SpotiFLAC",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to resolve bookmark: \(error.localizedDescription)"]
-            )
-        }
-
-        return url.path
-    }
 
     private func invalidArgumentsError(_ method: String) -> NSError {
         return NSError(

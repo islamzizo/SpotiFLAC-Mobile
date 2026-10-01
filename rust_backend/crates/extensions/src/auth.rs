@@ -97,23 +97,6 @@ impl AuthRegistry {
         self.edit(id, |record| record.code = Zeroizing::new(code.to_owned()))
     }
 
-    pub fn set_tokens(
-        &self,
-        id: &str,
-        access: &str,
-        refresh: &str,
-        expires_in: i64,
-    ) -> Result<(), String> {
-        let expires = (expires_in > 0)
-            .then(|| self.now() + i128::from(expires_in.wrapping_mul(1_000_000_000)));
-        self.edit(id, |record| {
-            record.access_token = Zeroizing::new(access.to_owned());
-            record.refresh_token = Zeroizing::new(refresh.to_owned());
-            record.authenticated = !access.is_empty();
-            record.expires_at = expires;
-        })
-    }
-
     pub fn code(&self, id: &str) -> Option<String> {
         self.state
             .lock()
@@ -249,16 +232,6 @@ impl AuthRegistry {
                 && !request.auth_url.trim().is_empty()
                 && (0..PENDING_TTL).contains(&(self.now() - request.created_at))
         })
-    }
-
-    pub fn all_pending(&self) -> Vec<PendingAuthRequest> {
-        self.state
-            .lock()
-            .expect("auth registry lock")
-            .pending
-            .values()
-            .cloned()
-            .collect()
     }
 
     pub fn resolve_callback(&self, nonce: &str, consume: bool) -> Result<String, String> {

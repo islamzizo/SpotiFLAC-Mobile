@@ -305,6 +305,21 @@ void main() {
         entries.where((entry) => entry.key == 'TITLE').single.value,
         'Track',
       );
+      final primary = AudioMetadataMapper.buildVorbisMetadataEntries({
+        'ARTIST': 'First & Second',
+        'ALBUMARTIST': 'First, Second',
+        'TITLE': 'Track',
+      }, artistTagMode: artistTagModePrimary);
+      expect(
+        primary.where((entry) => entry.key == 'ARTIST').map((e) => e.value),
+        ['First'],
+      );
+      expect(
+        primary
+            .where((entry) => entry.key == 'ALBUMARTIST')
+            .map((e) => e.value),
+        ['First'],
+      );
       final advisory = AudioMetadataMapper.buildVorbisMetadataEntries({
         'EXPLICIT': 'true',
       }).single;

@@ -71,6 +71,9 @@ android {
                 enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
+                // V4 lives in a separate .apk.idsig file used for
+                // `adb install --incremental`; the APK itself is unchanged.
+                enableV4Signing = true
             }
         }
     }

@@ -1,6 +1,6 @@
 use super::{
-    AlbumAvailability, TrackAvailability, album, by_platform, deezer_id_from_metadata, from_deezer,
-    from_links, resolved_links,
+    AlbumAvailability, TrackAvailability, album, deezer_id_from_metadata, from_deezer, from_links,
+    resolved_links,
 };
 use crate::deezer::MetadataLookup;
 use crate::lyrics::{LyricsError, builtin::TrackResolver};
@@ -156,88 +156,12 @@ impl AvailabilityService {
         self.with_raw(check, |resolver, check| from_deezer(resolver, id, check))
     }
 
-    pub fn check_by_platform(
-        &self,
-        platform: &str,
-        kind: &str,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<TrackAvailability, ResolverError> {
-        self.with_raw(check, |resolver, check| {
-            by_platform(resolver, platform, kind, id, check)
-        })
-    }
-
-    pub fn check_from_url(
-        &self,
-        url: &str,
-        check: &Check<'_>,
-    ) -> Result<TrackAvailability, ResolverError> {
-        self.with_raw(check, |resolver, check| {
-            Ok(from_links("", &resolved_links(resolver, url, check)?))
-        })
-    }
-
-    pub fn streaming_urls(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<BTreeMap<String, String>, ResolverError> {
-        let availability = self.check_track(id, "", check)?;
-        Ok([
-            ("tidal", availability.tidal_url),
-            ("amazon", availability.amazon_url),
-        ]
-        .into_iter()
-        .filter(|(_, value)| !value.is_empty())
-        .map(|(key, value)| (key.into(), value))
-        .collect())
-    }
-
     pub fn deezer_album_id(&self, id: &str, check: &Check<'_>) -> Result<String, ResolverError> {
         let album = self.check_album(id, check)?;
         if album.deezer && !album.deezer_id.is_empty() {
             Ok(album.deezer_id)
         } else {
             Err(ResolverError::Failed("album not found on Deezer".into()))
-        }
-    }
-
-    pub fn youtube_url_from_spotify(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, ResolverError> {
-        let track = self.check_track(id, "", check)?;
-        if track.youtube && !track.youtube_url.is_empty() {
-            Ok(track.youtube_url)
-        } else {
-            Err(ResolverError::Failed("track not found on YouTube".into()))
-        }
-    }
-
-    pub fn platform_from_deezer(
-        &self,
-        id: &str,
-        platform: &str,
-        check: &Check<'_>,
-    ) -> Result<String, ResolverError> {
-        let track = self.check_from_deezer(id, check)?;
-        let (value, name) = match platform {
-            "spotify" => (track.spotify_id, "Spotify"),
-            "tidal" => (track.tidal_url, "Tidal"),
-            "amazon" => (track.amazon_url, "Amazon Music"),
-            "youtube" => (track.youtube_url, "YouTube"),
-            _ => {
-                return Err(ResolverError::Failed(
-                    "unsupported availability platform".into(),
-                ));
-            }
-        };
-        if value.is_empty() {
-            Err(ResolverError::Failed(format!("track not found on {name}")))
-        } else {
-            Ok(value)
         }
     }
 

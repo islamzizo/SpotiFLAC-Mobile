@@ -406,7 +406,7 @@ class AudioMetadataMapper {
     }
 
     if (!shouldSplitVorbisArtistTags(artistTagMode)) {
-      entries.add(MapEntry(key, value));
+      entries.add(MapEntry(key, artistTagValueForMode(value, artistTagMode)));
       return;
     }
 

@@ -401,7 +401,13 @@ fn scan_time() -> String {
 
 fn modified(path: &crate::files::FilePath) -> i64 {
     path.metadata()
-        .and_then(|metadata| metadata.modified())
+        .map(|metadata| modified_time(&metadata))
+        .unwrap_or_default()
+}
+
+fn modified_time(metadata: &cap_std::fs::Metadata) -> i64 {
+    metadata
+        .modified()
         .map(|time| match time.into_std().duration_since(UNIX_EPOCH) {
             Ok(duration) => duration.as_millis() as i64,
             Err(error) => -((error.duration().as_nanos().div_ceil(1_000_000)) as i64),

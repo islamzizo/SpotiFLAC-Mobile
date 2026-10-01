@@ -6,10 +6,9 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/theme/cover_palette.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:spotiflac_android/services/cover_cache_manager.dart';
-import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
+import 'package:spotiflac_android/services/local_track_batch_actions.dart';
 import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -29,6 +28,7 @@ import 'package:spotiflac_android/screens/track_metadata_screen.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/widgets/collection_scaffold.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/album_track_tile.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/destructive_selection_button.dart';
@@ -188,15 +188,7 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
             startItem: track,
           );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-            ),
-          ),
-        );
-      }
+      if (mounted) showCannotOpenFileSnackBar(context, e);
     }
   }
 
@@ -664,44 +656,22 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
     );
   }
 
-  Future<void> _shareSelected(List<DownloadHistoryItem> allTracks) async {
-    final tracksById = {for (final t in allTracks) t.id: t};
-    final safUris = <String>[];
-    final filesToShare = <XFile>[];
-
-    for (final id in selectedIds) {
-      final item = tracksById[id];
-      if (item == null) continue;
-      final path = item.filePath;
-      if (isContentUri(path)) {
-        if (await fileExists(path)) safUris.add(path);
-      } else if (await fileExists(path)) {
-        filesToShare.add(XFile(path));
-      }
-    }
-
-    if (safUris.isEmpty && filesToShare.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.selectionShareNoFiles)),
-        );
-      }
-      return;
-    }
-
-    if (safUris.isNotEmpty) {
-      try {
-        if (safUris.length == 1) {
-          await PlatformBridge.shareContentUri(safUris.first);
-        } else {
-          await PlatformBridge.shareMultipleContentUris(safUris);
-        }
-      } catch (_) {}
-    }
-
-    if (filesToShare.isNotEmpty) {
-      await SharePlus.instance.share(ShareParams(files: filesToShare));
-    }
+  Future<void> _reEnrichSelected(List<DownloadHistoryItem> allTracks) async {
+    await reEnrichLibraryTracks(
+      context,
+      ref,
+      _selectedUnifiedItems(allTracks),
+      isActive: () => mounted,
+      onSelectionHide: () async {
+        setState(() => isSelectionMode = false);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      },
+      onSelectionRestore: () => setState(() => isSelectionMode = true),
+      onComplete: () {
+        _onEmbeddedCoverChanged();
+        exitSelectionMode();
+      },
+    );
   }
 
   List<UnifiedLibraryItem> _selectedUnifiedItems(
@@ -744,10 +714,10 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
                 (constraints.maxWidth - spacing * (columns - 1)) / columns;
             final actions = <Widget>[
               SelectionActionButton(
-                icon: Icons.share_outlined,
-                label: context.l10n.selectionShareCount(selectedCount),
+                icon: Icons.auto_fix_high_outlined,
+                label: '${context.l10n.trackReEnrich} ($selectedCount)',
                 onPressed: selectedCount > 0
-                    ? () => _shareSelected(tracks)
+                    ? () => _reEnrichSelected(tracks)
                     : null,
                 colorScheme: colorScheme,
               ),

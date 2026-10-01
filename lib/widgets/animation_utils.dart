@@ -7,14 +7,13 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 /// [index] controls the stagger delay (each item delayed by [staggerDelay]).
 /// Set [animate] to false to skip the animation (e.g. when scrolling back).
 class StaggeredListItem extends StatelessWidget {
-  static const int _defaultMaxAnimatedItems = 10;
+  static const int _maxAnimatedItems = 10;
 
   final int index;
   final Widget child;
   final Duration duration;
   final Duration staggerDelay;
   final bool animate;
-  final int maxAnimatedItems;
 
   const StaggeredListItem({
     super.key,
@@ -23,17 +22,16 @@ class StaggeredListItem extends StatelessWidget {
     this.duration = const Duration(milliseconds: 250),
     this.staggerDelay = const Duration(milliseconds: 40),
     this.animate = true,
-    this.maxAnimatedItems = _defaultMaxAnimatedItems,
   });
 
   @override
   Widget build(BuildContext context) {
     if (!animate ||
-        index >= maxAnimatedItems ||
+        index >= _maxAnimatedItems ||
         MediaQuery.disableAnimationsOf(context)) {
       return child;
     }
-    final cappedIndex = index.clamp(0, maxAnimatedItems - 1);
+    final cappedIndex = index.clamp(0, _maxAnimatedItems - 1);
     final delay = staggerDelay * cappedIndex;
     final totalDuration = duration + delay;
 
@@ -157,7 +155,8 @@ class _ShimmerLoadingState extends State<ShimmerLoading>
           child: child,
         );
       },
-      child: widget.child,
+      // The mask moves every frame; the skeleton beneath it does not.
+      child: RepaintBoundary(child: widget.child),
     );
   }
 }
@@ -545,14 +544,14 @@ class ArtistHeaderActionsSkeleton extends StatelessWidget {
 /// discography loads: optional cover placeholder, "Popular" section, and the
 /// horizontal album sections.
 class ArtistScreenSkeleton extends StatelessWidget {
-  final int popularCount;
+  static const int _popularCount = 5;
+
   final int albumCount;
   final bool showCoverHeader;
   final bool showPopularSection;
 
   const ArtistScreenSkeleton({
     super.key,
-    this.popularCount = 5,
     this.albumCount = 5,
     this.showCoverHeader = true,
     this.showPopularSection = true,
@@ -650,7 +649,7 @@ class ArtistScreenSkeleton extends StatelessWidget {
                   padding: EdgeInsets.fromLTRB(20, 24, 20, 12),
                   child: SkeletonBox(width: 110, height: 24, borderRadius: 4),
                 ),
-                for (var index = 0; index < popularCount; index++)
+                for (var index = 0; index < _popularCount; index++)
                   _MornyeTrackSkeleton(numbered: false, index: index),
               ],
               const Padding(
@@ -700,7 +699,7 @@ class ArtistScreenSkeleton extends StatelessWidget {
                 padding: EdgeInsets.fromLTRB(16, 24, 16, 12),
                 child: SkeletonBox(width: 110, height: 22, borderRadius: 4),
               ),
-              ...List.generate(popularCount, (index) {
+              ...List.generate(_popularCount, (index) {
                 return Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,

@@ -34,7 +34,6 @@ class TrackCard extends StatelessWidget {
     this.onTap,
     this.onLongPress,
     this.margin,
-    this.titleStyle,
   });
 
   /// Track number, cover art, or anything else that identifies the row.
@@ -63,10 +62,6 @@ class TrackCard extends StatelessWidget {
   /// Overrides the default outer margin. Prefer the default so track lists stay
   /// aligned with each other.
   final EdgeInsetsGeometry? margin;
-
-  /// Overrides the title text style for rows that need to signal a different
-  /// state (e.g. a dimmed unavailable track).
-  final TextStyle? titleStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -140,11 +135,9 @@ class TrackCard extends StatelessWidget {
                           title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style:
-                              titleStyle ??
-                              theme.textTheme.bodyLarge?.copyWith(
-                                fontWeight: FontWeight.w500,
-                              ),
+                          style: theme.textTheme.bodyLarge?.copyWith(
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                         if (subtitle != null) ...[
                           const SizedBox(height: 2),

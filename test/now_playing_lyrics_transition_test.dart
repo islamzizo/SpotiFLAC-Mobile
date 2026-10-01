@@ -63,6 +63,7 @@ void main() {
         .setMockMethodCallHandler(secureStorageChannel, (_) async => null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(backendChannel, (call) async {
+          if (call.method == 'setScreenAwake') return null;
           if (call.method != 'readFileMetadata') {
             fail('Unexpected platform call: ${call.method}');
           }
@@ -3550,15 +3551,11 @@ void main() {
         final bounds = tester.getRect(paintFinder);
         await seek(1300);
         final letters = await paintedHeights(firstWordLetters: true);
-        if (reducedMotion) {
-          expect(letters.$1, letters.$2);
-        } else {
-          expect(
-            letters.$1,
-            lessThan(letters.$2),
-            reason: 'Letters in one timed word must not rise as a block',
-          );
-        }
+        expect(
+          letters.$1,
+          letters.$2,
+          reason: 'Letters in one timed word must rise together',
+        );
         final firstEnded = await seek(1900);
         expect(firstEnded.$2, pending.$2);
         if (reducedMotion) {

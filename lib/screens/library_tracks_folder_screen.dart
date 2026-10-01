@@ -8,6 +8,7 @@ import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/widgets/track_card.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/theme/mornye_icons.dart';
 import 'package:share_plus/share_plus.dart' show ShareParams, SharePlus, XFile;
@@ -1057,13 +1058,7 @@ class _CollectionTrackTile extends ConsumerWidget {
           .playTrackList(folderTracks, startIndex: trackIndex);
     } catch (error) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.snackbarCannotOpenFile(context.friendlyError(error)),
-          ),
-        ),
-      );
+      showCannotOpenFileSnackBar(context, error);
     }
   }
 

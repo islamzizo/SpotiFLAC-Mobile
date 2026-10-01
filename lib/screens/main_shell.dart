@@ -32,6 +32,7 @@ import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/services/update_checker.dart';
 import 'package:spotiflac_android/widgets/app_announcement_dialog.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/update_dialog.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
@@ -61,6 +62,16 @@ class _MainShellState extends ConsumerState<MainShell>
   final GlobalKey _pageViewKey = GlobalKey();
   late final PageController _pageController;
   late final AnimationController _tabJumpTransitionController;
+  // Transitions update their layers directly; no shell subtree rebuilds per
+  // animation frame.
+  late final CurvedAnimation _tabJumpOpacity = CurvedAnimation(
+    parent: _tabJumpTransitionController,
+    curve: Curves.easeOutCubic,
+  );
+  late final Animation<double> _tabJumpScale = Tween<double>(
+    begin: 0.985,
+    end: 1,
+  ).animate(_tabJumpOpacity);
   bool _hasCheckedUpdate = false;
   bool _hasCheckedAppAnnouncement = false;
   bool _initialSafRepairComplete = false;
@@ -277,15 +288,7 @@ class _MainShellState extends ConsumerState<MainShell>
                                   'Failed to repair SAF access from startup: $e',
                                 );
                                 if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        context.l10n.snackbarCannotOpenFile(
-                                          context.friendlyError(e),
-                                        ),
-                                      ),
-                                    ),
-                                  );
+                                  showCannotOpenFileSnackBar(context, e);
                                 }
                               } finally {
                                 if (dialogContext.mounted) {
@@ -541,6 +544,7 @@ class _MainShellState extends ConsumerState<MainShell>
     ShellNavigationService.unregisterTabSelectionHandler(this);
     _shareSubscription?.cancel();
     _pageController.dispose();
+    _tabJumpOpacity.dispose();
     _tabJumpTransitionController.dispose();
     _mornyeChrome.dispose();
     super.dispose();
@@ -953,41 +957,35 @@ class _MainShellState extends ConsumerState<MainShell>
 
     final pageView = KeyedSubtree(
       key: _pageViewKey,
-      child: AnimatedBuilder(
-        animation: _tabJumpTransitionController,
-        child: PageView.builder(
-          controller: _pageController,
-          itemCount: tabs.length,
-          onPageChanged: _onPageChanged,
-          physics: const NeverScrollableScrollPhysics(),
-          // TickerMode mutes animations and lets visibility-aware widgets
-          // (e.g. MotionHeaderBanner) pause when their tab is hidden —
-          // kept-alive pages otherwise keep running offscreen.
-          itemBuilder: (context, index) => _KeepAliveTabPage(
-            key: ValueKey('page-$index'),
-            child: TickerMode(
-              enabled: index == _currentIndex,
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (notification) {
-                  if (canMinimizeChrome && index == _currentIndex) {
-                    return _mornyeChrome.handleScroll(notification);
-                  }
-                  return false;
-                },
-                child: tabs[index],
+      child: FadeTransition(
+        opacity: _tabJumpOpacity,
+        child: ScaleTransition(
+          scale: _tabJumpScale,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: tabs.length,
+            onPageChanged: _onPageChanged,
+            physics: const NeverScrollableScrollPhysics(),
+            // TickerMode mutes animations and lets visibility-aware widgets
+            // (e.g. MotionHeaderBanner) pause when their tab is hidden —
+            // kept-alive pages otherwise keep running offscreen.
+            itemBuilder: (context, index) => _KeepAliveTabPage(
+              key: ValueKey('page-$index'),
+              child: TickerMode(
+                enabled: index == _currentIndex,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (canMinimizeChrome && index == _currentIndex) {
+                      return _mornyeChrome.handleScroll(notification);
+                    }
+                    return false;
+                  },
+                  child: tabs[index],
+                ),
               ),
             ),
           ),
         ),
-        builder: (context, child) {
-          final t = Curves.easeOutCubic.transform(
-            _tabJumpTransitionController.value,
-          );
-          return Opacity(
-            opacity: t,
-            child: Transform.scale(scale: 0.985 + (0.015 * t), child: child),
-          );
-        },
       ),
     );
 
@@ -1080,9 +1078,7 @@ class _MainShellState extends ConsumerState<MainShell>
                               onSelected: _onNavTap,
                               onHome: () => _onNavTap(0),
                               onSearch: ShellNavigationService.requestSearch,
-                              blurEnabled:
-                                  !ref.watch(lowEndDeviceProvider) ||
-                                  ref.watch(backdropBlurEnabledProvider),
+                              blurEnabled: ref.watch(mornyeBlurEnabledProvider),
                             ),
                           ),
                   ),

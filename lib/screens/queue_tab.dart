@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
-import 'package:spotiflac_android/widgets/app_action_button.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
 import 'package:spotiflac_android/services/local_track_batch_actions.dart';
@@ -14,11 +13,12 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/library_search_results.dart';
+import 'package:spotiflac_android/widgets/library_track_selection_bar.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -56,7 +56,6 @@ import 'package:spotiflac_android/utils/clickable_metadata.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/widgets/download_service_picker.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
-import 'package:spotiflac_android/widgets/selection_action_button.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
 import 'package:spotiflac_android/widgets/smoothed_progress.dart';
 import 'package:spotiflac_android/widgets/scroll_edge_fade.dart';
@@ -261,21 +260,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   final List<String> _filterModes = ['all', 'albums', 'singles', 'playlists'];
   bool _isPageControllerInitialized = false;
   bool _wasTabVisible = false;
-  static const List<String> _months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   String _searchQuery = '';
@@ -490,10 +474,12 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     );
   }
 
+  /// [nonEmptyFallback] is non-null when an in-memory snapshot is available;
+  /// it is only invoked when no cached or live page has content.
   _QueueLibraryPageData _resolveQueueLibraryPageData(
     AsyncValue<_QueueLibraryPageData>? value,
     _QueueLibraryPageRequest request, {
-    _QueueLibraryPageData? nonEmptyFallback,
+    _QueueLibraryPageData Function()? nonEmptyFallback,
   }) {
     void storePage(_QueueLibraryPageData data) {
       final cached = _cachedQueueLibraryPageAt(request, request.offset);
@@ -535,7 +521,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
 
     final combined = _QueueLibraryPageData.combine(pages);
     if (combined.isEmpty && nonEmptyFallback != null) {
-      return nonEmptyFallback;
+      return nonEmptyFallback();
     }
     return combined;
   }
@@ -1084,6 +1070,17 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                   () => tempMetadata = 'missing-lyrics',
                                 ),
                               ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context
+                                      .l10n
+                                      .libraryFilterMetadataMissingReplayGain,
+                                ),
+                                selected: tempMetadata == 'missing-replaygain',
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata = 'missing-replaygain',
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 16),
@@ -1444,24 +1441,31 @@ class _QueueTabState extends ConsumerState<QueueTab> {
         ? const AsyncData(_QueueLibraryPageData())
         : ref.watch(_queueLibraryPageProvider(activePageRequest));
 
+    // The in-memory snapshot regroups every history item. It is only needed
+    // when a page is still empty, so build it on demand and at most once per
+    // mode for this build's (immutable) history list.
+    final historySnapshots = <(String, int), _QueueLibraryPageData>{};
     _QueueLibraryPageData pageData(String filterMode) {
       final request = filterMode == historyFilterMode
           ? activePageRequest
           : pageRequest(filterMode);
-      final historySnapshot =
+      final historySnapshotAvailable =
           hasQueueItems &&
-              inMemoryHistoryItems.isNotEmpty &&
-              request.allowsInMemoryHistoryFallback
-          ? _QueueLibraryPageData.fromHistorySnapshot(
-              inMemoryHistoryItems,
-              filterMode: request.filterMode,
-              limit: request.limit,
-            )
-          : null;
+          inMemoryHistoryItems.isNotEmpty &&
+          request.allowsInMemoryHistoryFallback;
       return _resolveQueueLibraryPageData(
         filterMode == historyFilterMode ? activePageValue : null,
         request,
-        nonEmptyFallback: historySnapshot,
+        nonEmptyFallback: historySnapshotAvailable
+            ? () => historySnapshots.putIfAbsent(
+                (request.filterMode, request.limit),
+                () => _QueueLibraryPageData.fromHistorySnapshot(
+                  inMemoryHistoryItems,
+                  filterMode: request.filterMode,
+                  limit: request.limit,
+                ),
+              )
+            : null,
       );
     }
 
@@ -1588,8 +1592,8 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Builder(
-                        builder: (context) {
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
                           int filteredAllCount;
                           int filteredAlbumCount;
                           int filteredSingleCount;
@@ -1606,45 +1610,53 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                               padding: context.isMornye
                                   ? const EdgeInsets.symmetric(vertical: 4)
                                   : EdgeInsets.zero,
-                              child: Row(
-                                children: [
-                                  _FilterChip(
-                                    label: context.l10n.historyFilterAll,
-                                    count: filteredAllCount,
-                                    isSelected: historyFilterMode == 'all',
-                                    onTap: () {
-                                      _animateToFilterPage(0);
-                                    },
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _FilterChip(
-                                    label: context.l10n.historyFilterAlbums,
-                                    count: filteredAlbumCount,
-                                    isSelected: historyFilterMode == 'albums',
-                                    onTap: () {
-                                      _animateToFilterPage(1);
-                                    },
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _FilterChip(
-                                    label: context.l10n.historyFilterSingles,
-                                    count: filteredSingleCount,
-                                    isSelected: historyFilterMode == 'singles',
-                                    onTap: () {
-                                      _animateToFilterPage(2);
-                                    },
-                                  ),
-                                  const SizedBox(width: 8),
-                                  _FilterChip(
-                                    label: context.l10n.searchPlaylists,
-                                    count: collectionState.playlists.length,
-                                    isSelected:
-                                        historyFilterMode == 'playlists',
-                                    onTap: () {
-                                      _animateToFilterPage(3);
-                                    },
-                                  ),
-                                ],
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  minWidth: constraints.maxWidth,
+                                ),
+                                child: Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    _FilterChip(
+                                      label: context.l10n.historyFilterAll,
+                                      count: filteredAllCount,
+                                      isSelected: historyFilterMode == 'all',
+                                      onTap: () {
+                                        _animateToFilterPage(0);
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _FilterChip(
+                                      label: context.l10n.historyFilterAlbums,
+                                      count: filteredAlbumCount,
+                                      isSelected: historyFilterMode == 'albums',
+                                      onTap: () {
+                                        _animateToFilterPage(1);
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _FilterChip(
+                                      label: context.l10n.historyFilterSingles,
+                                      count: filteredSingleCount,
+                                      isSelected:
+                                          historyFilterMode == 'singles',
+                                      onTap: () {
+                                        _animateToFilterPage(2);
+                                      },
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _FilterChip(
+                                      label: context.l10n.searchPlaylists,
+                                      count: collectionState.playlists.length,
+                                      isSelected:
+                                          historyFilterMode == 'playlists',
+                                      onTap: () {
+                                        _animateToFilterPage(3);
+                                      },
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           );

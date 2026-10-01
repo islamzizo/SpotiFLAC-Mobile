@@ -402,72 +402,14 @@ extension _QueueTabSelectionActions on _QueueTabState {
     );
   }
 
-  Future<void> _deleteSelected(List<UnifiedLibraryItem> allItems) async {
-    final count = _selectedIds.length;
-    final confirmed = await showAppDialog<bool>(
-      context: context,
-      builder: (ctx) => AppAlertDialog(
-        title: Text(context.l10n.dialogDeleteSelectedTitle),
-        content: Text(context.l10n.dialogDeleteSelectedMessage(count)),
-        actions: [
-          AppDialogAction(
-            isDefault: true,
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text(context.l10n.dialogCancel),
-          ),
-          AppDialogAction(
-            filled: true,
-            isDestructive: true,
-            onPressed: () => Navigator.pop(ctx, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: Text(context.l10n.dialogDelete),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      final historyNotifier = ref.read(downloadHistoryProvider.notifier);
-      final localLibraryDb = LibraryDatabase.instance;
-      final itemsById = {for (final item in allItems) item.id: item};
-
-      int deletedCount = 0;
-      for (final id in _selectedIds) {
-        final item = itemsById[id];
-        if (item != null) {
-          final cleanPath = _cleanFilePath(item.filePath);
-          final fileDeleted = await deleteFile(cleanPath);
-          if (!fileDeleted) continue;
-
-          if (item.source == LibraryItemSource.downloaded) {
-            historyNotifier.removeFromHistory(item.historyItem!.id);
-          } else {
-            await localLibraryDb.deleteByPath(item.filePath);
-          }
-          deletedCount++;
-        }
-      }
-
-      if (allItems.any(
-        (i) =>
-            _selectedIds.contains(i.id) && i.source == LibraryItemSource.local,
-      )) {
-        ref.read(localLibraryProvider.notifier).reloadFromStorage();
-      }
-
-      _exitSelectionMode();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(context.l10n.snackbarDeletedTracks(deletedCount)),
-          ),
-        );
-      }
-    }
-  }
+  Future<void> _deleteSelected(List<UnifiedLibraryItem> allItems) =>
+      deleteLibraryTracks(
+        context,
+        ref,
+        _selectedItemsFromAll(allItems),
+        isActive: () => mounted,
+        onComplete: _exitSelectionMode,
+      );
 
   String _cleanFilePath(String? filePath) {
     return DownloadedEmbeddedCoverResolver.cleanFilePath(filePath);

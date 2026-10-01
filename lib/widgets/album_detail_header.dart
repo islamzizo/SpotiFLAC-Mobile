@@ -701,9 +701,7 @@ class HeaderCircleButton extends ConsumerWidget {
           ),
         );
       }
-      final blurEnabled =
-          !ref.watch(lowEndDeviceProvider) ||
-          ref.watch(backdropBlurEnabledProvider);
+      final blurEnabled = ref.watch(mornyeBlurEnabledProvider);
       final button = IconButton(
         onPressed: onPressed,
         tooltip: tooltip,

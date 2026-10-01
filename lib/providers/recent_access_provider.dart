@@ -182,26 +182,6 @@ class RecentAccessNotifier extends Notifier<RecentAccessState> {
     );
   }
 
-  void recordTrackAccess({
-    required String id,
-    required String name,
-    String? artistName,
-    String? imageUrl,
-    String? providerId,
-  }) {
-    _recordAccess(
-      RecentAccessItem(
-        id: id,
-        name: name,
-        subtitle: artistName,
-        imageUrl: imageUrl,
-        type: RecentAccessType.track,
-        accessedAt: DateTime.now(),
-        providerId: providerId,
-      ),
-    );
-  }
-
   void recordPlaylistAccess({
     required String id,
     required String name,
@@ -259,10 +239,6 @@ class RecentAccessNotifier extends Notifier<RecentAccessState> {
     final updatedHidden = {...state.hiddenDownloadIds, downloadId};
     state = state.copyWith(hiddenDownloadIds: updatedHidden);
     unawaited(_appStateDb.addHiddenRecentDownloadId(downloadId));
-  }
-
-  bool isDownloadHidden(String downloadId) {
-    return state.hiddenDownloadIds.contains(downloadId);
   }
 
   Future<void> clearHistory() async {

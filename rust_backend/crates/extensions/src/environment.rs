@@ -207,11 +207,6 @@ impl ExtensionEnvironment {
         Ok(self.store(id)?.set(StoreKind::Settings, key, value)?)
     }
 
-    pub fn remove_setting(&self, id: &str, key: &str) -> Result<(), EnvironmentError> {
-        let _operation = self.enter()?;
-        Ok(self.store(id)?.remove(StoreKind::Settings, key)?)
-    }
-
     pub fn set_allow_private_network(&self, allow: bool) -> Result<(), EnvironmentError> {
         let _operation = self.enter()?;
         self.network.set_allow_private_network(allow);
@@ -245,13 +240,6 @@ impl ExtensionEnvironment {
     pub fn get_app_version(&self) -> Result<String, EnvironmentError> {
         let _operation = self.enter()?;
         Ok(self.app_version.get())
-    }
-
-    pub fn set_app_version(&self, version: &str) -> Result<(), EnvironmentError> {
-        let _operation = self.enter()?;
-        self.app_version
-            .set(version)
-            .map_err(|error| EnvironmentError::Gate(error.to_string()))
     }
 
     pub(crate) fn shared_app_version(&self) -> AppVersion {
@@ -622,17 +610,6 @@ impl ExtensionEnvironment {
         Ok(self.auth.pending(id.trim()))
     }
 
-    pub fn all_pending_auth(&self) -> Result<Vec<PendingAuthRequest>, EnvironmentError> {
-        let _operation = self.enter()?;
-        Ok(self.auth.all_pending())
-    }
-
-    pub fn clear_pending_auth(&self, id: &str) -> Result<(), EnvironmentError> {
-        let _operation = self.enter()?;
-        self.auth.clear_pending(id);
-        Ok(())
-    }
-
     pub fn resolve_callback_state(
         &self,
         state: &str,
@@ -647,24 +624,6 @@ impl ExtensionEnvironment {
     pub fn set_auth_code(&self, id: &str, code: &str) -> Result<(), EnvironmentError> {
         let _operation = self.enter()?;
         self.auth.set_code(id, code).map_err(EnvironmentError::Auth)
-    }
-
-    pub fn set_auth_tokens(
-        &self,
-        id: &str,
-        access: &str,
-        refresh: &str,
-        expires_in: i64,
-    ) -> Result<(), EnvironmentError> {
-        let _operation = self.enter()?;
-        self.auth
-            .set_tokens(id, access, refresh, expires_in)
-            .map_err(EnvironmentError::Auth)
-    }
-
-    pub fn is_authenticated(&self, id: &str) -> Result<bool, EnvironmentError> {
-        let _operation = self.enter()?;
-        Ok(self.auth.authenticated(id))
     }
 }
 

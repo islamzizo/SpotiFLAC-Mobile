@@ -13,6 +13,7 @@ import 'package:spotiflac_android/widgets/app_action_button.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
 import 'package:spotiflac_android/widgets/app_switch.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
@@ -183,21 +184,6 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
   static final RegExp _invalidFileNameChars = RegExp(r'[<>:"/\\|?*\x00-\x1f]');
   static final RegExp _multiUnderscore = RegExp(r'_+');
   static final RegExp _leadingOrTrailingDots = RegExp(r'^\.+|\.+$');
-  static const List<String> _months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-
   String get _coverCacheKey => _itemId;
 
   @override
@@ -395,6 +381,14 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               ? resolvedHasLyrics != _localLibraryItem?.hasLyrics
               : resolvedHasLyrics != _downloadItem?.hasLyrics ||
                     (_downloadItem?.lyricsMetadataScanVersion ?? 0) < 1);
+      final resolvedHasReplayGain = metadataHasReplayGain(metadata);
+      final hasResolvedReplayGainValue = replayGainMetadataWasRead(metadata);
+      final needsReplayGainAvailability =
+          hasResolvedReplayGainValue &&
+          (_isLocalItem
+              ? resolvedHasReplayGain != _localLibraryItem?.hasReplayGain
+              : resolvedHasReplayGain != _downloadItem?.hasReplayGain ||
+                    (_downloadItem?.replayGainMetadataScanVersion ?? 0) < 1);
       final needsTrackNumber =
           resolvedTrackNumber != null &&
           resolvedTrackNumber > 0 &&
@@ -457,6 +451,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               needsComposer ||
               needsExplicit ||
               needsLyricsAvailability ||
+              needsReplayGainAvailability ||
               (isPlaceholderQualityLabel(_quality) && resolvedQuality != null));
       final localItem = _localLibraryItem;
       final localAudioMetadataChanged =
@@ -469,6 +464,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
                   resolvedBitrate != localItem.bitrate) ||
               needsExplicit ||
               needsLyricsAvailability ||
+              needsReplayGainAvailability ||
               needsDuration ||
               formatChanged);
 
@@ -548,6 +544,12 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               explicit: needsExplicit ? resolvedExplicit : null,
               hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
               lyricsMetadataScanVersion: hasResolvedLyricsValue ? 1 : null,
+              hasReplayGain: hasResolvedReplayGainValue
+                  ? resolvedHasReplayGain
+                  : null,
+              replayGainMetadataScanVersion: hasResolvedReplayGainValue
+                  ? 1
+                  : null,
             );
         if (mounted && _downloadItem != null) {
           setState(() {
@@ -566,6 +568,12 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               explicit: needsExplicit ? resolvedExplicit : null,
               hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
               lyricsMetadataScanVersion: hasResolvedLyricsValue ? 1 : null,
+              hasReplayGain: hasResolvedReplayGainValue
+                  ? resolvedHasReplayGain
+                  : null,
+              replayGainMetadataScanVersion: hasResolvedReplayGainValue
+                  ? 1
+                  : null,
             );
           });
         }
@@ -578,6 +586,9 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
           bitrate: resolvedBitrate,
           explicit: needsExplicit ? resolvedExplicit : null,
           hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
+          hasReplayGain: hasResolvedReplayGainValue
+              ? resolvedHasReplayGain
+              : null,
           format: formatChanged ? resolvedFormat : null,
         );
         if (mounted &&
@@ -591,6 +602,9 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
               bitrate: resolvedBitrate,
               explicit: needsExplicit ? resolvedExplicit : null,
               hasLyrics: hasResolvedLyricsValue ? resolvedHasLyrics : null,
+              hasReplayGain: hasResolvedReplayGainValue
+                  ? resolvedHasReplayGain
+                  : null,
               format: resolvedFormat,
             );
           });

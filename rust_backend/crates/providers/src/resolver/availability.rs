@@ -1,7 +1,7 @@
 //! Application-facing track/album availability and platform-link contracts.
 
 mod cache;
-use super::{Check, Metadata, PlatformResolverService, ResolverError, urls};
+use super::{Check, Metadata, PlatformResolverService, ResolverError};
 pub use cache::AvailabilityService;
 use serde::{Deserialize, Serialize};
 use spotiflac_core::metadata::TrackMetadata;
@@ -203,18 +203,4 @@ fn album(
         deezer_id: deezer_id_from_url(&url),
         deezer_url: url,
     })
-}
-
-fn by_platform(
-    resolver: &PlatformResolverService,
-    platform: &str,
-    kind: &str,
-    id: &str,
-    check: &Check<'_>,
-) -> Result<TrackAvailability, ResolverError> {
-    if id.is_empty() {
-        return Err(ResolverError::Failed(format!("{platform} ID is empty")));
-    }
-    let input = urls::from_id(platform, kind, id).map_err(ResolverError::Failed)?;
-    Ok(from_links("", &resolved_links(resolver, &input, check)?))
 }

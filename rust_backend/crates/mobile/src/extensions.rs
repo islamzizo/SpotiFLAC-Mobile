@@ -131,49 +131,6 @@ impl JsExtension {
             .map_err(Into::into)
     }
 
-    pub fn preflight_signed_session(
-        &self,
-        lease: Option<Arc<RequestLease>>,
-        timeout_ms: u64,
-    ) -> Result<bool, JsExtensionError> {
-        self.inner
-            .preflight_signed_session(lease.map(|lease| Arc::clone(&lease.inner)), timeout_ms)
-            .map_err(Into::into)
-    }
-
-    pub fn call_download(
-        &self,
-        method: String,
-        arguments_json: String,
-        lease: Option<Arc<RequestLease>>,
-        resolution_timeout_ms: u64,
-    ) -> Result<String, JsExtensionError> {
-        self.inner
-            .call_download(
-                &method,
-                &arguments_json,
-                lease.map(|lease| Arc::clone(&lease.inner)),
-                resolution_timeout_ms,
-            )
-            .map_err(Into::into)
-    }
-
-    pub fn take_verification_url(&self) -> String {
-        self.inner.take_verification_url()
-    }
-
-    pub fn call_download_for_item(
-        &self,
-        method: String,
-        arguments_json: String,
-        item_id: String,
-        resolution_timeout_ms: u64,
-    ) -> Result<String, JsExtensionError> {
-        self.inner
-            .call_download_for_item(&method, &arguments_json, &item_id, resolution_timeout_ms)
-            .map_err(Into::into)
-    }
-
     pub fn shutdown(&self) {
         self.inner.shutdown();
     }
@@ -220,46 +177,8 @@ impl ExtensionEnvironment {
         })
     }
 
-    pub fn load(
-        &self,
-        manifest_json: String,
-        source: String,
-        timeout_ms: u64,
-    ) -> Result<Arc<JsExtension>, JsExtensionError> {
-        let limits = RuntimeLimits {
-            timeout_ms: if timeout_ms == 0 { 30_000 } else { timeout_ms },
-            ..RuntimeLimits::default()
-        };
-        Ok(Arc::new(JsExtension {
-            inner: self.inner.load(&manifest_json, &source, limits)?,
-        }))
-    }
-
     pub fn settings(&self, extension_id: String) -> Result<String, JsExtensionError> {
         Ok(serde_json::Value::Object(self.inner.settings(&extension_id)?).to_string())
-    }
-
-    pub fn set_setting(
-        &self,
-        extension_id: String,
-        key: String,
-        value_json: String,
-    ) -> Result<(), JsExtensionError> {
-        let value = serde_json::from_str(&value_json)
-            .map_err(|error| JsExtensionError::InvalidInput(error.to_string()))?;
-        self.inner
-            .set_setting(&extension_id, &key, value)
-            .map_err(Into::into)
-    }
-
-    pub fn remove_setting(
-        &self,
-        extension_id: String,
-        key: String,
-    ) -> Result<(), JsExtensionError> {
-        self.inner
-            .remove_setting(&extension_id, &key)
-            .map_err(Into::into)
     }
 
     pub fn set_allow_private_network(&self, allow: bool) -> Result<(), JsExtensionError> {
@@ -313,14 +232,6 @@ impl ExtensionEnvironment {
         }))
     }
 
-    pub fn pending_auth(&self, extension_id: String) -> Result<String, JsExtensionError> {
-        Ok(self
-            .inner
-            .pending_auth(&extension_id)?
-            .map(|pending| serde_json::to_string(&pending).expect("pending auth JSON"))
-            .unwrap_or_default())
-    }
-
     pub fn set_runtime_state(&self, raw: String) -> Result<(), JsExtensionError> {
         self.inner.set_runtime_state(&raw).map_err(Into::into)
     }
@@ -333,16 +244,6 @@ impl ExtensionEnvironment {
         let grant = zeroize::Zeroizing::new(grant);
         self.inner
             .set_session_grant(&extension_id, &grant)
-            .map_err(Into::into)
-    }
-
-    pub fn all_pending_auth(&self) -> Result<String, JsExtensionError> {
-        Ok(serde_json::to_string(&self.inner.all_pending_auth()?).expect("pending auth JSON"))
-    }
-
-    pub fn clear_pending_auth(&self, extension_id: String) -> Result<(), JsExtensionError> {
-        self.inner
-            .clear_pending_auth(&extension_id)
             .map_err(Into::into)
     }
 
@@ -366,26 +267,6 @@ impl ExtensionEnvironment {
         let code = zeroize::Zeroizing::new(code);
         self.inner
             .set_auth_code(&extension_id, &code)
-            .map_err(Into::into)
-    }
-
-    pub fn set_auth_tokens(
-        &self,
-        extension_id: String,
-        access_token: String,
-        refresh_token: String,
-        expires_in: i64,
-    ) -> Result<(), JsExtensionError> {
-        let access_token = zeroize::Zeroizing::new(access_token);
-        let refresh_token = zeroize::Zeroizing::new(refresh_token);
-        self.inner
-            .set_auth_tokens(&extension_id, &access_token, &refresh_token, expires_in)
-            .map_err(Into::into)
-    }
-
-    pub fn is_authenticated(&self, extension_id: String) -> Result<bool, JsExtensionError> {
-        self.inner
-            .is_authenticated(&extension_id)
             .map_err(Into::into)
     }
 

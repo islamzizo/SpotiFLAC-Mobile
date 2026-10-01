@@ -572,23 +572,6 @@ class TrackNotifier extends Notifier<TrackState> {
     state = state.copyWith(isShowingRecentAccess: showing);
   }
 
-  void setTracksFromCollection({
-    required List<Track> tracks,
-    String? albumName,
-    String? playlistName,
-    String? coverUrl,
-  }) {
-    state = TrackState(
-      tracks: tracks,
-      isLoading: false,
-      albumName: albumName,
-      playlistName: playlistName,
-      coverUrl: coverUrl,
-      hasSearchText: state.hasSearchText,
-      isShowingRecentAccess: state.isShowingRecentAccess,
-    );
-  }
-
   ArtistAlbum _parseArtistAlbum(Map<String, dynamic> data) {
     return ArtistAlbum(
       id: data['id'] as String? ?? '',

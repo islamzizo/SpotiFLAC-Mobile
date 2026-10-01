@@ -25,15 +25,7 @@ extension _QueueTabNavigation on _QueueTabState {
             coverUrl: coverUrl,
           );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-            ),
-          ),
-        );
-      }
+      if (mounted) showCannotOpenFileSnackBar(context, e);
     }
   }
 
@@ -63,15 +55,7 @@ extension _QueueTabNavigation on _QueueTabState {
             externalPath: item.filePath,
           );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-            ),
-          ),
-        );
-      }
+      if (mounted) showCannotOpenFileSnackBar(context, e);
     }
   }
 

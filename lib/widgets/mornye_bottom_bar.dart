@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
+import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/mini_player.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
@@ -60,7 +61,7 @@ class MornyeChromeController extends ValueNotifier<bool> {
 
 /// A single mini-player survives the transition, preserving its artwork Hero,
 /// playback controls and swipe-to-dismiss state as the tabs fold away.
-class MornyeBottomBar extends ConsumerWidget {
+class MornyeBottomBar extends ConsumerStatefulWidget {
   const MornyeBottomBar({
     super.key,
     required this.collapsed,
@@ -81,25 +82,83 @@ class MornyeBottomBar extends ConsumerWidget {
   final bool blurEnabled;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MornyeBottomBar> createState() => _MornyeBottomBarState();
+}
+
+class _MornyeBottomBarState extends ConsumerState<MornyeBottomBar>
+    with SingleTickerProviderStateMixin {
+  late final _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 380),
+    value: widget.collapsed ? 1 : 0,
+  );
+  late final _collapse = CurvedAnimation(
+    parent: _controller,
+    curve: Curves.easeInOutCubic,
+  );
+  late final _tabOpacity = ReverseAnimation(_collapse);
+
+  void _updateCollapse() {
+    final target = widget.collapsed ? 1.0 : 0.0;
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _controller.value = target;
+    } else {
+      _controller.animateTo(target);
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateCollapse();
+  }
+
+  @override
+  void didUpdateWidget(MornyeBottomBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.collapsed != widget.collapsed) _updateCollapse();
+  }
+
+  @override
+  void dispose() {
+    _collapse.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final collapsed = widget.collapsed;
+    final destinations = widget.destinations;
+    final selectedIndex = widget.selectedIndex;
+    final onSelected = widget.onSelected;
+    final onHome = widget.onHome;
+    final onSearch = widget.onSearch;
+    final blurEnabled = widget.blurEnabled;
     final hasPlayer = ref.watch(
       currentMediaItemProvider.select((item) => item.value != null),
     );
+    final liquidGlass = ref.watch(mornyeLiquidGlassProvider);
     // Animated glass tabs already reserve 8px above their visible capsule.
-    final glassTabs =
-        blurEnabled &&
-        !MediaQuery.disableAnimationsOf(context) &&
-        !MediaQuery.highContrastOf(context);
+    final glassTabs = MornyeTabBar.usesLiquidGlass(
+      context,
+      blurEnabled: blurEnabled,
+      liquidGlass: liquidGlass,
+    );
     final tabGap = glassTabs ? 0.0 : 8.0;
     // These contents do not depend on animation progress. Retain their widget
-    // instances so folding only updates size/opacity wrappers each frame.
-    Widget sideSurface() => RepaintBoundary(
-      child: MornyeGlass.navigation(
-        blurEnabled: blurEnabled,
-        strongTint: true,
-        tintOpacity: MornyeTheme.navigationOpacity(context),
-        radius: 26,
-        child: const SizedBox.expand(),
+    // instances so folding only updates geometry and foreground opacity. A
+    // backdrop inside a fading layer loses access to the page behind the bar.
+    Widget sideSurface() => ScaleTransition(
+      scale: _collapse,
+      child: RepaintBoundary(
+        child: MornyeGlass.navigation(
+          blurEnabled: blurEnabled,
+          strongTint: true,
+          tintOpacity: MornyeTheme.navigationOpacity(context),
+          radius: 26,
+          child: const SizedBox.expand(),
+        ),
       ),
     );
     final leadingSurface = sideSurface();
@@ -118,6 +177,8 @@ class MornyeBottomBar extends ConsumerWidget {
           onSelected: (index) =>
               index == destinations.length - 1 ? onSearch() : onSelected(index),
           blurEnabled: blurEnabled,
+          liquidGlass: liquidGlass,
+          contentOpacity: _tabOpacity,
           hiddenIconIndices: hideMovingIcons
               ? {leadingIndex, destinations.length - 1}
               : const {},
@@ -154,13 +215,10 @@ class MornyeBottomBar extends ConsumerWidget {
             (constraints.maxWidth - tabInset * 2) /
                 destinations.length *
                 (index + 0.5);
-        return TweenAnimationBuilder<double>(
-          tween: Tween(end: collapsed ? 1 : 0),
-          duration: MediaQuery.disableAnimationsOf(context)
-              ? Duration.zero
-              : const Duration(milliseconds: 380),
-          curve: Curves.easeInOutCubic,
-          builder: (context, amount, _) {
+        return AnimatedBuilder(
+          animation: _collapse,
+          builder: (context, _) {
+            final amount = _collapse.value;
             Widget movingIcon({
               required bool leading,
               required Widget surface,
@@ -184,9 +242,7 @@ class MornyeBottomBar extends ConsumerWidget {
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        Positioned.fill(
-                          child: Opacity(opacity: amount, child: surface),
-                        ),
+                        Positioned.fill(child: surface),
                         Material(
                           color: Colors.transparent,
                           child: IconButton(
@@ -227,53 +283,55 @@ class MornyeBottomBar extends ConsumerWidget {
             return Stack(
               clipBehavior: Clip.none,
               children: [
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (hasPlayer || amount > 0)
-                      Align(
-                        alignment: Alignment.bottomCenter,
-                        // With no track, introducing the row at full height would
-                        // make the bar jump taller on the first animation frame.
-                        heightFactor: hasPlayer ? 1 : amount,
-                        child: Padding(
-                          padding: EdgeInsets.only(
-                            bottom: hasPlayer
-                                ? tabGap + (8 - tabGap) * amount
-                                : 8,
-                          ),
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 60 * amount,
-                                height: hasPlayer ? 48 + 4 * amount : 52,
-                              ),
-                              Expanded(child: player),
-                              SizedBox(
-                                width: 60 * amount,
-                                height: hasPlayer ? 48 + 4 * amount : 52,
-                              ),
-                            ],
+                // Only the non-overlapping player and tab surfaces share a
+                // backdrop. Moving side capsules stay outside this group: they
+                // cross the tab bar while folding and need separate samples.
+                BackdropGroup(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (hasPlayer || amount > 0)
+                        Align(
+                          alignment: Alignment.bottomCenter,
+                          // With no track, introducing the row at full height would
+                          // make the bar jump taller on the first animation frame.
+                          heightFactor: hasPlayer ? 1 : amount,
+                          child: Padding(
+                            padding: EdgeInsets.only(
+                              bottom: hasPlayer
+                                  ? tabGap + (8 - tabGap) * amount
+                                  : 8,
+                            ),
+                            child: Row(
+                              children: [
+                                SizedBox(
+                                  width: 60 * amount,
+                                  height: hasPlayer ? 48 + 4 * amount : 52,
+                                ),
+                                Expanded(child: player),
+                                SizedBox(
+                                  width: 60 * amount,
+                                  height: hasPlayer ? 48 + 4 * amount : 52,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    ClipRect(
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        heightFactor: 1 - amount,
-                        child: IgnorePointer(
-                          ignoring: amount > 0.5,
-                          child: ExcludeSemantics(
-                            excluding: amount > 0.5,
-                            child: Opacity(
-                              opacity: 1 - amount,
+                      ClipRect(
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          heightFactor: 1 - amount,
+                          child: IgnorePointer(
+                            ignoring: amount > 0.5,
+                            child: ExcludeSemantics(
+                              excluding: amount > 0.5,
                               child: amount == 0 ? fullTabs : foldingTabs,
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 movingIcon(leading: true, surface: leadingSurface),
                 movingIcon(leading: false, surface: searchSurface),

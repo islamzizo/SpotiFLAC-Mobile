@@ -111,13 +111,6 @@ impl LyricsCache {
         self.len() == 0
     }
 
-    pub fn clean_expired(&self, now: SystemTime) -> usize {
-        let mut state = self.inner.state.lock().expect("lyrics cache lock");
-        let before = state.entries.len();
-        state.entries.retain(|_, entry| now <= entry.expires_at);
-        before - state.entries.len()
-    }
-
     pub fn clear(&self) -> usize {
         let mut state = self.inner.state.lock().expect("lyrics cache lock");
         let count = state.entries.len();

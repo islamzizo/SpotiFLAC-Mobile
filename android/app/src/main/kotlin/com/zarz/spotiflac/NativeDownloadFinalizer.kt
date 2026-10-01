@@ -37,7 +37,7 @@ object NativeDownloadFinalizer {
     const val NATIVE_WORKER_CONTRACT_VERSION = 1
     // Native finalizer owns background-safe history writes while Flutter may be suspended.
     // Keep this schema contract in sync with Dart HistoryDatabase before bumping either side.
-    const val HISTORY_SCHEMA_VERSION = 13
+    const val HISTORY_SCHEMA_VERSION = 14
     // Keep one native connection for the process. Opening history.db and
     // probing/migrating its schema for every finalized track was expensive,
     // and a single guarded writer also prevents native finalizer calls from
@@ -98,6 +98,8 @@ object NativeDownloadFinalizer {
         "explicit",
         "has_lyrics",
         "lyrics_metadata_scan_version",
+        "has_replaygain",
+        "replaygain_metadata_scan_version",
         "spotify_id_norm",
         "isrc_norm",
         "match_key",
@@ -150,6 +152,8 @@ object NativeDownloadFinalizer {
         var lyricsMetadataScanned: Boolean = false,
         var hasEmbeddedLyrics: Boolean = false,
         var externalLrcWritten: Boolean = false,
+        var replayGainMetadataScanned: Boolean = false,
+        var hasReplayGain: Boolean = false,
     )
 
     internal data class ReplayGainScan(
@@ -273,7 +277,11 @@ object NativeDownloadFinalizer {
                     val replayGain = timedStage("ReplayGain") {
                         writeReplayGain(context, effectiveInput, state, shouldCancel)
                     }
-                    if (replayGain != null) result.put("replaygain", replayGain)
+                    if (replayGain != null) {
+                        result.put("replaygain", replayGain)
+                        state.replayGainMetadataScanned = true
+                        state.hasReplayGain = true
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -922,7 +930,8 @@ object NativeDownloadFinalizer {
         }
         val deleteScanPath = scanPath != state.filePath
         val scan = try {
-            scanReplayGain(scanPath, shouldCancel) ?: return null
+            scanReplayGain(scanPath, shouldCancel)
+                ?: throw IllegalStateException("ReplayGain analysis produced no valid measurement")
         } finally {
             if (deleteScanPath) File(scanPath).delete()
         }
@@ -1002,6 +1011,19 @@ object NativeDownloadFinalizer {
         try {
             val metadata = parseObject(createCoreBackend(context).readFileMetadata(probePath, state.fileName))
             if (metadata.has("error")) return
+
+            if (!metadata.optBoolean("metadataFromFilename", false) &&
+                (metadata.has("audio_codec") || metadata.has("format") ||
+                    metadata.has("replaygain_track_gain") || metadata.has("replaygain_album_gain"))
+            ) {
+                state.replayGainMetadataScanned = true
+                state.hasReplayGain = listOf("replaygain_track_gain", "replaygain_album_gain").any { key ->
+                    val value = metadata.optString(key, "").trim()
+                    val gain = (if (value.endsWith("dB", ignoreCase = true)) value.dropLast(2) else value)
+                        .trim().toDoubleOrNull()
+                    gain != null && gain.isFinite()
+                }
+            }
 
             if (metadata.has("lyrics") || metadata.has("hasLyrics")) {
                 state.lyricsMetadataScanned = true
@@ -1342,6 +1364,8 @@ object NativeDownloadFinalizer {
             ) 1 else 0,
         )
         putNormalizedHistoryColumns(values)
+        values.put("has_replaygain", if (state.hasReplayGain) 1 else 0)
+        values.put("replaygain_metadata_scan_version", if (state.replayGainMetadataScanned) 1 else 0)
         return values
     }
 
@@ -1360,7 +1384,9 @@ object NativeDownloadFinalizer {
                             "history schema v${db.version} is newer than native finalizer contract v$HISTORY_SCHEMA_VERSION"
                         )
                     }
-                    val needsBackfill = db.version < HISTORY_SCHEMA_VERSION
+                    // v14 only adds gain flags; v13 already has normalized keys.
+                    // Avoid walking the entire history for this additive upgrade.
+                    val needsBackfill = db.version < 13
                 db.execSQL(
 	                    """
 	                    CREATE TABLE IF NOT EXISTS history (
@@ -1398,6 +1424,8 @@ object NativeDownloadFinalizer {
                       explicit INTEGER NOT NULL DEFAULT 0,
                       has_lyrics INTEGER NOT NULL DEFAULT 0,
                       lyrics_metadata_scan_version INTEGER NOT NULL DEFAULT 0,
+                      has_replaygain INTEGER NOT NULL DEFAULT 0,
+                      replaygain_metadata_scan_version INTEGER NOT NULL DEFAULT 0,
                       spotify_id_norm TEXT,
                       isrc_norm TEXT,
                       match_key TEXT,
@@ -1438,6 +1466,8 @@ object NativeDownloadFinalizer {
 	                ensureHistoryColumn(db, "explicit", "ALTER TABLE history ADD COLUMN explicit INTEGER NOT NULL DEFAULT 0")
 	                ensureHistoryColumn(db, "has_lyrics", "ALTER TABLE history ADD COLUMN has_lyrics INTEGER NOT NULL DEFAULT 0")
 	                ensureHistoryColumn(db, "lyrics_metadata_scan_version", "ALTER TABLE history ADD COLUMN lyrics_metadata_scan_version INTEGER NOT NULL DEFAULT 0")
+	                ensureHistoryColumn(db, "has_replaygain", "ALTER TABLE history ADD COLUMN has_replaygain INTEGER NOT NULL DEFAULT 0")
+	                ensureHistoryColumn(db, "replaygain_metadata_scan_version", "ALTER TABLE history ADD COLUMN replaygain_metadata_scan_version INTEGER NOT NULL DEFAULT 0")
 	                ensureHistoryPathKeyTable(db)
 	                if (needsBackfill) {
 	                    backfillNormalizedHistoryColumns(db)
@@ -2005,6 +2035,8 @@ object NativeDownloadFinalizer {
         json.put("explicit", values.getAsInteger("explicit") == 1)
         json.put("hasLyrics", values.getAsInteger("has_lyrics") == 1)
         json.put("lyricsMetadataScanVersion", values.getAsInteger("lyrics_metadata_scan_version") ?: 0)
+        json.put("hasReplayGain", values.getAsInteger("has_replaygain") == 1)
+        json.put("replayGainMetadataScanVersion", values.getAsInteger("replaygain_metadata_scan_version") ?: 0)
         return json
     }
 

@@ -8,7 +8,6 @@ class PrioritySettingsScaffold extends StatelessWidget {
   final String title;
   final String description;
   final String infoText;
-  final String? saveLabel;
   final EdgeInsetsGeometry descriptionPadding;
   final List<Widget> slivers;
   final Future<void> Function() onSave;
@@ -23,7 +22,6 @@ class PrioritySettingsScaffold extends StatelessWidget {
     required this.slivers,
     required this.onSave,
     required this.onConfirmDiscard,
-    this.saveLabel,
     this.descriptionPadding = const EdgeInsets.fromLTRB(16, 4, 16, 8),
   });
 
@@ -66,7 +64,7 @@ class PrioritySettingsScaffold extends StatelessWidget {
                 if (hasChanges)
                   TextButton(
                     onPressed: onSave,
-                    child: Text(saveLabel ?? context.l10n.dialogSave),
+                    child: Text(context.l10n.dialogSave),
                   ),
               ],
             ),

@@ -16,6 +16,9 @@ ThemeSettings loadBootstrapThemeSettings(SharedPreferences prefs) {
     style: themeStyleFromString(prefs.getString(kThemeStyleKey)),
     mornyeAccent: mornyeAccentFromString(prefs.getString(kMornyeAccentKey)),
     useSystemFont: prefs.getBool(kUseSystemFontKey) ?? false,
+    mornyeGlassClarity: normalizeMornyeGlassClarity(
+      prefs.getDouble(kMornyeGlassClarityKey),
+    ),
   );
 }
 
@@ -51,6 +54,7 @@ class ThemeNotifier extends Notifier<ThemeSettings> {
       await prefs.setString(kThemeStyleKey, state.style.name);
       await prefs.setString(kMornyeAccentKey, state.mornyeAccent.name);
       await prefs.setBool(kUseSystemFontKey, state.useSystemFont);
+      await prefs.setDouble(kMornyeGlassClarityKey, state.mornyeGlassClarity);
     } catch (e) {
       debugPrint('Error saving theme settings: $e');
     }
@@ -76,11 +80,6 @@ class ThemeNotifier extends Notifier<ThemeSettings> {
     await _saveToStorage();
   }
 
-  Future<void> setSeedColorValue(int colorValue) async {
-    state = state.copyWith(seedColorValue: colorValue);
-    await _saveToStorage();
-  }
-
   Future<void> setUseAmoled(bool value) async {
     state = state.copyWith(useAmoled: value);
     await _saveToStorage();
@@ -94,5 +93,13 @@ class ThemeNotifier extends Notifier<ThemeSettings> {
   Future<void> setUseSystemFont(bool value) async {
     state = state.copyWith(useSystemFont: value);
     await _saveToStorage();
+  }
+
+  Future<void> setMornyeGlassClarity(
+    double value, {
+    bool persist = true,
+  }) async {
+    state = state.copyWith(mornyeGlassClarity: value);
+    if (persist) await _saveToStorage();
   }
 }

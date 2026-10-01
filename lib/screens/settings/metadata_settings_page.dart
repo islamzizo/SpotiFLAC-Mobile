@@ -155,6 +155,8 @@ class MetadataSettingsPage extends ConsumerWidget {
     switch (mode) {
       case artistTagModeSplitVorbis:
         return context.l10n.optionsArtistTagModeSplitVorbis;
+      case artistTagModePrimary:
+        return context.l10n.optionsArtistTagModePrimary;
       default:
         return context.l10n.optionsArtistTagModeJoined;
     }
@@ -240,62 +242,83 @@ class MetadataSettingsPage extends ConsumerWidget {
     showAppModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
+      // Three described options can exceed the default sheet height on
+      // small or landscape screens, as the cover-size picker above does.
+      isScrollControlled: true,
       backgroundColor: colorScheme.surfaceContainerHigh,
       builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
-              child: Text(
-                context.l10n.optionsArtistTagMode,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-              child: Text(
-                context.l10n.optionsArtistTagModeDescription,
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 8),
+                child: Text(
+                  context.l10n.optionsArtistTagMode,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                 ),
               ),
-            ),
-            AppSheetOption(
-              leading: const Icon(Icons.segment_outlined),
-              title: Text(context.l10n.optionsArtistTagModeJoined),
-              subtitle: Text(context.l10n.optionsArtistTagModeJoinedSubtitle),
-              trailing: currentMode == artistTagModeJoined
-                  ? const Icon(Icons.check)
-                  : null,
-              onTap: () {
-                ref
-                    .read(settingsProvider.notifier)
-                    .setArtistTagMode(artistTagModeJoined);
-                Navigator.pop(context);
-              },
-            ),
-            AppSheetOption(
-              leading: const Icon(Icons.library_music_outlined),
-              title: Text(context.l10n.optionsArtistTagModeSplitVorbis),
-              subtitle: Text(
-                context.l10n.optionsArtistTagModeSplitVorbisSubtitle,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+                child: Text(
+                  context.l10n.optionsArtistTagModeDescription,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
               ),
-              trailing: currentMode == artistTagModeSplitVorbis
-                  ? const Icon(Icons.check)
-                  : null,
-              onTap: () {
-                ref
-                    .read(settingsProvider.notifier)
-                    .setArtistTagMode(artistTagModeSplitVorbis);
-                Navigator.pop(context);
-              },
-            ),
-            const SizedBox(height: 16),
-          ],
+              AppSheetOption(
+                leading: const Icon(Icons.segment_outlined),
+                title: Text(context.l10n.optionsArtistTagModeJoined),
+                subtitle: Text(context.l10n.optionsArtistTagModeJoinedSubtitle),
+                trailing: currentMode == artistTagModeJoined
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () {
+                  ref
+                      .read(settingsProvider.notifier)
+                      .setArtistTagMode(artistTagModeJoined);
+                  Navigator.pop(context);
+                },
+              ),
+              AppSheetOption(
+                leading: const Icon(Icons.library_music_outlined),
+                title: Text(context.l10n.optionsArtistTagModeSplitVorbis),
+                subtitle: Text(
+                  context.l10n.optionsArtistTagModeSplitVorbisSubtitle,
+                ),
+                trailing: currentMode == artistTagModeSplitVorbis
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () {
+                  ref
+                      .read(settingsProvider.notifier)
+                      .setArtistTagMode(artistTagModeSplitVorbis);
+                  Navigator.pop(context);
+                },
+              ),
+              AppSheetOption(
+                leading: const Icon(Icons.person_outline),
+                title: Text(context.l10n.optionsArtistTagModePrimary),
+                subtitle: Text(
+                  context.l10n.optionsArtistTagModePrimarySubtitle,
+                ),
+                trailing: currentMode == artistTagModePrimary
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () {
+                  ref
+                      .read(settingsProvider.notifier)
+                      .setArtistTagMode(artistTagModePrimary);
+                  Navigator.pop(context);
+                },
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
         ),
       ),
     );

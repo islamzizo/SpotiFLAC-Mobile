@@ -69,7 +69,10 @@ extension _TrackMetadataFileActions on _TrackMetadataScreenState {
         durationMs: initialDurationSeconds > 0
             ? initialDurationSeconds * 1000
             : 0,
-        artistTagMode: ref.read(settingsProvider).artistTagMode,
+        // Typed artist names are saved as entered, even in primary mode.
+        artistTagMode: artistTagModeForExistingTags(
+          ref.read(settingsProvider).artistTagMode,
+        ),
       ),
     );
 
@@ -220,15 +223,7 @@ extension _TrackMetadataFileActions on _TrackMetadataScreenState {
             explicit: isExplicit,
           );
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-            ),
-          ),
-        );
-      }
+      if (context.mounted) showCannotOpenFileSnackBar(context, e);
     }
   }
 
@@ -284,7 +279,7 @@ extension _TrackMetadataFileActions on _TrackMetadataScreenState {
   }
 
   String _formatFullDate(DateTime date) {
-    return '${date.day} ${_TrackMetadataScreenState._months[date.month - 1]} ${date.year}, '
+    return '${date.day} ${shortMonthNames[date.month - 1]} ${date.year}, '
         '${date.hour.toString().padLeft(2, '0')}:'
         '${date.minute.toString().padLeft(2, '0')}';
   }

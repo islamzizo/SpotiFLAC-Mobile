@@ -27,7 +27,11 @@ pub(super) fn download(
         check().map_err(|error| Failure::new("cancelled", error, attempts))?;
         let response = open(network, url, &options, "bytes=0-1", "", false, check);
         let failure = match response {
-            Ok(stream) if matches!(stream.response.status, 200 | 206) => break stream.response,
+            Ok(mut stream) if matches!(stream.response.status, 200 | 206) => {
+                // Finish the two-byte range so the first chunk reuses this connection.
+                stream.discard(check);
+                break stream.response;
+            }
             Ok(stream) => {
                 let mut failure = status_failure(&stream.response, &options.policy, attempts);
                 failure.error = format!("chunked probe HTTP {}", stream.response.status);
@@ -123,7 +127,7 @@ pub(super) fn download(
             if !matches!(status, 200 | 206) {
                 failure = status_failure(&stream.response, &options.policy, attempts);
                 failure.error = format!("chunked HTTP {status} at offset {start}");
-                drop(stream);
+                stream.discard(check);
                 if !retryable(status) || attempt == options.policy.max_attempts {
                     break;
                 }
