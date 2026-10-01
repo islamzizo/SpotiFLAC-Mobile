@@ -1,6 +1,6 @@
 //! One scan owner, bounded worker results and shared full/incremental traversal.
 
-use super::{Backend, library_extension, modified, scan_time};
+use super::{Backend, library_extension, modified_time, scan_time};
 use cap_std::fs::OpenOptions;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -237,15 +237,29 @@ impl Backend {
         check: Check<'_>,
     ) -> Result<Vec<AudioFile>, String> {
         let files = self.environment().native_files()?;
-        let mut pending = vec![folder.to_owned()];
+        // Each entry records whether its parent directory was already
+        // validated. Children then need one lstat of their own name instead of
+        // re-checking every ancestor plus two more stats per file; on FUSE SD
+        // cards, USB drives and network mounts each of those is a round trip.
+        let mut pending = vec![(folder.to_owned(), false)];
         let mut collected = Vec::new();
-        while let Some(path) = pending.pop() {
+        while let Some((path, parent_validated)) = pending.pop() {
             check()?;
             let input = files.resolve_legacy(&path)?;
-            input.native_display()?;
-            let metadata = input
-                .metadata()
-                .map_err(|error| format!("walk library path {path}: {error}"))?;
+            let metadata = if parent_validated {
+                input.native_child_metadata().map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        format!("walk library path {path}: {error}")
+                    } else {
+                        error.to_string()
+                    }
+                })?
+            } else {
+                input.native_display()?;
+                input
+                    .metadata()
+                    .map_err(|error| format!("walk library path {path}: {error}"))?
+            };
             if metadata.is_dir() {
                 let entries = input
                     .entries()
@@ -254,16 +268,17 @@ impl Backend {
                     if !directory && (!supported(&name) || staging(&name)) {
                         continue;
                     }
-                    pending.push(
+                    pending.push((
                         crate::files::clean(&Path::new(&path).join(name))
                             .to_string_lossy()
                             .into_owned(),
-                    );
+                        true,
+                    ));
                 }
             } else if supported(&path) && !staging(&path) {
                 collected.push(AudioFile {
                     path,
-                    modified: modified(&input),
+                    modified: modified_time(&metadata),
                     size: metadata.len(),
                 });
             }
@@ -432,13 +447,15 @@ impl Backend {
             }
         }
         // Allow short bursts without parking workers after each result. At most
-        // 64 completed tracks wait; NDJSON still uses bounded memory.
+        // 96 completed tracks wait; NDJSON still uses bounded memory. Tag reads
+        // mostly wait on storage, so slow media benefits from more files in
+        // flight than the core count; artwork decoding stays serialized.
         let workers = if audio.len() < 16 {
             1
         } else {
             thread::available_parallelism()
                 .map_or(2, usize::from)
-                .clamp(2, 4)
+                .clamp(2, 6)
         };
         let next = AtomicUsize::new(0);
         let stop = AtomicBool::new(false);
@@ -575,5 +592,95 @@ fn update(run: &Run, completed: usize, path: &str, error: bool) {
     progress.error_count += usize::from(error);
     if progress.total_files > 0 {
         progress.progress_pct = completed as f64 / progress.total_files as f64 * 100.0;
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::RuntimeLimits;
+    use std::fs;
+
+    fn backend(root: &Path, library: &Path) -> Backend {
+        let backend = Backend::new(
+            &root.join("sources"),
+            &root.join("data"),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "1",
+            RuntimeLimits::default(),
+        )
+        .unwrap();
+        backend
+            .environment()
+            .set_allowed_download_directories(&[library.to_path_buf()])
+            .unwrap();
+        backend
+    }
+
+    fn walk(backend: &Backend, folder: &Path) -> Result<Vec<AudioFile>, String> {
+        backend.collect_library_files(&folder.to_string_lossy(), &|| Ok(()))
+    }
+
+    #[test]
+    fn walk_keeps_order_size_and_time_with_one_stat_per_child() {
+        let root = tempfile::tempdir().unwrap();
+        let library = fs::canonicalize(root.path()).unwrap().join("library");
+        fs::create_dir_all(library.join("A/B")).unwrap();
+        fs::write(library.join("A/B/song.flac"), b"flac bytes").unwrap();
+        fs::write(library.join("A/c.mp3"), b"mp3").unwrap();
+        fs::write(library.join("notes.txt"), b"ignored").unwrap();
+        fs::write(library.join("x.partial.flac"), b"staging").unwrap();
+        let backend = backend(root.path(), &library);
+
+        let files = walk(&backend, &library).unwrap();
+
+        let expected = [library.join("A/B/song.flac"), library.join("A/c.mp3")];
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+        );
+        for (file, path) in files.iter().zip(&expected) {
+            let metadata = fs::metadata(path).unwrap();
+            let modified = metadata
+                .modified()
+                .unwrap()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+            assert_eq!(file.size, metadata.len());
+            assert_eq!(file.modified, modified);
+        }
+    }
+
+    #[test]
+    fn walk_still_rejects_nested_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let library = fs::canonicalize(root.path()).unwrap().join("library");
+        fs::create_dir_all(library.join("A")).unwrap();
+        fs::write(library.join("A/song.flac"), b"flac").unwrap();
+        std::os::unix::fs::symlink(library.join("A/song.flac"), library.join("A/link.flac"))
+            .unwrap();
+        let backend = backend(root.path(), &library);
+
+        let error = walk(&backend, &library).err().expect("linked file");
+        assert_eq!(
+            error,
+            "native media path must not contain symlinks or special files"
+        );
+
+        fs::remove_file(library.join("A/link.flac")).unwrap();
+        // A linked directory with an audio-like name reaches the stat check.
+        std::os::unix::fs::symlink(library.join("A"), library.join("B.flac")).unwrap();
+        let error = walk(&backend, &library).err().expect("linked directory");
+        assert_eq!(
+            error,
+            "native media path must not contain symlinks or special files"
+        );
     }
 }
