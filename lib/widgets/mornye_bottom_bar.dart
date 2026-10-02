@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
@@ -207,7 +208,7 @@ class _MornyeBottomBarState extends ConsumerState<MornyeBottomBar>
         final labelHeight = labelPainter.height;
         labelPainter.dispose();
         final fullIconBottom = glassTabs
-            ? 40 + (labelHeight + 2) / 2
+            ? 8 + math.max(64, 37 + labelHeight) / 2 + (labelHeight + 2) / 2
             : math.max(64.0, 49 + labelHeight) - 23.5;
         final tabInset = glassTabs ? 6.0 : 5.0;
         double fullIconStart(int index) =>
@@ -242,7 +243,12 @@ class _MornyeBottomBarState extends ConsumerState<MornyeBottomBar>
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
-                        Positioned.fill(child: surface),
+                        Positioned.fill(
+                          child: Offstage(
+                            offstage: amount == 0,
+                            child: surface,
+                          ),
+                        ),
                         Material(
                           color: Colors.transparent,
                           child: IconButton(
@@ -286,51 +292,54 @@ class _MornyeBottomBarState extends ConsumerState<MornyeBottomBar>
                 // Only the non-overlapping player and tab surfaces share a
                 // backdrop. Moving side capsules stay outside this group: they
                 // cross the tab bar while folding and need separate samples.
-                BackdropGroup(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (hasPlayer || amount > 0)
-                        Align(
-                          alignment: Alignment.bottomCenter,
-                          // With no track, introducing the row at full height would
-                          // make the bar jump taller on the first animation frame.
-                          heightFactor: hasPlayer ? 1 : amount,
-                          child: Padding(
-                            padding: EdgeInsets.only(
-                              bottom: hasPlayer
-                                  ? tabGap + (8 - tabGap) * amount
-                                  : 8,
+                LiquidGlassBatch(
+                  child: BackdropGroup(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (hasPlayer || amount > 0)
+                          Align(
+                            alignment: Alignment.bottomCenter,
+                            // With no track, introducing the row at full height would
+                            // make the bar jump taller on the first animation frame.
+                            heightFactor: hasPlayer ? 1 : amount,
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                bottom: hasPlayer
+                                    ? tabGap + (8 - tabGap) * amount
+                                    : 8,
+                              ),
+                              child: Row(
+                                children: [
+                                  SizedBox(
+                                    width: 60 * amount,
+                                    height: hasPlayer ? 48 + 4 * amount : 52,
+                                  ),
+                                  Expanded(child: player),
+                                  SizedBox(
+                                    width: 60 * amount,
+                                    height: hasPlayer ? 48 + 4 * amount : 52,
+                                  ),
+                                ],
+                              ),
                             ),
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 60 * amount,
-                                  height: hasPlayer ? 48 + 4 * amount : 52,
-                                ),
-                                Expanded(child: player),
-                                SizedBox(
-                                  width: 60 * amount,
-                                  height: hasPlayer ? 48 + 4 * amount : 52,
-                                ),
-                              ],
+                          ),
+                        ClipRect(
+                          clipBehavior: amount == 0 ? Clip.none : Clip.hardEdge,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            heightFactor: 1 - amount,
+                            child: IgnorePointer(
+                              ignoring: amount > 0.5,
+                              child: ExcludeSemantics(
+                                excluding: amount > 0.5,
+                                child: amount == 0 ? fullTabs : foldingTabs,
+                              ),
                             ),
                           ),
                         ),
-                      ClipRect(
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          heightFactor: 1 - amount,
-                          child: IgnorePointer(
-                            ignoring: amount > 0.5,
-                            child: ExcludeSemantics(
-                              excluding: amount > 0.5,
-                              child: amount == 0 ? fullTabs : foldingTabs,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
                 movingIcon(leading: true, surface: leadingSurface),

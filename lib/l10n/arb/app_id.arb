@@ -79,6 +79,7 @@
   "appearanceGlassClaritySubtitle": "Atur transparansi menu dan navigasi Mornye. Kontras tulisan tetap dijaga.",
   "appearanceGlassTinted": "Pekat",
   "appearanceGlassClear": "Bening",
+  "appearanceGlassClearPerformance": "Kaca sangat bening dapat memakai lebih banyak daya dan terasa kurang lancar di perangkat lama. Kurangi kebeningan jika perlu.",
   "appearanceGlassClarityBlurOff": "Kaca dibuat pekat di perangkat ini. Aktifkan “{setting}” untuk mengatur kebeningan.",
   "appearanceGlassClarityHighContrast": "Kaca tetap pekat selama pengaturan kontras tinggi sistem aktif.",
   "appearanceUseSystemFont": "Gunakan font sistem",

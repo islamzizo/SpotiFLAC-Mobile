@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart';
+import 'package:spotiflac_android/widgets/mornye_selection_pill.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
@@ -141,7 +141,7 @@ void main() {
     'player and navbar share a backdrop while moving capsules remain isolated',
     (tester) async {
       await pumpShell(tester, blur: true, liquidGlass: false);
-      void expectSharedBackdrop() {
+      void expectSharedBackdrop({int movingSurfaces = 2}) {
         final filters = find.descendant(
           of: find.byType(MornyeBottomBar),
           matching: find.byType(BackdropFilter),
@@ -160,11 +160,12 @@ void main() {
         // Side capsules overlap the folding tabs and must not join their group.
         expect(
           renderers.where((filter) => filter.backdropKey == null),
-          hasLength(2),
+          hasLength(movingSurfaces),
         );
       }
 
-      expectSharedBackdrop();
+      // Invisible side capsules must not paint additional backdrop passes.
+      expectSharedBackdrop(movingSurfaces: 0);
       chrome.value = true;
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 190));
@@ -537,7 +538,6 @@ void main() {
               chromeSurface: backdrop == albumBlue ? albumBlue : null,
             );
             final artist = find.text('Artist');
-            // The glass renderer also builds a copy for the refractive pill.
             final libraryIcon = find
                 .descendant(
                   of: find.byType(MornyeTabBar),
@@ -812,16 +812,16 @@ void main() {
     'glass bar stays mounted and pauses its tickers while collapsed',
     (tester) async {
       await pumpShell(tester, blur: true);
-      final glass = tester.element(find.byType(LiquidGlassTabBar));
+      final glass = tester.element(find.byType(MornyeSelectionPill));
       final player = tester.state(find.byType(MiniPlayer));
       expect(TickerMode.valuesOf(glass).enabled, isTrue);
       chrome.value = true;
       await tester.pumpAndSettle();
-      expect(tester.element(find.byType(LiquidGlassTabBar)), same(glass));
+      expect(tester.element(find.byType(MornyeSelectionPill)), same(glass));
       expect(TickerMode.valuesOf(glass).enabled, isFalse);
       chrome.expand();
       await tester.pumpAndSettle();
-      expect(tester.element(find.byType(LiquidGlassTabBar)), same(glass));
+      expect(tester.element(find.byType(MornyeSelectionPill)), same(glass));
       expect(tester.state(find.byType(MiniPlayer)), same(player));
       expect(TickerMode.valuesOf(glass).enabled, isTrue);
       expect(tester.takeException(), isNull);
@@ -850,9 +850,11 @@ class _StripedBackdrop extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint();
-    for (var x = 0.0; x < size.width; x += 12) {
-      paint.color = (x / 12).round().isEven ? Colors.white : Colors.black;
-      canvas.drawRect(Rect.fromLTWH(x, 0, 12, size.height), paint);
+    // Clear glass uses a small blur; fine stripes still reveal a lost backdrop
+    // during transforms without requiring the old heavily frosted appearance.
+    for (var x = 0.0; x < size.width; x += 2) {
+      paint.color = (x / 2).round().isEven ? Colors.white : Colors.black;
+      canvas.drawRect(Rect.fromLTWH(x, 0, 2, size.height), paint);
     }
   }
 

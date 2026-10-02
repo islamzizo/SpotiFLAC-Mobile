@@ -110,7 +110,7 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(
       child: MornyeGlassPanel.overlay(
         radius: 24,
         // Messages have no modal scrim; let more of the page show through.
-        tintOpacity: 0.60,
+        tintOpacity: 0.48,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           child: DefaultTextStyle(

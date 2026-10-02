@@ -19,6 +19,8 @@ import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/player_motion_artwork_provider.dart';
 import 'package:spotiflac_android/providers/player_artwork_video_provider.dart';
 import 'package:spotiflac_android/services/motion_artwork_store.dart';
+import 'package:spotiflac_android/services/network_metadata_service.dart';
+import 'package:spotiflac_android/services/network_storage_service.dart';
 import 'package:video_player/video_player.dart';
 import 'package:spotiflac_android/screens/now_playing_screen.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
@@ -1269,7 +1271,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.getSize(panel).width, enteringWidth);
       expect(tester.getRect(panel).bottom, lessThan(anchor.top));
-      expect(tester.getRect(panel).width, 320);
+      expect(tester.getRect(panel).width, 280);
       expect(find.byType(BottomSheet), findsNothing);
       expect(Theme.of(tester.element(panel)).brightness, Brightness.dark);
       expect(
@@ -1288,7 +1290,7 @@ void main() {
       expect(find.text('Go to Artist'), findsOneWidget);
       expect(find.text('Favorite'), findsOneWidget);
       expect(find.text('Share'), findsOneWidget);
-      expect(tester.widget<Text>(find.text('Go to Album')).style?.fontSize, 17);
+      expect(tester.widget<Text>(find.text('Go to Album')).style?.fontSize, 16);
       await tester.ensureVisible(find.text('Sleep timer'));
       await tester.tap(find.text('Sleep timer'));
       await tester.pumpAndSettle();
@@ -2864,6 +2866,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('network lyrics use shared metadata instead of the audio URL', (
+    tester,
+  ) async {
+    final storage = NetworkStorageService.instance;
+    final source = NetworkStorageService.source('lyrics-test', 'song.flac');
+    await tester.runAsync(() async {
+      await storage.save(
+        const NetworkConnection(
+          id: 'lyrics-test',
+          name: 'Lyrics test',
+          protocol: NetworkProtocol.http,
+          address: 'https://nas.test/music/',
+        ),
+      );
+      await NetworkMetadataService.instance.read(source);
+    });
+    addTearDown(() async {
+      await storage.remove('lyrics-test');
+      await storage.dispose();
+    });
+    expect(metadataReads, hasLength(1));
+    await pumpNowPlaying(tester);
+    mediaItems.add(
+      MediaItem(
+        id: source,
+        title: 'Network song',
+        extras: {
+          'source': source,
+          'resolvedSource': 'http://127.0.0.1:9999/playback-only',
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('material-lyrics-toggle')));
+    await tester.pumpAndSettle();
+    expect(find.text('First lyric'), findsOneWidget);
+    expect(metadataReads, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'automatic SAF track change refreshes lyrics while Lyrics page is active',
     (tester) async {
@@ -2988,7 +3030,13 @@ void main() {
         final glass = tester.widget<MornyeGlassPanel>(
           find.byType(MornyeGlassPanel).last,
         );
-        expect(glass.backdropFilter, isNotNull);
+        expect(
+          find.descendant(
+            of: find.byType(MornyeGlassPanel).last,
+            matching: find.byType(BackdropFilter),
+          ),
+          findsOneWidget,
+        );
         expect(glass.tintOpacity, inExclusiveRange(0, 1));
         expect(
           find.text('Hide Pronunciation'),

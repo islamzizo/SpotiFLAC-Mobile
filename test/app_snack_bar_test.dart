@@ -86,9 +86,10 @@ void main() {
           image.dispose();
           return colors;
         });
-        // Retain a visible backdrop hue even beneath the glass shadow.
-        expect(colors![0].b - colors[0].r, greaterThan(0.20));
-        expect(colors[1].r - colors[1].b, greaterThan(0.20));
+        // The painted dark tint attenuates chroma along with luminance. Both
+        // backdrop hues must remain visibly distinct throughout the transition.
+        expect(colors![0].b - colors[0].r, greaterThan(0.16));
+        expect(colors[1].r - colors[1].b, greaterThan(0.16));
         final foreground = MornyeTheme.build(brightness).colorScheme.onSurface;
         for (final background in colors) {
           final luminances = [

@@ -401,35 +401,6 @@ class _ArtistCollapsingArtwork extends ConsumerWidget {
               ),
             ),
           ),
-          if (blurEnabled && fade < 1)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  child: FractionallySizedBox(
-                    heightFactor: 0.48,
-                    widthFactor: 1,
-                    child: ClipRect(
-                      child: ShaderMask(
-                        blendMode: BlendMode.dstIn,
-                        shaderCallback: (bounds) => const LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Colors.transparent, Colors.white],
-                          stops: [0, 0.7],
-                        ).createShader(bounds),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                          child: ColoredBox(
-                            color: surface.withValues(alpha: 0.08),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
           DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(

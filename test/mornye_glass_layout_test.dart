@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/widgets/app_switch.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 
 void main() {
-  testWidgets('glass uses window pixels while tablet content keeps its scale', (
+  testWidgets('glass and controls share tablet layout coordinates', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 2;
@@ -68,7 +67,7 @@ void main() {
     }
 
     // Full-screen tablet in both orientations, compact tablet, then a pop-up
-    // window and back. Resizing must update the shader without disabling glass.
+    // window and back. Glass follows normal layout, without window-pixel hacks.
     for (final size in [
       const Size(1400, 876),
       const Size(876, 1400),
@@ -81,17 +80,13 @@ void main() {
       expect(contentMetrics!.size, size / scale);
       expect(contentMetrics!.devicePixelRatio, 2 * scale);
       expect(contentMetrics!.padding.bottom, closeTo(20 / scale, 0.01));
-      for (final type in [
-        LiquidGlassLens,
-        LiquidGlassTabBar,
-        LiquidGlassSwitch,
-      ]) {
+      for (final type in [MornyeGlass, MornyeTabBar, AppSwitch]) {
         final glass = find.byType(type);
         expect(glass, findsWidgets);
         for (final element in glass.evaluate()) {
           final metrics = MediaQuery.of(element);
-          expect(metrics.size, size, reason: '$type at $size');
-          expect(metrics.devicePixelRatio, 2, reason: '$type at $size');
+          expect(metrics.size, size / scale, reason: '$type at $size');
+          expect(metrics.devicePixelRatio, 2 * scale, reason: '$type at $size');
           expect(metrics.textScaler, contentMetrics!.textScaler);
           expect(metrics.highContrast, contentMetrics!.highContrast);
           expect(metrics.disableAnimations, contentMetrics!.disableAnimations);

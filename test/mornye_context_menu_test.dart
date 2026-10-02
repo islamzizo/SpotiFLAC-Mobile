@@ -28,6 +28,8 @@ void main() {
     Color? backgroundColor,
     GlobalKey? capture,
     double glassClarity = kDefaultMornyeGlassClarity,
+    bool dense = false,
+    Color? chromeSurface,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -39,7 +41,11 @@ void main() {
           backdropBlurEnabledProvider.overrideWithValue(false),
         ],
         child: MaterialApp(
-          theme: MornyeTheme.build(brightness, glassClarity: glassClarity),
+          theme: MornyeTheme.build(
+            brightness,
+            glassClarity: glassClarity,
+            chromeSurface: chromeSurface,
+          ),
           builder: (context, child) => RepaintBoundary(
             key: capture,
             child: MediaQuery(
@@ -71,6 +77,8 @@ void main() {
                                   Navigator.of(menuContext).pop(label),
                             );
                         return MornyeContextMenu(
+                          dense: dense,
+                          inheritSurface: chromeSurface != null,
                           quickActions: [
                             action(
                               'Download',
@@ -248,6 +256,74 @@ void main() {
     }
     expect(colors.first.r, greaterThan(colors.last.r + 0.03));
     expect(colors.last.b, greaterThan(colors.first.b + 0.03));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('compact menus save space while keeping 48 dp touch targets', (
+    tester,
+  ) async {
+    await openMenu(
+      tester,
+      anchor: const Rect.fromLTWH(330, 144, 44, 44),
+      onResult: (_) {},
+    );
+    final originalHeight = tester
+        .getSize(find.byType(MornyeContextMenu))
+        .height;
+    await tester.pumpWidget(const SizedBox());
+    await openMenu(
+      tester,
+      anchor: const Rect.fromLTWH(330, 144, 44, 44),
+      dense: true,
+      onResult: (_) {},
+    );
+    expect(
+      tester.getSize(find.byType(MornyeContextMenu)).height,
+      lessThan(originalHeight - 30),
+    );
+    for (final button in find.byType(CupertinoButton).evaluate()) {
+      final bounds = tester.getSize(
+        find.byElementPredicate((e) => e == button),
+      );
+      expect(bounds.width, greaterThanOrEqualTo(48));
+      expect(bounds.height, greaterThanOrEqualTo(48));
+    }
+    expect(find.text('Share').hitTestable(), findsOneWidget);
+    expect(find.text('Remove').hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cover-tinted menus preserve their hue and clear text contrast', (
+    tester,
+  ) async {
+    final colors = <Color>[];
+    for (final cover in [const Color(0xff5f3a2d), const Color(0xff2d3a5f)]) {
+      final capture = GlobalKey();
+      await openMenu(
+        tester,
+        anchor: const Rect.fromLTWH(330, 144, 44, 44),
+        brightness: Brightness.dark,
+        glassClarity: 1,
+        backgroundColor: Colors.white,
+        chromeSurface: cover,
+        capture: capture,
+        dense: true,
+        onResult: (_) {},
+      );
+      final bounds = tester.getRect(find.byType(MornyeContextMenu));
+      final pixels = await samplePixels(tester, capture, [
+        Offset(bounds.left + 8, bounds.center.dy),
+      ]);
+      final color = pixels.single;
+      colors.add(color);
+      expect(
+        1.05 / (color.computeLuminance() + 0.05),
+        greaterThanOrEqualTo(4.5),
+      );
+      await tester.pumpWidget(const SizedBox());
+    }
+    expect(colors.first.r, greaterThan(colors.first.b + 0.03));
+    expect(colors.last.b, greaterThan(colors.last.r + 0.03));
     expect(tester.takeException(), isNull);
   });
 

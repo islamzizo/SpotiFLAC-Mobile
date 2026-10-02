@@ -2090,6 +2090,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     final action = await showMornyeContextMenu<String>(
       context: titleContext,
       preferAbove: true,
+      maxWidth: 280,
       builder: (_) => MornyePlayerNavigationMenu(mediaItem: mediaItem),
     );
     if (!mounted) return;
@@ -2160,6 +2161,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
             context: context,
             anchor: anchor,
             preferAbove: true,
+            maxWidth: 280,
             builder: (_) => MornyePlayerActionsSheet(
               mediaItem: mediaItem,
               sleepTimerSubtitle: sleepTimerSubtitle,

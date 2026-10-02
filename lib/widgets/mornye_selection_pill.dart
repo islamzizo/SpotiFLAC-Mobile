@@ -1,0 +1,438 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/material.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart';
+import 'package:spotiflac_android/widgets/mornye_liquid_backdrop.dart';
+
+/// Selection with a small, transient refractive lens while held. Labels are
+/// rendered once above the lens; it samples the bar's backdrop on the GPU.
+class MornyeSelectionPill extends StatefulWidget {
+  const MornyeSelectionPill({
+    super.key,
+    required this.labels,
+    required this.selectedIndex,
+    required this.onChanged,
+    required this.itemBuilder,
+    this.padding = const EdgeInsets.all(4),
+    this.liquidInteraction = false,
+    this.selectionColor,
+    this.maskItemForeground = true,
+  });
+
+  final List<String> labels;
+  final int selectedIndex;
+  final ValueChanged<int> onChanged;
+  final Widget Function(BuildContext context, int index, bool selected)
+  itemBuilder;
+  final EdgeInsets padding;
+  final bool liquidInteraction;
+
+  /// Recolors the foreground under the moving pill instead of switching an
+  /// entire item at a tab boundary. Builders receive `selected: false` in this
+  /// mode so the unmasked foreground retains its normal color.
+  final Color? selectionColor;
+  final bool maskItemForeground;
+
+  @override
+  State<MornyeSelectionPill> createState() => _MornyeSelectionPillState();
+}
+
+class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
+  int? _dragIndex;
+  bool _dragCancelled = false;
+  bool _pressed = false;
+  int? _pressedIndex;
+  double? _dragAlignment;
+  int? _activePointer;
+  final _foregroundKey = GlobalKey();
+
+  @override
+  void didUpdateWidget(MornyeSelectionPill oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.labels.length != widget.labels.length ||
+        oldWidget.selectedIndex != widget.selectedIndex) {
+      _dragIndex = null;
+      _dragAlignment = null;
+      _pressedIndex = null;
+    }
+  }
+
+  void _preview(double x, double width) {
+    if (width <= 0 || widget.labels.isEmpty) return;
+    final visual = (x / width * widget.labels.length).floor().clamp(
+      0,
+      widget.labels.length - 1,
+    );
+    final logical = Directionality.of(context) == TextDirection.rtl
+        ? widget.labels.length - 1 - visual
+        : visual;
+    final halfItem = width / widget.labels.length / 2;
+    final position = width <= halfItem * 2
+        ? 0.0
+        : ((x.clamp(halfItem, width - halfItem) - halfItem) /
+                      (width - 2 * halfItem)) *
+                  2 -
+              1;
+    setState(() {
+      _dragIndex = logical;
+      _dragAlignment = Directionality.of(context) == TextDirection.rtl
+          ? -position
+          : position;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final count = widget.labels.length;
+    if (count == 0) return const SizedBox.shrink();
+    final selected = _dragIndex ?? _pressedIndex ?? widget.selectedIndex;
+    final scheme = Theme.of(context).colorScheme;
+    final lensEnabled =
+        widget.liquidInteraction &&
+        ui.ImageFilter.isShaderFilterSupported &&
+        !MediaQuery.disableAnimationsOf(context) &&
+        !MediaQuery.highContrastOf(context);
+    return Listener(
+      // An accepted drag can end with a PointerCancelEvent. Do not navigate
+      // when the OS interrupts the gesture (e.g. opening system controls).
+      onPointerDown: (event) {
+        if (_activePointer != null) return;
+        _activePointer = event.pointer;
+        _dragCancelled = false;
+        if (!lensEnabled || _pressed) return;
+        final box = context.findRenderObject()! as RenderBox;
+        final width = box.size.width - widget.padding.horizontal;
+        if (width <= 0) return;
+        final visual =
+            ((event.localPosition.dx - widget.padding.left) / width * count)
+                .floor()
+                .clamp(0, count - 1);
+        setState(() {
+          _pressed = true;
+          _pressedIndex = Directionality.of(context) == TextDirection.rtl
+              ? count - visual - 1
+              : visual;
+        });
+      },
+      onPointerUp: (event) {
+        if (event.pointer != _activePointer) return;
+        _activePointer = null;
+        setState(() {
+          _pressed = false;
+          _pressedIndex = null;
+          _dragAlignment = null;
+        });
+      },
+      onPointerCancel: (event) {
+        if (event.pointer != _activePointer) return;
+        _activePointer = null;
+        setState(() {
+          _dragCancelled = true;
+          _pressed = false;
+          _pressedIndex = null;
+          _dragAlignment = null;
+        });
+      },
+      child: Padding(
+        padding: widget.padding,
+        child: LayoutBuilder(
+          builder: (context, constraints) => GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragStart: (event) =>
+                _preview(event.localPosition.dx, constraints.maxWidth),
+            onHorizontalDragUpdate: (event) =>
+                _preview(event.localPosition.dx, constraints.maxWidth),
+            onHorizontalDragEnd: (_) {
+              final index = _dragIndex;
+              setState(() {
+                _dragIndex = null;
+                _dragAlignment = null;
+              });
+              if (index != null && !_dragCancelled) widget.onChanged(index);
+            },
+            onHorizontalDragCancel: () => setState(() {
+              _dragIndex = null;
+              _dragAlignment = null;
+            }),
+            child: Stack(
+              fit: StackFit.passthrough,
+              clipBehavior: Clip.none,
+              children: [
+                if (selected >= 0 && selected < count)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: AnimatedAlign(
+                        duration:
+                            _dragAlignment != null ||
+                                MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 220),
+                        curve: Curves.easeOutCubic,
+                        alignment: AlignmentDirectional(
+                          _dragAlignment ??
+                              (count == 1
+                                  ? 0
+                                  : -1 + 2 * selected / (count - 1)),
+                          0,
+                        ),
+                        child: FractionallySizedBox(
+                          widthFactor: 1 / count,
+                          heightFactor: 1,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: scheme.onSurface.withValues(
+                                alpha: lensEnabled && _pressed
+                                    ? 0.025
+                                    : scheme.brightness == Brightness.dark
+                                    ? 0.12
+                                    : 0.08,
+                              ),
+                              borderRadius: BorderRadius.circular(32),
+                              border: Border.all(
+                                color: scheme.onSurface.withValues(alpha: 0.05),
+                                width: 0.5,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.08),
+                                  blurRadius: 1,
+                                  offset: const Offset(0, 0.5),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (lensEnabled && selected >= 0 && selected < count)
+                  _interactionLens(selected, count),
+                _foreground(
+                  selected,
+                  count,
+                  Row(
+                    key: _foregroundKey,
+                    children: [
+                      for (var index = 0; index < count; index++)
+                        Expanded(
+                          child: Semantics(
+                            button: true,
+                            selected: index == widget.selectedIndex,
+                            label: widget.labels[index],
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(32),
+                                // The moving pill supplies press feedback. An
+                                // ink highlight would leave a colored patch on
+                                // the tab where the drag started.
+                                splashFactory: widget.selectionColor == null
+                                    ? null
+                                    : NoSplash.splashFactory,
+                                highlightColor: widget.selectionColor == null
+                                    ? null
+                                    : Colors.transparent,
+                                onTap: () => widget.onChanged(index),
+                                child: ExcludeSemantics(
+                                  child: AnimatedScale(
+                                    scale:
+                                        lensEnabled && _pressed && selected >= 0
+                                        ? 1 +
+                                              0.18 *
+                                                  _coverage(
+                                                    index,
+                                                    selected,
+                                                    count,
+                                                  )
+                                        : 1,
+                                    duration:
+                                        _dragAlignment != null ||
+                                            MediaQuery.disableAnimationsOf(
+                                              context,
+                                            )
+                                        ? Duration.zero
+                                        : const Duration(milliseconds: 220),
+                                    curve: Curves.easeOutCubic,
+                                    child: _item(context, index, selected),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _item(BuildContext context, int index, int selected) {
+    final child = widget.itemBuilder(
+      context,
+      index,
+      widget.selectionColor == null && index == selected,
+    );
+    return widget.maskItemForeground
+        ? MornyeSelectionForeground(child: child)
+        : child;
+  }
+
+  double _coverage(int index, int selected, int count) {
+    final position = _dragAlignment == null
+        ? selected.toDouble()
+        : (_dragAlignment! + 1) * (count - 1) / 2;
+    return (1 - (index - position).abs()).clamp(0.0, 1.0);
+  }
+
+  Widget _foreground(int selected, int count, Widget child) {
+    final color = widget.selectionColor;
+    if (color == null) return child;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(
+        end:
+            _dragAlignment ??
+            (count == 1 ? 0 : -1 + 2 * selected / (count - 1)),
+      ),
+      duration:
+          _dragAlignment != null || MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      builder: (context, alignment, child) => _SelectionForegroundScope(
+        rowKey: _foregroundKey,
+        alignment: Directionality.of(context) == TextDirection.rtl
+            ? -alignment
+            : alignment,
+        count: count,
+        color: selected >= 0 && selected < count
+            ? color
+            : color.withValues(alpha: 0),
+        child: child!,
+      ),
+      child: child,
+    );
+  }
+
+  Widget _interactionLens(int selected, int count) => Positioned.fill(
+    child: IgnorePointer(
+      child: AnimatedAlign(
+        duration: _dragAlignment != null
+            ? Duration.zero
+            : const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        alignment: AlignmentDirectional(
+          _dragAlignment ?? (count == 1 ? 0 : -1 + 2 * selected / (count - 1)),
+          0,
+        ),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(end: _pressed ? 1 : 0),
+          duration: const Duration(milliseconds: 240),
+          curve: Curves.easeOutCubic,
+          builder: (context, progress, child) => FractionallySizedBox(
+            widthFactor: 1 / count,
+            heightFactor: 1,
+            child: Transform.scale(
+              scaleX: 1 + 0.28 * progress,
+              scaleY: 1 + 0.24 * progress,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(32),
+                child: LiquidGlassBatch.exclude(
+                  child: MornyeLiquidBackdrop(
+                    borderRadius: BorderRadius.circular(32),
+                    clarity: 1,
+                    interaction: true,
+                    progress: progress,
+                    blurSigma: 0,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(32),
+                        color: Colors.white.withValues(
+                          alpha:
+                              progress *
+                              (Theme.of(context).brightness == Brightness.light
+                                  ? 0.24
+                                  : 0.08),
+                        ),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.6 * progress),
+                          width: 0.75,
+                        ),
+                      ),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Paint only icons and labels with the sliding selection color. Badge fills
+/// and counters can remain outside this widget and retain their own contrast.
+class MornyeSelectionForeground extends StatelessWidget {
+  const MornyeSelectionForeground({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<_SelectionForegroundScope>();
+    if (scope == null) return child;
+    return ShaderMask(
+      blendMode: BlendMode.srcATop,
+      shaderCallback: (bounds) {
+        final row =
+            scope.rowKey.currentContext!.findRenderObject()! as RenderBox;
+        final box = context.findRenderObject()! as RenderBox;
+        final width = row.size.width / scope.count;
+        final left = (scope.alignment + 1) * (row.size.width - width) / 2;
+        // Convert from the bar so scaled icons and nested badges still share
+        // exactly the same moving selection boundary.
+        final start = box.globalToLocal(row.localToGlobal(Offset(left, 0)));
+        final end = box.globalToLocal(
+          row.localToGlobal(Offset(left + width, 0)),
+        );
+        return ui.Gradient.linear(
+          Offset(start.dx, 0),
+          Offset(end.dx, 0),
+          [scope.color, scope.color],
+          null,
+          TileMode.decal,
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+class _SelectionForegroundScope extends InheritedWidget {
+  const _SelectionForegroundScope({
+    required this.rowKey,
+    required this.alignment,
+    required this.count,
+    required this.color,
+    required super.child,
+  });
+
+  final GlobalKey rowKey;
+  final double alignment;
+  final int count;
+  final Color color;
+
+  @override
+  bool updateShouldNotify(_SelectionForegroundScope oldWidget) =>
+      alignment != oldWidget.alignment ||
+      count != oldWidget.count ||
+      color != oldWidget.color ||
+      rowKey != oldWidget.rowKey;
+}

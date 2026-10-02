@@ -41,6 +41,7 @@ import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/mini_player.dart';
 import 'package:spotiflac_android/widgets/expressive_navigation_bar.dart';
 import 'package:spotiflac_android/widgets/mornye_bottom_bar.dart';
+import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
 import 'package:spotiflac_android/utils/logger.dart';
@@ -890,18 +891,19 @@ class _MainShellState extends ConsumerState<MainShell>
         label: l10n.navHome,
       ),
       NavigationDestination(
-        icon: AnimatedBadge(
-          count: queueState,
-          child: Badge(
-            isLabelVisible: queueState > 0,
-            label: Text('$queueState'),
-            child: Icon(
-              context.isMornye
-                  ? CupertinoIcons.square_stack_fill
-                  : Icons.library_music_outlined,
-            ),
-          ),
-        ),
+        icon: context.isMornye
+            ? MornyeNavigationIcon(
+                icon: CupertinoIcons.square_stack_fill,
+                badgeCount: queueState,
+              )
+            : AnimatedBadge(
+                count: queueState,
+                child: Badge(
+                  isLabelVisible: queueState > 0,
+                  label: Text('$queueState'),
+                  child: const Icon(Icons.library_music_outlined),
+                ),
+              ),
         selectedIcon: SlidingIcon(
           child: AnimatedBadge(
             count: queueState,
@@ -916,18 +918,19 @@ class _MainShellState extends ConsumerState<MainShell>
       ),
       if (showStore)
         NavigationDestination(
-          icon: AnimatedBadge(
-            count: repoUpdatesCount,
-            child: Badge(
-              isLabelVisible: repoUpdatesCount > 0,
-              label: Text('$repoUpdatesCount'),
-              child: Icon(
-                context.isMornye
-                    ? CupertinoIcons.square_grid_2x2
-                    : Icons.extension_outlined,
-              ),
-            ),
-          ),
+          icon: context.isMornye
+              ? MornyeNavigationIcon(
+                  icon: CupertinoIcons.square_grid_2x2,
+                  badgeCount: repoUpdatesCount,
+                )
+              : AnimatedBadge(
+                  count: repoUpdatesCount,
+                  child: Badge(
+                    isLabelVisible: repoUpdatesCount > 0,
+                    label: Text('$repoUpdatesCount'),
+                    child: const Icon(Icons.extension_outlined),
+                  ),
+                ),
           selectedIcon: BouncingIcon(
             child: AnimatedBadge(
               count: repoUpdatesCount,

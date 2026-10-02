@@ -117,8 +117,10 @@ void main() {
 
       expect(await contrast(10), lessThan(5));
       final transitionContrast = (await contrast(74))!;
-      expect(transitionContrast, lessThan(blur ? 110 : 170));
-      if (!blur) expect(transitionContrast, greaterThan(120));
+      // A longer opacity fade clears the footer on every GPU, without three
+      // overlapping backdrop filters over the moving lyric content.
+      expect(transitionContrast, lessThan(110));
+      expect(find.byType(BackdropFilter), findsNothing);
 
       await tester.pump(const Duration(seconds: 5));
       await tester.pumpAndSettle();

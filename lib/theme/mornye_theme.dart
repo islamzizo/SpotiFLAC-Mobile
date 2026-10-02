@@ -55,7 +55,7 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
   static double navigationOpacity(BuildContext context) {
     final theme = Theme.of(context);
     if (theme.extension<MornyeTheme>()?.chromeSurface != null) return 0.24;
-    return theme.brightness == Brightness.dark ? 0.44 : 0.54;
+    return theme.brightness == Brightness.dark ? 0.36 : 0.49;
   }
 
   static const lightAccent = Color.fromRGBO(204, 46, 51, 1);

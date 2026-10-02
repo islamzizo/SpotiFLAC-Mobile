@@ -10,10 +10,9 @@ final lowEndDeviceProvider = Provider<bool>((ref) => false);
 /// in main.dart). Only the `high` tier enables blur by default.
 final deviceSupportsBackdropBlurProvider = Provider<bool>((ref) => false);
 
-/// Whether the device's GPU is expected to sustain Mornye's shader glass
-/// (refractive lenses, the travelling tab pill, liquid switches and per-line
-/// lyric defocus) on top of plain backdrop blur. Overridden in main.dart:
-/// mid-range Android keeps frosted blur without the shader passes.
+/// Whether the GPU supports the higher blur budget and animated artwork /
+/// lyric defocus. Glass controls themselves use the same lightweight renderer
+/// on every tier. Overridden in main.dart.
 final deviceSupportsLiquidGlassProvider = Provider<bool>((ref) => true);
 
 /// Whether backdrop blur effects should render: the device default, or the
@@ -31,7 +30,7 @@ enum MornyeGlassLevel {
   /// Translucent surfaces over one backdrop blur; no shader passes.
   frosted,
 
-  /// Frosted surfaces plus refractive shader lenses and blur-driven motion.
+  /// Impeller backdrop refraction, with a blur fallback on other renderers.
   liquid,
 }
 
@@ -50,7 +49,7 @@ final mornyeBlurEnabledProvider = Provider<bool>(
   (ref) => ref.watch(mornyeGlassLevelProvider) != MornyeGlassLevel.flat,
 );
 
-/// Shader glass and continuously re-filtered blur effects (liquid only).
+/// Higher-quality glass and continuously filtered artwork / lyric effects.
 final mornyeLiquidGlassProvider = Provider<bool>(
   (ref) => ref.watch(mornyeGlassLevelProvider) == MornyeGlassLevel.liquid,
 );
