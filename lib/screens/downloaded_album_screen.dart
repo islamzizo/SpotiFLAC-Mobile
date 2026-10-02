@@ -211,17 +211,20 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
     required int navigationIndex,
   }) async {
     final navigator = Navigator.of(context);
-    final embeddedCoverPath =
-        await DownloadedEmbeddedCoverResolver.resolveOrExtract(
-          item.filePath,
-          onChanged: _onEmbeddedCoverChanged,
-        );
+    final embeddedCoverPath = context.isMornye
+        ? DownloadedEmbeddedCoverResolver.resolve(item.filePath)
+        : await DownloadedEmbeddedCoverResolver.resolveOrExtract(
+            item.filePath,
+            onChanged: _onEmbeddedCoverChanged,
+          );
     if (!mounted) return;
     final artworkSource = embeddedCoverPath ?? item.coverUrl;
-    if (embeddedCoverPath == null) {
+    if (embeddedCoverPath == null && !context.isMornye) {
       precacheCoverImage(context, item.coverUrl);
     }
-    final backdropReady = precacheMetadataBackdrop(context, artworkSource);
+    final backdropReady = context.isMornye
+        ? Future<void>.value()
+        : precacheMetadataBackdrop(context, artworkSource);
     final beforeModTime =
         await DownloadedEmbeddedCoverResolver.readFileModTimeMillis(
           item.filePath,
@@ -229,15 +232,17 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
     await backdropReady;
     if (!mounted) return;
 
-    final result = await navigator.push(
-      slidePageRoute<bool>(
-        page: TrackMetadataScreen(
-          item: item,
-          historyNavigationItems: navigationItems,
-          navigationIndex: navigationIndex,
-        ),
+    final route = slidePageRoute<bool>(
+      page: TrackMetadataScreen(
+        item: item,
+        historyNavigationItems: navigationItems,
+        navigationIndex: navigationIndex,
       ),
     );
+    final result = await navigator.push(route);
+    // Refresh the album after the return animation, not while both pages paint.
+    if (route is TransitionRoute<bool>) await route.completed;
+    if (!mounted) return;
     await DownloadedEmbeddedCoverResolver.scheduleRefreshForPath(
       item.filePath,
       beforeModTime: beforeModTime,

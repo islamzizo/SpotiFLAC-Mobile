@@ -42,13 +42,15 @@ class LocalAlbumScreen extends ConsumerStatefulWidget {
   final String artistName;
   final String? coverPath;
   final List<LocalLibraryItem> tracks;
+  final Future<List<LocalLibraryItem>> Function()? loadTracks;
 
   const LocalAlbumScreen({
     super.key,
     required this.albumName,
     required this.artistName,
     this.coverPath,
-    required this.tracks,
+    this.tracks = const [],
+    this.loadTracks,
   });
 
   @override
@@ -61,6 +63,10 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
         CollapsingHeaderScrollMixin<LocalAlbumScreen> {
   late List<LocalLibraryItem> _sortedTracksCache;
   late Map<int, List<LocalLibraryItem>> _discGroupsCache;
+  List<LocalLibraryItem>? _loadedTracks;
+  bool _loadingTracks = false;
+  Object? _loadError;
+  int _loadGeneration = 0;
 
   void _showCueVirtualTrackSnackBar() {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -77,19 +83,44 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
   void initState() {
     super.initState();
     _rebuildTrackCaches();
+    _loadTracks();
+  }
+
+  Future<void> _loadTracks() async {
+    final loader = widget.loadTracks;
+    if (loader == null) return;
+    final generation = ++_loadGeneration;
+    _loadingTracks = true;
+    _loadError = null;
+    try {
+      final tracks = await loader();
+      if (!mounted || generation != _loadGeneration) return;
+      _loadedTracks = tracks;
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      _loadError = error;
+    }
+    _loadingTracks = false;
+    setState(_rebuildTrackCaches);
   }
 
   @override
   void didUpdateWidget(covariant LocalAlbumScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.tracks, widget.tracks) ||
-        oldWidget.tracks.length != widget.tracks.length) {
+        oldWidget.tracks.length != widget.tracks.length ||
+        oldWidget.loadTracks != widget.loadTracks) {
+      _loadGeneration++;
+      _loadedTracks = null;
+      _loadingTracks = false;
+      _loadError = null;
       _rebuildTrackCaches();
+      _loadTracks();
     }
   }
 
   List<LocalLibraryItem> _buildSortedTracks() {
-    final tracks = List<LocalLibraryItem>.from(widget.tracks);
+    final tracks = List<LocalLibraryItem>.from(_loadedTracks ?? widget.tracks);
     tracks.sort((a, b) {
       final aDisc = a.discNumber ?? 1;
       final bDisc = b.discNumber ?? 1;
@@ -196,7 +227,7 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
         : 0.0;
     final tracks = _sortedTracksCache;
 
-    if (tracks.isEmpty) {
+    if (tracks.isEmpty && !_loadingTracks && _loadError == null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.albumName)),
         body: Center(child: Text(context.l10n.noTracksFoundForAlbum)),
@@ -210,7 +241,26 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
       isSelectionMode: isSelectionMode,
       onExitSelectionMode: exitSelectionMode,
       appBar: _buildAppBar(context, colorScheme, qualityLabelMode),
-      slivers: [_buildTrackList(context, colorScheme, tracks)],
+      slivers: [
+        if (_loadError != null)
+          SliverToBoxAdapter(
+            child: Center(
+              child: TextButton.icon(
+                onPressed: () => setState(() {
+                  _loadTracks();
+                }),
+                icon: const Icon(Icons.refresh),
+                label: Text(context.l10n.dialogRetry),
+              ),
+            ),
+          )
+        else if (_loadingTracks)
+          const SliverToBoxAdapter(
+            child: RepaintBoundary(child: AlbumTrackListSkeleton(itemCount: 8)),
+          )
+        else
+          _buildTrackList(context, colorScheme, tracks),
+      ],
       selectionBar: _buildSelectionBottomBar(
         context,
         colorScheme,
@@ -231,7 +281,9 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
               .watch(
                 playerMotionArtworkProvider((
                   album: widget.albumName,
-                  artist: _sortedTracksCache.first.artistName,
+                  artist:
+                      _sortedTracksCache.firstOrNull?.artistName ??
+                      widget.artistName,
                 )),
               )
               .value
@@ -403,6 +455,7 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
               key: ValueKey(track.id),
               child: StaggeredListItem(
                 index: index,
+                animate: widget.loadTracks == null,
                 child: _buildTrackItem(context, colorScheme, track),
               ),
             );

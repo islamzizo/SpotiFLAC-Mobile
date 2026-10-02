@@ -119,17 +119,20 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
       );
       return;
     }
-    final rows = await LibraryDatabase.instance.getQueueLocalAlbumTracksByKey(
-      entry.key,
-    );
-    if (!mounted) return;
+    Future<List<LocalLibraryItem>> loadTracks() async {
+      final rows = await LibraryDatabase.instance.getQueueLocalAlbumTracksByKey(
+        entry.key,
+      );
+      return rows.map(LocalLibraryItem.fromJson).toList(growable: false);
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LocalAlbumScreen(
           albumName: entry.name,
           artistName: entry.artist,
           coverPath: entry.cover,
-          tracks: rows.map(LocalLibraryItem.fromJson).toList(growable: false),
+          loadTracks: loadTracks,
         ),
       ),
     );

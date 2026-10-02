@@ -73,6 +73,13 @@ extension _TrackMetadataMornye on _TrackMetadataScreenState {
                                     artUri: artwork,
                                     colorScheme: scheme,
                                     iconSize: 80,
+                                    cacheWidth:
+                                        (320 *
+                                                MediaQuery.devicePixelRatioOf(
+                                                  context,
+                                                ))
+                                            .round()
+                                            .clamp(320, 1280),
                                   ),
                                 ),
                               ),

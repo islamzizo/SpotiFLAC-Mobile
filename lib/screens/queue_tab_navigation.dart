@@ -104,24 +104,30 @@ extension _QueueTabNavigation on _QueueTabState {
         );
 
     final navigator = Navigator.of(context);
-    final embeddedCoverPath =
-        await DownloadedEmbeddedCoverResolver.resolveOrExtract(
-          historyItem.filePath,
-          onChanged: _onEmbeddedCoverChanged,
-        );
+    final embeddedCoverPath = context.isMornye
+        ? DownloadedEmbeddedCoverResolver.resolve(historyItem.filePath)
+        : await DownloadedEmbeddedCoverResolver.resolveOrExtract(
+            historyItem.filePath,
+            onChanged: _onEmbeddedCoverChanged,
+          );
     if (!mounted) return;
     final artworkSource = embeddedCoverPath ?? historyItem.coverUrl;
-    if (embeddedCoverPath == null) {
+    if (embeddedCoverPath == null && !context.isMornye) {
       precacheCoverImage(context, historyItem.coverUrl);
     }
-    final backdropReady = precacheMetadataBackdrop(context, artworkSource);
+    final backdropReady = context.isMornye
+        ? Future<void>.value()
+        : precacheMetadataBackdrop(context, artworkSource);
     _searchFocusNode.unfocus();
     final beforeModTime = await _readFileModTimeMillis(historyItem.filePath);
     await backdropReady;
     if (!mounted) return;
-    final result = await navigator.push(
-      slidePageRoute<bool>(page: TrackMetadataScreen(item: historyItem)),
+    final route = slidePageRoute<bool>(
+      page: TrackMetadataScreen(item: historyItem),
     );
+    final result = await navigator.push(route);
+    if (route is TransitionRoute<bool>) await route.completed;
+    if (!mounted) return;
     _searchFocusNode.unfocus();
     if (result == true) {
       await _scheduleDownloadedEmbeddedCoverRefreshForPath(
@@ -143,31 +149,35 @@ extension _QueueTabNavigation on _QueueTabState {
     int? navigationIndex,
   }) async {
     final navigator = Navigator.of(context);
-    final embeddedCoverPath =
-        await DownloadedEmbeddedCoverResolver.resolveOrExtract(
-          item.filePath,
-          onChanged: _onEmbeddedCoverChanged,
-        );
+    final embeddedCoverPath = context.isMornye
+        ? DownloadedEmbeddedCoverResolver.resolve(item.filePath)
+        : await DownloadedEmbeddedCoverResolver.resolveOrExtract(
+            item.filePath,
+            onChanged: _onEmbeddedCoverChanged,
+          );
     if (!mounted) return;
     final artworkSource = embeddedCoverPath ?? item.coverUrl;
-    if (embeddedCoverPath == null) {
+    if (embeddedCoverPath == null && !context.isMornye) {
       precacheCoverImage(context, item.coverUrl);
     }
-    final backdropReady = precacheMetadataBackdrop(context, artworkSource);
+    final backdropReady = context.isMornye
+        ? Future<void>.value()
+        : precacheMetadataBackdrop(context, artworkSource);
     _searchFocusNode.unfocus();
     final beforeModTime = await _readFileModTimeMillis(item.filePath);
     await backdropReady;
     if (!mounted) return;
-    final result = await navigator.push(
-      slidePageRoute<bool>(
-        page: TrackMetadataScreen(
-          item: item,
-          historyNavigationItems: navigationItems,
-          navigationIndex: navigationIndex,
-          coverHeroTag: 'cover_lib_dl_${item.id}',
-        ),
+    final route = slidePageRoute<bool>(
+      page: TrackMetadataScreen(
+        item: item,
+        historyNavigationItems: navigationItems,
+        navigationIndex: navigationIndex,
+        coverHeroTag: 'cover_lib_dl_${item.id}',
       ),
     );
+    final result = await navigator.push(route);
+    if (route is TransitionRoute<bool>) await route.completed;
+    if (!mounted) return;
     _searchFocusNode.unfocus();
     if (result == true) {
       await _scheduleDownloadedEmbeddedCoverRefreshForPath(
@@ -189,7 +199,9 @@ extension _QueueTabNavigation on _QueueTabState {
     int? navigationIndex,
   }) async {
     _searchFocusNode.unfocus();
-    await precacheMetadataBackdrop(context, item.coverPath);
+    if (!context.isMornye) {
+      await precacheMetadataBackdrop(context, item.coverPath);
+    }
     if (!mounted) return;
     await Navigator.push(
       context,
@@ -222,9 +234,8 @@ extension _QueueTabNavigation on _QueueTabState {
     );
   }
 
-  Future<void> _navigateToLocalAlbum(_GroupedLocalAlbum album) async {
-    var tracks = album.tracks;
-    if (tracks.isEmpty && album.displayTrackCount > 0) {
+  void _navigateToLocalAlbum(_GroupedLocalAlbum album) {
+    Future<List<LocalLibraryItem>> loadTracks() async {
       var rows = album.albumKey.isNotEmpty
           ? await LibraryDatabase.instance.getQueueLocalAlbumTracksByKey(
               album.albumKey,
@@ -239,16 +250,19 @@ extension _QueueTabNavigation on _QueueTabState {
           album.artistName,
         );
       }
-      tracks = rows.map(LocalLibraryItem.fromJson).toList(growable: false);
-      if (!mounted) return;
+      return rows.map(LocalLibraryItem.fromJson).toList(growable: false);
     }
+
     _navigateWithUnfocus(
       slidePageRoute(
         page: LocalAlbumScreen(
           albumName: album.albumName,
           artistName: album.artistName,
           coverPath: album.coverPath,
-          tracks: tracks,
+          tracks: album.tracks,
+          loadTracks: album.tracks.isEmpty && album.displayTrackCount > 0
+              ? loadTracks
+              : null,
         ),
       ),
     );

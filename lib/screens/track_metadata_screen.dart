@@ -191,7 +191,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
     _currentDownloadItem = widget.item;
     _currentLocalLibraryItem = widget.localItem;
     _currentNavigationIndex = widget.navigationIndex;
-    _checkFile();
+    unawaited(_checkFile());
   }
 
   @override
