@@ -607,7 +607,10 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     }
 
     final source = mediaItem.extras?['source']?.toString() ?? '';
-    final motionState = mornye && !MediaQuery.disableAnimationsOf(context)
+    final motionState =
+        mornye &&
+            ref.watch(settingsProvider.select((s) => s.motionArtworkEnabled)) &&
+            !MediaQuery.disableAnimationsOf(context)
         ? ref.watch(
             playerMotionArtworkProvider((
               album: mediaItem.album ?? '',

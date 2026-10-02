@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/motion_artwork_store.dart';
 
 typedef PlayerArtworkAlbum = ({String album, String artist});
@@ -9,6 +10,9 @@ final motionArtworkStoreProvider = Provider((ref) => MotionArtworkStore());
 /// Opening either must never search extensions or download more artwork.
 final playerMotionArtworkProvider = FutureProvider.autoDispose
     .family<MotionArtwork?, PlayerArtworkAlbum>((ref, album) async {
+      if (!ref.watch(settingsProvider.select((s) => s.motionArtworkEnabled))) {
+        return null;
+      }
       if (album.album.trim().isEmpty || album.artist.trim().isEmpty) {
         return null;
       }

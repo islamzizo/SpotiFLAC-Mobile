@@ -2,6 +2,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/providers/player_artwork_video_provider.dart';
+import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/widgets/motion_header_banner.dart';
 import 'package:spotiflac_android/widgets/player_artwork.dart';
 import 'package:video_player/video_player.dart';
@@ -47,7 +48,8 @@ class _MornyePlayerArtworkState extends ConsumerState<MornyePlayerArtwork> {
         ),
       ),
     );
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (MediaQuery.disableAnimationsOf(context) ||
+        !ref.watch(settingsProvider.select((s) => s.motionArtworkEnabled))) {
       _displayedSource = null;
       _displayedController = null;
       return fallback;

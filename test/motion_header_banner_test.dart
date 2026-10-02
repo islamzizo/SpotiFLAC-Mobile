@@ -10,6 +10,8 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/providers/player_artwork_video_provider.dart';
 import 'package:spotiflac_android/providers/player_motion_artwork_provider.dart';
+import 'package:spotiflac_android/providers/settings_provider.dart';
+import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
 import 'package:spotiflac_android/services/library_database.dart';
@@ -87,7 +89,52 @@ class _VideoPlatform extends VideoPlayerPlatform {
   }
 }
 
+class _MotionSettings extends SettingsNotifier {
+  @override
+  AppSettings build() => const AppSettings();
+}
+
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+  testWidgets('artwork switch prevents decoding and disposes active video', (
+    tester,
+  ) async {
+    final previous = VideoPlayerPlatform.instance;
+    final platform = _VideoPlatform();
+    VideoPlayerPlatform.instance = platform;
+    addTearDown(() => VideoPlayerPlatform.instance = previous);
+    final container = ProviderContainer(
+      overrides: [settingsProvider.overrideWith(_MotionSettings.new)],
+    );
+    addTearDown(container.dispose);
+    container.read(settingsProvider.notifier).setMotionArtworkEnabled(false);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MaterialApp(
+          home: MotionHeaderBanner(
+            videoUrl: 'file:///cover.mp4',
+            fallback: Text('Still artwork'),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(platform.creations, 0);
+    expect(find.text('Still artwork'), findsOneWidget);
+    container.read(settingsProvider.notifier).setMotionArtworkEnabled(true);
+    await tester.pumpAndSettle();
+    expect(platform.creations, 1);
+    expect(platform.playing, isTrue);
+    container.read(settingsProvider.notifier).setMotionArtworkEnabled(false);
+    await tester.pumpAndSettle();
+    expect(find.text('Still artwork'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    // Controller disposal awaits cancellation of the platform event stream.
+    await tester.runAsync(() async => Future<void>.delayed(Duration.zero));
+    expect(platform.disposals, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
   for (final downloaded in [false, true]) {
     for (final mode in ['saved', 'missing', 'reduced motion']) {
       testWidgets(
@@ -312,14 +359,17 @@ void main() {
       addTearDown(() => VideoPlayerPlatform.instance = previousPlatform);
       double? ratio;
       await tester.pumpWidget(
-        MaterialApp(
-          home: SizedBox(
-            width: 320,
-            height: 180,
-            child: MotionHeaderBanner(
-              videoUrl: 'file:///app/motion_artwork/cover.mp4',
-              fallback: const ColoredBox(color: Colors.black),
-              onAspectRatioChanged: (value) => ratio = value,
+        ProviderScope(
+          overrides: [settingsProvider.overrideWith(_MotionSettings.new)],
+          child: MaterialApp(
+            home: SizedBox(
+              width: 320,
+              height: 180,
+              child: MotionHeaderBanner(
+                videoUrl: 'file:///app/motion_artwork/cover.mp4',
+                fallback: const ColoredBox(color: Colors.black),
+                onAspectRatioChanged: (value) => ratio = value,
+              ),
             ),
           ),
         ),
@@ -344,25 +394,28 @@ void main() {
     final scroll = ScrollController();
     addTearDown(scroll.dispose);
 
-    Widget app({bool active = true}) => MaterialApp(
-      home: Scaffold(
-        body: TickerMode(
-          enabled: active,
-          child: CustomScrollView(
-            controller: scroll,
-            slivers: const [
-              SliverAppBar(
-                pinned: true,
-                expandedHeight: 300,
-                flexibleSpace: FlexibleSpaceBar(
-                  background: MotionHeaderBanner(
-                    videoUrl: 'https://example.com/banner.m3u8',
-                    fallback: ColoredBox(color: Colors.blue),
+    Widget app({bool active = true}) => ProviderScope(
+      overrides: [settingsProvider.overrideWith(_MotionSettings.new)],
+      child: MaterialApp(
+        home: Scaffold(
+          body: TickerMode(
+            enabled: active,
+            child: CustomScrollView(
+              controller: scroll,
+              slivers: const [
+                SliverAppBar(
+                  pinned: true,
+                  expandedHeight: 300,
+                  flexibleSpace: FlexibleSpaceBar(
+                    background: MotionHeaderBanner(
+                      videoUrl: 'https://example.com/banner.m3u8',
+                      fallback: ColoredBox(color: Colors.blue),
+                    ),
                   ),
                 ),
-              ),
-              SliverToBoxAdapter(child: SizedBox(height: 2000)),
-            ],
+                SliverToBoxAdapter(child: SizedBox(height: 2000)),
+              ],
+            ),
           ),
         ),
       ),

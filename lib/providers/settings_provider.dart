@@ -618,6 +618,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _saveSettings();
   }
 
+  void setMotionArtworkEnabled(bool enabled) {
+    state = state.copyWith(motionArtworkEnabled: enabled);
+    _saveSettings();
+  }
+
   void setLyricsMode(String mode) {
     if (mode == 'embed' || mode == 'external' || mode == 'both') {
       state = state.copyWith(lyricsMode: mode);

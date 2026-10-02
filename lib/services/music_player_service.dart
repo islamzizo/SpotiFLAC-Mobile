@@ -90,6 +90,21 @@ Future<void> _publishIosNotificationFavorite() async {
   }
 }
 
+/// Decorative video plugins share AVAudioSession with the music player and
+/// may enable mixing while creating a muted cover. Restore music ownership
+/// without activating a session when this app is not playing music.
+Future<void> restoreMusicAudioSessionAfterVideo() async {
+  if (!Platform.isIOS) return;
+  final handler = _activeMusicPlayerHandler;
+  if (handler == null || handler.mediaItem.value == null) return;
+  try {
+    final session = await AudioSession.instance;
+    await session.configure(const AudioSessionConfiguration.music());
+  } catch (error) {
+    _log.w('Could not restore music audio session after video: $error');
+  }
+}
+
 /// Enables/disables ReplayGain volume normalization and re-applies it to the
 /// track currently playing.
 void setPlaybackNormalizationEnabled(bool enabled) {
@@ -613,6 +628,11 @@ class MusicPlayerHandler extends BaseAudioHandler
     try {
       final session = _audioSession ?? await AudioSession.instance;
       _audioSession = session;
+      // Other media plugins can change the process-wide iOS category/options
+      // after initialization. Mixing makes us ineligible for Now Playing.
+      if (Platform.isIOS) {
+        await session.configure(const AudioSessionConfiguration.music());
+      }
       final granted = await session.setActive(true);
       if (!granted) {
         _log.w('Audio focus request was not granted');

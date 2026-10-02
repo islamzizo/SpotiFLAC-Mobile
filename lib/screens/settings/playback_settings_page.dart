@@ -111,6 +111,25 @@ class _PlaybackSettingsPageState extends ConsumerState<PlaybackSettingsPage> {
               ],
             ),
           ),
+          SliverToBoxAdapter(
+            child: SettingsSectionHeader(title: context.l10n.motionArtwork),
+          ),
+          SliverToBoxAdapter(
+            child: SettingsGroup(
+              children: [
+                SettingsSwitchItem(
+                  icon: Icons.motion_photos_on_outlined,
+                  title: context.l10n.motionArtwork,
+                  subtitle: context.l10n.motionArtworkDescription,
+                  value: settings.motionArtworkEnabled,
+                  onChanged: (value) => ref
+                      .read(settingsProvider.notifier)
+                      .setMotionArtworkEnabled(value),
+                  showDivider: false,
+                ),
+              ],
+            ),
+          ),
           if (Platform.isAndroid)
             SliverToBoxAdapter(
               child: SettingsSectionHeader(

@@ -2,12 +2,15 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:spotiflac_android/utils/logger.dart';
+import 'package:spotiflac_android/services/music_player_service.dart';
 
 final _log = AppLogger('MotionHeaderBanner');
 
-class MotionHeaderBanner extends StatefulWidget {
+class MotionHeaderBanner extends ConsumerStatefulWidget {
   final String videoUrl;
   final Widget fallback;
   final BoxFit fit;
@@ -30,10 +33,10 @@ class MotionHeaderBanner extends StatefulWidget {
   });
 
   @override
-  State<MotionHeaderBanner> createState() => _MotionHeaderBannerState();
+  ConsumerState<MotionHeaderBanner> createState() => _MotionHeaderBannerState();
 }
 
-class _MotionHeaderBannerState extends State<MotionHeaderBanner>
+class _MotionHeaderBannerState extends ConsumerState<MotionHeaderBanner>
     with WidgetsBindingObserver {
   VideoPlayerController? _controller;
   bool _ownsController = true;
@@ -46,6 +49,15 @@ class _MotionHeaderBannerState extends State<MotionHeaderBanner>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    ref.listenManual(settingsProvider.select((s) => s.motionArtworkEnabled), (
+      _,
+      enabled,
+    ) {
+      _disposeController();
+      _ready = false;
+      _failed = false;
+      if (enabled) _initialize();
+    });
     _initialize();
   }
 
@@ -101,6 +113,7 @@ class _MotionHeaderBannerState extends State<MotionHeaderBanner>
   }
 
   Future<void> _initialize() async {
+    if (!ref.read(settingsProvider).motionArtworkEnabled) return;
     final prepared = widget.controller;
     if (prepared != null && prepared.value.isInitialized) {
       _ownsController = false;
@@ -140,6 +153,7 @@ class _MotionHeaderBannerState extends State<MotionHeaderBanner>
       if (!mounted || !identical(controller, _controller)) return;
       await controller.setVolume(0);
       await controller.setLooping(true);
+      await restoreMusicAudioSessionAfterVideo();
       if (!mounted || !identical(controller, _controller)) return;
       setState(() => _ready = true);
       widget.onAspectRatioChanged?.call(controller.value.aspectRatio);
@@ -177,6 +191,9 @@ class _MotionHeaderBannerState extends State<MotionHeaderBanner>
 
   @override
   Widget build(BuildContext context) {
+    if (!ref.watch(settingsProvider.select((s) => s.motionArtworkEnabled))) {
+      return widget.fallback;
+    }
     final controller = _controller;
     final showVideo = _ready && !_failed && controller != null;
 

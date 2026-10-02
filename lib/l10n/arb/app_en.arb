@@ -7033,11 +7033,13 @@
   "artistUpcomingConcerts": "Upcoming Concerts",
   "artistAllUpcomingConcerts": "All Upcoming Concerts",
   "artistNoUpcomingConcerts": "No upcoming concerts.",
+  "motionArtwork": "Animated artwork",
   "trackEditAudioFile": "Edit audio file",
   "relatedLibraryTracks": "Similar songs in Library",
   "relatedLibraryDescription": "Songs you already have with related artist, album or genre tags. No online music is searched.",
   "relatedLibraryEmpty": "No related songs found in your Library.",
   "relatedLibraryLoadError": "Could not find related songs. Try again.",
+  "motionArtworkDescription": "Loop video covers supplied by metadata providers. Turn off to use still artwork and reduce battery use.",
   "optionsEmbeddedCoverSizeOriginal": "Original resolution",
   "@optionsEmbeddedCoverSizeOriginal": {
     "description": "Option that preserves the provider artwork at its original resolution"

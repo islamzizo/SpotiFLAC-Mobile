@@ -227,6 +227,12 @@ class SettingsSearchCatalog {
       ],
       playback = [
         SettingsSearchEntry(
+          icon: Icons.motion_photos_on_outlined,
+          title: l10n.motionArtwork,
+          subtitle: l10n.motionArtworkDescription,
+          keywords: const ['canvas', 'video', 'animation'],
+        ),
+        SettingsSearchEntry(
           icon: Icons.open_in_new,
           title: l10n.libraryExternalPlayer,
           subtitle: l10n.libraryExternalPlayerSubtitle,
