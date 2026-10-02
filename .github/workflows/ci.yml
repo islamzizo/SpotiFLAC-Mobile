@@ -297,17 +297,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
-            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}')"
-          test -n "$expected"
+          get_cert_digest() {
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$1" 2>&1 |
+              grep -Eio 'certificate SHA-256 digest:[[:space:]]*[0-9a-f:]+' |
+              head -n1 |
+              sed -E 's/.*digest:[[:space:]]*//I'
+          }
+
+          expected="$(get_cert_digest build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)"
+          if [[ -z "$expected" ]]; then
+            echo "::error::Could not extract the signer certificate SHA-256 digest from the ARM64 APK."
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs               build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            exit 1
+          fi
           echo "Expected release certificate SHA-256: $expected"
+
           for apk in \
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk; do
-            actual="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" |
-              awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}')"
+            actual="$(get_cert_digest "$apk")"
             echo "$(basename "$apk"): $actual"
-            if [[ "$actual" != "$expected" ]]; then
+            if [[ -z "$actual" || "$actual" != "$expected" ]]; then
               echo "::error::APK certificate mismatch: $(basename "$apk")"
               exit 1
             fi
