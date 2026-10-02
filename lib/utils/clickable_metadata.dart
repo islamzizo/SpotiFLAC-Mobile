@@ -13,6 +13,7 @@ import 'package:spotiflac_android/screens/home_tab.dart'
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 import 'package:spotiflac_android/utils/logger.dart';
+import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 
 final _log = AppLogger('ClickableMetadata');
 
@@ -123,6 +124,42 @@ bool _canSearchMetadataProvider(
 ) {
   return extensionState.extensions.any(
     (ext) => ext.enabled && ext.hasCustomSearch && ext.id == providerId,
+  );
+}
+
+Future<void> navigateToArtistCredits(
+  BuildContext context, {
+  required String artistNames,
+  String? artistIds,
+  String? extensionId,
+}) async {
+  final artists = _buildArtistTapTargets(artistNames, artistIds);
+  if (artists.isEmpty) return;
+  final selected = artists.length == 1
+      ? artists.single
+      : await showAppBottomSheet<_ArtistTapTarget>(
+          context: context,
+          useRootNavigator: true,
+          title: context.l10n.mornyeGoToArtist,
+          maxHeightFactor: 0.6,
+          builder: (context) => ListView(
+            shrinkWrap: true,
+            children: [
+              for (final artist in artists)
+                AppSheetOption(
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(artist.name),
+                  onTap: () => Navigator.pop(context, artist),
+                ),
+            ],
+          ),
+        );
+  if (!context.mounted || selected == null) return;
+  await navigateToArtist(
+    context,
+    artistName: selected.name,
+    artistId: selected.artistId,
+    extensionId: extensionId,
   );
 }
 
@@ -636,7 +673,11 @@ List<_ArtistTapTarget> _buildArtistTapTargets(
   String rawArtistNames,
   String? rawArtistIds,
 ) {
-  final parsedNames = splitArtistNames(rawArtistNames);
+  final parsedIds = _parseArtistIds(rawArtistIds);
+  final parsedNames = splitArtistNames(
+    rawArtistNames,
+    creditedArtistCount: parsedIds.length,
+  );
   if (parsedNames.isEmpty) return const [];
 
   final uniqueNames = <String>[];
@@ -657,7 +698,6 @@ List<_ArtistTapTarget> _buildArtistTapTargets(
     ];
   }
 
-  final parsedIds = _parseArtistIds(rawArtistIds);
   if (parsedIds.isEmpty || !parsedIds.any((id) => id != null)) {
     return uniqueNames
         .map((name) => _ArtistTapTarget(name: name))

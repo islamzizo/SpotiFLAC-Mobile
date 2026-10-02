@@ -18,6 +18,8 @@ class NativeFinalizationPolicyTest {
             "Artist A Feat Artist B" to "Artist A",
             "Artist A ft. Artist B" to "Artist A",
             "Artist A featuring Artist B" to "Artist A",
+            "Artist A featured Artist B" to "Artist A",
+            "Artist A feature Artist B" to "Artist A",
             "Artist A with Artist B" to "Artist A",
             "Artist A x Artist B" to "Artist A",
             "Artist A X Artist B" to "Artist A",
