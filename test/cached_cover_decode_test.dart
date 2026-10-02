@@ -45,6 +45,93 @@ void main() {
     );
   }
 
+  testWidgets('explicit height decode keeps one axis even with square bounds', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Center(
+          child: CachedCoverImage(
+            imageUrl: 'https://example.invalid/height-cover.png',
+            width: 56,
+            height: 56,
+            memCacheHeight: 128,
+          ),
+        ),
+      ),
+    );
+    final image = tester.widget<CachedNetworkImage>(
+      find.byType(CachedNetworkImage),
+    );
+    expect(image.memCacheWidth, isNull);
+    expect(image.memCacheHeight, 128);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final override in [false, true]) {
+    testWidgets(
+      'playlist thumbnail preserves network proportions ($override)',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(devicePixelRatio: 2),
+              child: Center(
+                child: SizedBox.square(
+                  dimension: 56,
+                  child: LocalOrNetworkCoverImage(
+                    url: 'https://example.invalid/playlist-cover.png',
+                    width: 56,
+                    height: 56,
+                    networkCacheWidth: override ? 112 : null,
+                    placeholder: (_) => const SizedBox(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        final image = tester.widget<CachedNetworkImage>(
+          find.byType(CachedNetworkImage),
+        );
+        expect(image.memCacheWidth, 112);
+        expect(image.memCacheHeight, isNull);
+        expect(image.fit, BoxFit.cover);
+        expect(
+          tester.getSize(find.byType(LocalOrNetworkCoverImage)),
+          const Size(56, 56),
+        );
+        // Exercise the same Flutter decode sizing used by CachedNetworkImage,
+        // with non-square artwork rather than checking only the widget bounds.
+        final directory = await tester.runAsync(() async {
+          final directory = await Directory.systemTemp.createTemp(
+            'playlist-cover-',
+          );
+          await _writeCover(directory, const Size(320, 160));
+          return directory;
+        });
+        try {
+          final decoded = await tester.runAsync(() async {
+            final bytes = await File(
+              '${directory!.path}/cover.png',
+            ).readAsBytes();
+            return _decodedImageSize(
+              ResizeImage.resizeIfNeeded(
+                image.memCacheWidth,
+                image.memCacheHeight,
+                MemoryImage(bytes),
+              ),
+            );
+          });
+          expect(decoded, const Size(112, 56));
+        } finally {
+          await tester.runAsync(() => directory!.delete(recursive: true));
+        }
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   for (final scenario in [
     (
       name: 'explicit row size',

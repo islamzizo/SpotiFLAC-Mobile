@@ -644,7 +644,6 @@ extension _QueueTabItemWidgets on _QueueTabState {
           width: size,
           height: size,
           memCacheWidth: cacheSize,
-          memCacheHeight: cacheSize,
           placeholder: (context, url) => buildPlaceholder(),
           errorWidget: (context, url, error) => buildPlaceholder(),
         );
@@ -680,7 +679,6 @@ extension _QueueTabItemWidgets on _QueueTabState {
             height: size,
             fit: BoxFit.cover,
             cacheWidth: cacheSize,
-            cacheHeight: cacheSize,
             gaplessPlayback: true,
             frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
                 fadeInFileImage(child, frame, wasSynchronouslyLoaded),
@@ -696,7 +694,6 @@ extension _QueueTabItemWidgets on _QueueTabState {
         width: size,
         height: size,
         memCacheWidth: cacheSize,
-        memCacheHeight: cacheSize,
         borderRadius: BorderRadius.circular(8),
         placeholder: (context, url) => buildPlaceholder(),
         errorWidget: (context, url, error) => buildPlaceholder(),
@@ -714,7 +711,6 @@ extension _QueueTabItemWidgets on _QueueTabState {
           height: size,
           fit: BoxFit.cover,
           cacheWidth: cacheSize,
-          cacheHeight: cacheSize,
           gaplessPlayback: true,
           frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
               fadeInFileImage(child, frame, wasSynchronouslyLoaded),

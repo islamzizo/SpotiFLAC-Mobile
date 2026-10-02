@@ -56,9 +56,15 @@ class CachedCoverImage extends StatelessWidget {
 
   Widget _buildImage(BuildContext context, BoxConstraints constraints) {
     var autoMemCacheWidth =
-        memCacheWidth ?? _cacheExtentForLogicalSize(context, width);
-    var autoMemCacheHeight =
-        memCacheHeight ?? _cacheExtentForLogicalSize(context, height);
+        memCacheWidth ??
+        (memCacheHeight == null
+            ? _cacheExtentForLogicalSize(context, width)
+            : null);
+    // ResizeImage stretches the decoded bitmap when both axes are supplied.
+    // Keep one decode axis so BoxFit can crop the original proportions.
+    var autoMemCacheHeight = autoMemCacheWidth == null
+        ? memCacheHeight ?? _cacheExtentForLogicalSize(context, height)
+        : null;
     if (autoMemCacheWidth == null && autoMemCacheHeight == null) {
       // Infer one axis to preserve the source aspect ratio and respect any
       // explicit decode override used by large artwork/header consumers.
