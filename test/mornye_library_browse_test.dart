@@ -8,6 +8,7 @@ import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/library_browse_provider.dart';
 import 'package:spotiflac_android/providers/library_search_provider.dart';
 import 'package:spotiflac_android/screens/mornye_library_screen.dart';
+import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 
 LibraryBrowseEntry _album(int index) => LibraryBrowseEntry(
@@ -20,6 +21,86 @@ LibraryBrowseEntry _album(int index) => LibraryBrowseEntry(
 );
 
 void main() {
+  testWidgets(
+    'Mornye albums filter incomplete and unknown tags without losing search',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final requests = <LibraryBrowseRequest>[];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            libraryBrowseProvider.overrideWith((ref, request) async {
+              requests.add(request);
+              final filter = request.completeness;
+              return [
+                LibraryBrowseEntry.fromRow({
+                  'queue_source': 'downloaded',
+                  'album_key': 'album',
+                  'album_name': filter == unknownAlbumCompletenessFilter
+                      ? 'Unknown'
+                      : 'Album',
+                  'artist_name': 'Artist',
+                  'track_count': 8,
+                  if (filter != null) ...{
+                    'album_completeness': filter == incompleteAlbumFilter
+                        ? 'incomplete'
+                        : 'unknown',
+                    'album_present_tracks': 8,
+                    'album_expected_tracks': filter == incompleteAlbumFilter
+                        ? 12
+                        : null,
+                  },
+                }, isArtist: false),
+              ];
+            }),
+          ],
+          child: MaterialApp(
+            theme: MornyeTheme.build(Brightness.dark),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: MornyeLibraryScreen(
+                page: MornyeLibraryPage.albums,
+                onOpenSection: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Filters'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Incomplete albums'));
+      await tester.pumpAndSettle();
+      expect(requests.last.completeness, incompleteAlbumFilter);
+      expect(find.text('8/12'), findsOneWidget);
+      expect(find.byTooltip('8/12 tracks · 4 missing'), findsOneWidget);
+      await tester.tap(find.byTooltip('Search your library'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'My album');
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      expect(requests.last.search, 'My album');
+      expect(requests.last.completeness, incompleteAlbumFilter);
+      await tester.tap(find.byTooltip('Filters'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Album completeness unknown'));
+      await tester.pumpAndSettle();
+      expect(requests.last.completeness, unknownAlbumCompletenessFilter);
+      expect(find.text('?'), findsOneWidget);
+      await tester.tap(find.byTooltip('Filters'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('All'));
+      await tester.pumpAndSettle();
+      expect(requests.last.completeness, isNull);
+      expect(find.text('?'), findsNothing);
+      expect(find.text('8/12'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final brightness in Brightness.values) {
     testWidgets('Library separates browsing and downloads ($brightness)', (
       tester,

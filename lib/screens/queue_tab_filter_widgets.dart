@@ -43,7 +43,6 @@ extension _QueueTabFilterWidgets on _QueueTabState {
     required bool isPageLoading,
     required List<DownloadHistoryItem> inMemoryHistoryItems,
   }) {
-    final historyItems = filterData.historyItems;
     final showFilteringIndicator = filterData.showFilteringIndicator;
     final filteredGroupedAlbums = filterData.filteredGroupedAlbums;
     final filteredGroupedLocalAlbums = filterData.filteredGroupedLocalAlbums;
@@ -323,7 +322,9 @@ extension _QueueTabFilterWidgets on _QueueTabState {
         if (filteredGroupedAlbums.isEmpty &&
             filteredGroupedLocalAlbums.isEmpty &&
             filterMode == 'albums' &&
-            (historyItems.isNotEmpty || unifiedItems.isNotEmpty))
+            (_activeFilterCount > 0 ||
+                ref.read(downloadHistoryProvider).totalCount > 0 ||
+                ref.read(localLibraryProvider).totalCount > 0))
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
@@ -838,6 +839,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
           albumName: album.albumName,
           artistName: album.artistName,
           trackCount: album.displayTrackCount,
+          completeness: album.completeness,
           colorScheme: colorScheme,
           coverWidget: embeddedCoverPath != null
               ? Image.file(
@@ -880,6 +882,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
       albumName: album.albumName,
       artistName: album.artistName,
       trackCount: album.displayTrackCount,
+      completeness: album.completeness,
       colorScheme: colorScheme,
       coverWidget: album.coverPath != null
           ? Image.file(
@@ -921,14 +924,29 @@ extension _QueueTabFilterWidgets on _QueueTabState {
     required IconData badgeIcon,
     required VoidCallback onTap,
     String? coverUrl,
+    AlbumCompleteness? completeness,
   }) {
+    final completenessLabel = completeness == null
+        ? null
+        : completeness.status == 'unknown'
+        ? context.l10n.libraryAlbumCompletenessUnknown
+        : completeness.expected == null
+        ? context.l10n.libraryFilterIncompleteAlbums
+        : context.l10n.libraryAlbumMissingTracks(
+            completeness.present,
+            completeness.expected!,
+            completeness.expected! - completeness.present,
+          );
     return Semantics(
       button: true,
-      label: context.l10n.a11yOpenAlbumByArtistTrackCount(
-        albumName,
-        artistName,
-        trackCount,
-      ),
+      label: [
+        context.l10n.a11yOpenAlbumByArtistTrackCount(
+          albumName,
+          artistName,
+          trackCount,
+        ),
+        ?completenessLabel,
+      ].join('. '),
       child: GestureDetector(
         onTap: onTap,
         child: Column(
@@ -944,29 +962,34 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                   Positioned(
                     right: 8,
                     bottom: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(badgeIcon, size: 12, color: badgeTextColor),
-                          const SizedBox(width: 4),
-                          Text(
-                            '$trackCount',
-                            style: TextStyle(
-                              color: badgeTextColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
+                    child: Tooltip(
+                      message:
+                          completenessLabel ??
+                          context.l10n.tracksCount(trackCount),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: badgeColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(badgeIcon, size: 12, color: badgeTextColor),
+                            const SizedBox(width: 4),
+                            Text(
+                              completeness?.badge ?? '$trackCount',
+                              style: TextStyle(
+                                color: badgeTextColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),

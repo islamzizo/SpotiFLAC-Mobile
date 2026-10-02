@@ -8,6 +8,7 @@ import 'package:spotiflac_android/utils/audio_format_utils.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/services/history_database.dart';
+import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/library_cleanup.dart';
 import 'package:spotiflac_android/services/library_search.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
@@ -1423,7 +1424,7 @@ class LibraryDatabase {
       parts.add('''
         SELECT
           COUNT(*) AS all_count,
-          COUNT(DISTINCT CASE WHEN grouped.track_count > 1 THEN h.album_key END) AS album_count,
+          COUNT(DISTINCT CASE WHEN grouped.track_count > ${isAlbumCompletenessFilter(request.metadata) ? 0 : 1} THEN h.album_key END) AS album_count,
           COALESCE(SUM(CASE WHEN grouped.track_count = 1 THEN 1 ELSE 0 END), 0) AS single_count
         FROM history_db.history h
         JOIN (
@@ -1450,7 +1451,7 @@ class LibraryDatabase {
       parts.add('''
         SELECT
           COUNT(*) AS all_count,
-          COUNT(DISTINCT CASE WHEN grouped.track_count > 1 THEN l.album_key END) AS album_count,
+          COUNT(DISTINCT CASE WHEN grouped.track_count > ${isAlbumCompletenessFilter(request.metadata) ? 0 : 1} THEN l.album_key END) AS album_count,
           COALESCE(SUM(CASE WHEN grouped.track_count = 1 THEN 1 ELSE 0 END), 0) AS single_count
         FROM $visibleLibraryView l
         JOIN (

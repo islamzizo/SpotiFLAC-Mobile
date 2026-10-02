@@ -248,10 +248,24 @@ extension _LibraryDbQueueSql on LibraryDatabase {
     required List<_QueueOrderTerm> orderTerms,
     required bool usesCursor,
   }) {
+    final assessesCompleteness = isAlbumCompletenessFilter(request.metadata);
+    final completenessSql = assessesCompleteness
+        ? albumCompletenessSql(
+            albumInventorySql(includeLocal: request.includeLocal),
+          )
+        : null;
+    final completenessColumns = assessesCompleteness
+        ? 'ac.album_completeness, ac.album_present_tracks, ac.album_expected_tracks,'
+        : 'NULL AS album_completeness, NULL AS album_present_tracks, NULL AS album_expected_tracks,';
     final parts = <String>[];
     if (request.source != 'local') {
       final where = <String>[];
-      _appendQueueHistoryFilters(where, args, request);
+      _appendQueueHistoryFilters(
+        where,
+        args,
+        request,
+        hasCompletenessJoin: assessesCompleteness,
+      );
       final selectSql =
           '''
         SELECT
@@ -263,6 +277,7 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           NULL AS cover_path,
           MAX(h.file_path) AS sample_file_path,
           COUNT(*) AS track_count,
+          $completenessColumns
           c.latest_added AS sort_added,
           MIN(COALESCE(h.sort_album, '')) AS sort_album,
           MIN(COALESCE(h.sort_album_artist, '')) AS sort_artist,
@@ -276,9 +291,10 @@ extension _LibraryDbQueueSql on LibraryDatabase {
             MAX(COALESCE(sort_added, 0)) AS latest_added
           FROM history_db.history
           GROUP BY album_key
-          HAVING COUNT(*) > ${request.includeSingleTrackAlbums ? 0 : 1}
+          HAVING COUNT(*) > ${request.includeSingleTrackAlbums || assessesCompleteness ? 0 : 1}
         ) c
           ON c.album_key = h.album_key
+        ${assessesCompleteness ? 'JOIN ($completenessSql) ac ON ac.album_key = h.album_key' : ''}
         ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
         GROUP BY c.album_key
         ''';
@@ -304,7 +320,12 @@ extension _LibraryDbQueueSql on LibraryDatabase {
         )
         ''',
       ];
-      _appendQueueLocalFilters(where, args, request);
+      _appendQueueLocalFilters(
+        where,
+        args,
+        request,
+        hasCompletenessJoin: assessesCompleteness,
+      );
       final selectSql =
           '''
         SELECT
@@ -316,6 +337,7 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           MAX(CASE WHEN l.cover_path IS NOT NULL AND l.cover_path != '' THEN l.cover_path END) AS cover_path,
           MAX(l.file_path) AS sample_file_path,
           COUNT(*) AS track_count,
+          $completenessColumns
           c.latest_added AS sort_added,
           MIN(l.album_name_norm) AS sort_album,
           MIN(l.album_artist_norm) AS sort_artist,
@@ -335,8 +357,9 @@ extension _LibraryDbQueueSql on LibraryDatabase {
             WHERE lpk.item_id = candidate.id
           )
           GROUP BY album_key
-          HAVING COUNT(*) > ${request.includeSingleTrackAlbums ? 0 : 1}
+          HAVING COUNT(*) > ${request.includeSingleTrackAlbums || assessesCompleteness ? 0 : 1}
         ) c ON c.album_key = l.album_key
+        ${assessesCompleteness ? 'JOIN ($completenessSql) ac ON ac.album_key = l.album_key' : ''}
         ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
         GROUP BY c.album_key
         ''';
@@ -362,6 +385,9 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           NULL AS cover_path,
           NULL AS sample_file_path,
           NULL AS track_count,
+          NULL AS album_completeness,
+          NULL AS album_present_tracks,
+          NULL AS album_expected_tracks,
           NULL AS sort_added,
           NULL AS sort_album,
           NULL AS sort_artist,
@@ -376,8 +402,15 @@ extension _LibraryDbQueueSql on LibraryDatabase {
   void _appendQueueHistoryFilters(
     List<String> where,
     List<Object?> args,
-    QueueLibraryDbQuery request,
-  ) {
+    QueueLibraryDbQuery request, {
+    bool hasCompletenessJoin = false,
+  }) {
+    _appendAlbumCompletenessFilter(
+      where,
+      request,
+      albumKey: 'h.album_key',
+      hasJoin: hasCompletenessJoin,
+    );
     if (request.albumArtist != null) {
       where.add('h.sort_album_artist = ?');
       args.add(LibraryDatabase.normalizeLookupText(request.albumArtist));
@@ -425,8 +458,15 @@ extension _LibraryDbQueueSql on LibraryDatabase {
   void _appendQueueLocalFilters(
     List<String> where,
     List<Object?> args,
-    QueueLibraryDbQuery request,
-  ) {
+    QueueLibraryDbQuery request, {
+    bool hasCompletenessJoin = false,
+  }) {
+    _appendAlbumCompletenessFilter(
+      where,
+      request,
+      albumKey: 'l.album_key',
+      hasJoin: hasCompletenessJoin,
+    );
     if (request.albumArtist != null) {
       where.add('l.album_artist_norm = ?');
       args.add(LibraryDatabase.normalizeLookupText(request.albumArtist));
@@ -469,6 +509,28 @@ extension _LibraryDbQueueSql on LibraryDatabase {
       lyricsKnownExpr:
           'COALESCE(l.audio_metadata_scan_version, 0) >= ${LibraryDatabase.lyricsMetadataScanVersion}',
       hasReplayGainExpr: 'l.has_replaygain',
+    );
+  }
+
+  void _appendAlbumCompletenessFilter(
+    List<String> where,
+    QueueLibraryDbQuery request, {
+    required String albumKey,
+    required bool hasJoin,
+  }) {
+    if (!isAlbumCompletenessFilter(request.metadata)) return;
+    final status = request.metadata == incompleteAlbumFilter
+        ? 'incomplete'
+        : 'unknown';
+    if (hasJoin) {
+      where.add("ac.album_completeness = '$status'");
+      return;
+    }
+    final assessment = albumCompletenessSql(
+      albumInventorySql(includeLocal: request.includeLocal),
+    );
+    where.add(
+      "$albumKey IN (SELECT album_key FROM ($assessment) WHERE album_completeness = '$status')",
     );
   }
 

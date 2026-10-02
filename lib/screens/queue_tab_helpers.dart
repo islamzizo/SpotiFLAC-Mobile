@@ -7,6 +7,7 @@ class _GroupedAlbum {
   final String sampleFilePath;
   final List<DownloadHistoryItem> tracks;
   final int? trackCount;
+  final AlbumCompleteness? completeness;
   final DateTime latestDownload;
   final String searchKey;
 
@@ -17,6 +18,7 @@ class _GroupedAlbum {
     required this.sampleFilePath,
     required this.tracks,
     this.trackCount,
+    this.completeness,
     required this.latestDownload,
   }) : searchKey = '${albumName.toLowerCase()}|${artistName.toLowerCase()}';
 
@@ -32,6 +34,7 @@ class _GroupedLocalAlbum {
   final String? coverPath;
   final List<LocalLibraryItem> tracks;
   final int? trackCount;
+  final AlbumCompleteness? completeness;
   final DateTime latestScanned;
   final String searchKey;
 
@@ -42,6 +45,7 @@ class _GroupedLocalAlbum {
     this.coverPath,
     required this.tracks,
     this.trackCount,
+    this.completeness,
     required this.latestScanned,
   }) : searchKey = '${albumName.toLowerCase()}|${artistName.toLowerCase()}';
 
@@ -430,6 +434,7 @@ final _queueLibraryPageProvider = FutureProvider.autoDispose
                 coverPath: row['cover_path'] as String?,
                 tracks: const [],
                 trackCount: (row['track_count'] as num?)?.toInt() ?? 0,
+                completeness: AlbumCompleteness.fromRow(row),
                 latestScanned: latest,
               ),
             );
@@ -442,6 +447,7 @@ final _queueLibraryPageProvider = FutureProvider.autoDispose
                 sampleFilePath: row['sample_file_path'] as String? ?? '',
                 tracks: const [],
                 trackCount: (row['track_count'] as num?)?.toInt() ?? 0,
+                completeness: AlbumCompleteness.fromRow(row),
                 latestDownload: latest,
               ),
             );

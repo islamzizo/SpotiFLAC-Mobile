@@ -40,6 +40,7 @@ import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
@@ -1083,6 +1084,27 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                   () => tempMetadata = 'missing-replaygain',
                                 ),
                               ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context.l10n.libraryFilterIncompleteAlbums,
+                                ),
+                                selected: tempMetadata == incompleteAlbumFilter,
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata = incompleteAlbumFilter,
+                                ),
+                              ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context.l10n.libraryAlbumCompletenessUnknown,
+                                ),
+                                selected:
+                                    tempMetadata ==
+                                    unknownAlbumCompletenessFilter,
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata =
+                                      unknownAlbumCompletenessFilter,
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 16),
@@ -1208,6 +1230,12 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                   _resetLibraryPaging();
                                 });
                                 Navigator.pop(context);
+                                if (widget.librarySection == null &&
+                                    isAlbumCompletenessFilter(tempMetadata)) {
+                                  _animateToFilterPage(
+                                    _filterModes.indexOf('albums'),
+                                  );
+                                }
                               },
                               child: Text(context.l10n.libraryFilterApply),
                             ),
@@ -1377,6 +1405,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     );
     final searchingLibrary =
         _searchQuery.isNotEmpty &&
+        !isAlbumCompletenessFilter(_filterMetadata) &&
         !_isSelectionMode &&
         !_isPlaylistSelectionMode;
     final countsValue = searchingLibrary

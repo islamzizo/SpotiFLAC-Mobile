@@ -7,6 +7,7 @@ import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/library_browse_provider.dart';
 import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
+import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/utils/nav_bar_inset.dart';
@@ -40,6 +41,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   final _search = TextEditingController();
   Timer? _debounce;
   bool _showSearch = false;
+  String? _completeness;
   String _query = '';
   late String _sort;
   int _limit = 40;
@@ -54,6 +56,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     search: _query,
     sort: _sort,
     limit: _limit,
+    completeness: _completeness,
   );
 
   @override
@@ -159,6 +162,73 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     _scroll.jumpTo(0);
   }
 
+  Future<void> _chooseCompleteness() async {
+    final selected = await showAppBottomSheet<String>(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final option in [
+            ('', context.l10n.libraryFilterAll),
+            (incompleteAlbumFilter, context.l10n.libraryFilterIncompleteAlbums),
+            (
+              unknownAlbumCompletenessFilter,
+              context.l10n.libraryAlbumCompletenessUnknown,
+            ),
+          ])
+            ListTile(
+              title: Text(option.$2),
+              trailing: (_completeness ?? '') == option.$1
+                  ? const Icon(Icons.check)
+                  : null,
+              onTap: () => Navigator.pop(context, option.$1),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null || selected == (_completeness ?? '')) {
+      return;
+    }
+    setState(() {
+      _completeness = selected.isEmpty ? null : selected;
+      _limit = 40;
+      _rows = const [];
+    });
+    _scroll.jumpTo(0);
+  }
+
+  Widget _buildCompletenessBadge(AlbumCompleteness completeness) {
+    final colors = Theme.of(context).colorScheme;
+    final expected = completeness.expected;
+    final label = completeness.status == 'unknown'
+        ? context.l10n.libraryAlbumCompletenessUnknown
+        : expected == null
+        ? context.l10n.libraryFilterIncompleteAlbums
+        : context.l10n.libraryAlbumMissingTracks(
+            completeness.present,
+            expected,
+            expected - completeness.present,
+          );
+    return Tooltip(
+      message: label,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          completeness.badge,
+          style: TextStyle(
+            color: colors.onSurface,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -200,12 +270,21 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
             );
           },
         )
-      else if (!_artists)
+      else if (!_artists) ...[
         IconButton(
           tooltip: context.l10n.searchSortTitle,
           icon: const Icon(Icons.sort),
           onPressed: _chooseSort,
         ),
+        IconButton(
+          tooltip: context.l10n.libraryFilterTitle,
+          icon: Badge(
+            isLabelVisible: _completeness != null,
+            child: const Icon(Icons.filter_list),
+          ),
+          onPressed: _chooseCompleteness,
+        ),
+      ],
     ];
     return RefreshIndicator(
       onRefresh: () async {
@@ -376,11 +455,26 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                                 children: [
                                   AspectRatio(
                                     aspectRatio: 1,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(8),
-                                      child: _LibraryBrowseArtwork(
-                                        entry: entry,
-                                      ),
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          child: _LibraryBrowseArtwork(
+                                            entry: entry,
+                                          ),
+                                        ),
+                                        if (entry.completeness != null)
+                                          Positioned(
+                                            right: 8,
+                                            bottom: 8,
+                                            child: _buildCompletenessBadge(
+                                              entry.completeness!,
+                                            ),
+                                          ),
+                                      ],
                                     ),
                                   ),
                                   const SizedBox(height: 8),

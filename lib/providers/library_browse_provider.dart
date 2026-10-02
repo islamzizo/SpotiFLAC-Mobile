@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
+import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 
 typedef LibraryBrowseRequest = ({
@@ -10,6 +11,7 @@ typedef LibraryBrowseRequest = ({
   String search,
   String sort,
   int limit,
+  String? completeness,
 });
 
 class LibraryBrowseEntry {
@@ -20,6 +22,7 @@ class LibraryBrowseEntry {
   final String? cover;
   final String samplePath;
   final int trackCount;
+  final AlbumCompleteness? completeness;
 
   const LibraryBrowseEntry({
     required this.source,
@@ -29,6 +32,7 @@ class LibraryBrowseEntry {
     this.cover,
     required this.samplePath,
     required this.trackCount,
+    this.completeness,
   });
 
   factory LibraryBrowseEntry.fromRow(
@@ -47,6 +51,7 @@ class LibraryBrowseEntry {
           : row['cover_url'] as String?,
       samplePath: row['sample_file_path'] as String? ?? '',
       trackCount: (row['track_count'] as num?)?.toInt() ?? 0,
+      completeness: AlbumCompleteness.fromRow(row),
     );
   }
 }
@@ -68,6 +73,7 @@ final libraryBrowseProvider = FutureProvider.autoDispose
         searchQuery: request.search,
         sortMode: request.sort,
         includeLocal: includeLocal,
+        metadata: request.completeness,
       );
       final rows = request.artists
           ? await LibraryDatabase.instance.getQueueArtistPage(query)
