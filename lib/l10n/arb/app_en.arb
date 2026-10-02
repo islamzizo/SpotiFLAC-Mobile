@@ -7039,6 +7039,13 @@
   "relatedLibraryDescription": "Songs you already have with related artist, album or genre tags. No online music is searched.",
   "relatedLibraryEmpty": "No related songs found in your Library.",
   "relatedLibraryLoadError": "Could not find related songs. Try again.",
+  "listeningStatsDays": "{days} days",
+  "@listeningStatsDays": { "placeholders": { "days": { "type": "int" } } },
+  "weeklyReleases": "New releases",
+  "weeklyReleasesDescription": "Recent albums and singles from your favorite artists, supplied by installed metadata extensions.",
+  "weeklyReleasesEmpty": "No dated releases found in this period. Add favorite artists or try a longer period.",
+  "weeklyReleasesUnavailable": "Some artists could not be checked. Their saved results are kept. Providers may not supply artist catalogs or exact release dates.",
+  "weeklyReleasesLoadError": "Could not check new releases. Pull to refresh.",
   "motionArtworkDescription": "Loop video covers supplied by metadata providers. Turn off to use still artwork and reduce battery use.",
   "optionsEmbeddedCoverSizeOriginal": "Original resolution",
   "@optionsEmbeddedCoverSizeOriginal": {

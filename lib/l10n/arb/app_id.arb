@@ -6958,5 +6958,11 @@
   "relatedLibraryDescription": "Lagu yang sudah Anda miliki dengan tag artis, album, atau genre terkait. Tidak mencari musik online.",
   "relatedLibraryEmpty": "Tidak ada lagu terkait di Library Anda.",
   "relatedLibraryLoadError": "Tidak dapat mencari lagu terkait. Coba lagi.",
+  "listeningStatsDays": "{days} hari",
+  "weeklyReleases": "Rilis baru",
+  "weeklyReleasesDescription": "Album dan single terbaru dari artis favorit, melalui extension metadata yang terpasang.",
+  "weeklyReleasesEmpty": "Tidak ditemukan rilis dengan tanggal dalam periode ini. Tambahkan artis favorit atau coba periode lebih panjang.",
+  "weeklyReleasesUnavailable": "Beberapa artis tidak dapat diperiksa. Hasil tersimpan tetap dipertahankan. Penyedia mungkin tidak memberikan katalog artis atau tanggal rilis lengkap.",
+  "weeklyReleasesLoadError": "Rilis baru tidak dapat diperiksa. Tarik untuk memuat ulang.",
   "motionArtworkDescription": "Putar berulang cover video dari penyedia metadata. Matikan untuk memakai cover diam dan menghemat baterai."
 }
