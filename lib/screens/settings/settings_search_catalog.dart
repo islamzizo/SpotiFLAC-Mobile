@@ -227,6 +227,12 @@ class SettingsSearchCatalog {
       ],
       playback = [
         SettingsSearchEntry(
+          icon: Icons.insights_outlined,
+          title: l10n.listeningStats,
+          subtitle: l10n.listeningStatsDescription,
+          keywords: const ['wrapped', 'statistics', 'listening', 'stats'],
+        ),
+        SettingsSearchEntry(
           icon: Icons.motion_photos_on_outlined,
           title: l10n.motionArtwork,
           subtitle: l10n.motionArtworkDescription,

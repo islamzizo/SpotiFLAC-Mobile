@@ -623,6 +623,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _saveSettings();
   }
 
+  void setListeningStatisticsEnabled(bool enabled) {
+    state = state.copyWith(listeningStatisticsEnabled: enabled);
+    _saveSettings();
+  }
+
   void setLyricsMode(String mode) {
     if (mode == 'embed' || mode == 'external' || mode == 'both') {
       state = state.copyWith(lyricsMode: mode);

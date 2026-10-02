@@ -69,6 +69,8 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   lyricsMode: json['lyricsMode'] as String? ?? 'embed',
   keepScreenOnLyrics: json['keepScreenOnLyrics'] as bool? ?? true,
   motionArtworkEnabled: json['motionArtworkEnabled'] as bool? ?? true,
+  listeningStatisticsEnabled:
+      json['listeningStatisticsEnabled'] as bool? ?? true,
   autoConvertDownloads: json['autoConvertDownloads'] as bool? ?? false,
   redownloadFakeHiRes: json['redownloadFakeHiRes'] as bool? ?? false,
   autoConvertFormat: json['autoConvertFormat'] as String? ?? 'mp3',
@@ -168,6 +170,7 @@ Map<String, dynamic> _$AppSettingsToJson(
   'lyricsMode': instance.lyricsMode,
   'keepScreenOnLyrics': instance.keepScreenOnLyrics,
   'motionArtworkEnabled': instance.motionArtworkEnabled,
+  'listeningStatisticsEnabled': instance.listeningStatisticsEnabled,
   'autoConvertDownloads': instance.autoConvertDownloads,
   'redownloadFakeHiRes': instance.redownloadFakeHiRes,
   'autoConvertFormat': instance.autoConvertFormat,

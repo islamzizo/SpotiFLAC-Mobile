@@ -11,6 +11,7 @@ import 'package:audio_session/audio_session.dart'
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/services/app_state_database.dart';
+import 'package:spotiflac_android/services/listening_statistics.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart'
     show normalizeLookupText;
@@ -418,6 +419,7 @@ class MusicPlayerHandler extends BaseAudioHandler
   Future<void>? _activePlayOperation;
   Future<void> _sourceChangeTail = Future<void>.value();
   Timer? _sleepTimer;
+  Timer? _listeningTimer;
   DateTime? _sleepTimerEndsAt;
 
   bool _shuffle = false;
@@ -467,6 +469,33 @@ class MusicPlayerHandler extends BaseAudioHandler
   void _init() {
     if (_initialized) return;
     _initialized = true;
+    void recordListening() {
+      final item = mediaItem.value;
+      final state = playbackState.value;
+      listeningRecorder.update(
+        item == null
+            ? null
+            : ListeningTrack(
+                key: item.extras?['source']?.toString() ?? item.id,
+                title: item.title,
+                artist: item.artist ?? '',
+                album: item.album ?? '',
+                artwork: item.artUri?.toString(),
+              ),
+        playing:
+            state.playing &&
+            state.processingState == AudioProcessingState.ready,
+        ended:
+            state.processingState == AudioProcessingState.completed ||
+            state.processingState == AudioProcessingState.idle,
+      );
+    }
+
+    _subscriptions.add(mediaItem.listen((_) => recordListening()));
+    _subscriptions.add(playbackState.listen((_) => recordListening()));
+    _listeningTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      unawaited(listeningRecorder.flush());
+    });
     _player.setReleaseMode(ReleaseMode.stop);
     unawaited(_player.setAudioContext(_musicAudioContext));
     unawaited(_configureAudioSession());
@@ -1965,6 +1994,9 @@ class MusicPlayerHandler extends BaseAudioHandler
       _activeMusicPlayerHandler = null;
     }
     cancelSleepTimer();
+    _listeningTimer?.cancel();
+    listeningRecorder.update(null, playing: false, ended: true);
+    await listeningRecorder.flush();
     _playRequestGeneration++;
     await _sourceChangeTail;
     await _autoMix.dispose();
