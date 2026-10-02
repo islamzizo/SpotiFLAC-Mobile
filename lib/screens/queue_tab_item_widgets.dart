@@ -594,9 +594,8 @@ extension _QueueTabItemWidgets on _QueueTabState {
   ]) {
     final isDownloaded = item.source == LibraryItemSource.downloaded;
 
-    // For downloaded items, listen to embedded cover version so the cover
-    // updates after async extraction completes.
-    if (isDownloaded) {
+    // Scanned SAF tracks also recover artwork after a transient provider error.
+    if (isDownloaded || item.filePath.startsWith('content://')) {
       return ValueListenableBuilder<int>(
         valueListenable: _embeddedCoverVersion,
         builder: (context, _, child) =>
@@ -616,7 +615,27 @@ extension _QueueTabItemWidgets on _QueueTabState {
     final cacheSize = size != null ? (size * 2).toInt() : 200;
     final iconSize = size != null ? size * 0.4 : 32.0;
 
-    Widget buildPlaceholder({bool isLocal = false}) {
+    Widget buildPlaceholder({
+      bool isLocal = false,
+      bool recoverDocument = true,
+    }) {
+      if (recoverDocument && item.filePath.startsWith('content://')) {
+        final recovered = _resolveDownloadedEmbeddedCoverPath(item.filePath);
+        if (recovered != null) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(
+              File(recovered),
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              cacheWidth: cacheSize,
+              errorBuilder: (_, _, _) =>
+                  buildPlaceholder(isLocal: isLocal, recoverDocument: false),
+            ),
+          );
+        }
+      }
       final bgColor = (isDownloaded && !isLocal)
           ? colorScheme.surfaceContainerHighest
           : colorScheme.secondaryContainer;
@@ -648,11 +667,15 @@ extension _QueueTabItemWidgets on _QueueTabState {
           width: size,
           height: size,
           memCacheWidth: cacheSize,
-          placeholder: (context, url) => buildPlaceholder(),
+          placeholder: (context, url) =>
+              buildPlaceholder(recoverDocument: false),
           errorWidget: (context, url, error) => buildPlaceholder(),
         );
       } else {
-        backdrop = buildPlaceholder(isLocal: !isDownloaded);
+        backdrop = buildPlaceholder(
+          isLocal: !isDownloaded,
+          recoverDocument: false,
+        );
       }
       final animated = Stack(
         fit: StackFit.expand,

@@ -11,6 +11,65 @@ void main() {
   tearDown(() => directory.delete(recursive: true));
 
   test(
+    'SAF artwork recovers from missing scan covers and tolerates provider errors',
+    () async {
+      const source = 'content://example.documents/nas/song.flac';
+      final cover = File('${directory.path}/recovered #1.jpg');
+      await cover.writeAsBytes([1]);
+      for (final missing in [null, '${directory.path}/removed.jpg']) {
+        expect(
+          await resolveMissingDocumentArtworkUri(
+            source,
+            missing,
+            extract: (path) async {
+              expect(path, source);
+              return cover.path;
+            },
+          ),
+          cover.uri.toString(),
+        );
+      }
+      var unnecessaryReads = 0;
+      Future<String?> unexpectedRead(String _) async {
+        unnecessaryReads++;
+        return null;
+      }
+
+      for (final existing in [
+        cover.path,
+        cover.uri.toString(),
+        'https://example.test/cover.jpg',
+      ]) {
+        expect(
+          await resolveMissingDocumentArtworkUri(
+            source,
+            existing,
+            extract: unexpectedRead,
+          ),
+          isNull,
+        );
+      }
+      expect(
+        await resolveMissingDocumentArtworkUri(
+          source,
+          null,
+          extract: (_) async => throw const SocketException('NAS offline'),
+        ),
+        isNull,
+      );
+      expect(
+        await resolveMissingDocumentArtworkUri(
+          '/local/song.flac',
+          null,
+          extract: unexpectedRead,
+        ),
+        isNull,
+      );
+      expect(unnecessaryReads, 0);
+    },
+  );
+
+  test(
     'restored queue replaces a removed scan cover with current Library art',
     () async {
       final removed = File(

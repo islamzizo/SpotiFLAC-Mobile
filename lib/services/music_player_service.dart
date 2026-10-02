@@ -24,6 +24,7 @@ import 'package:spotiflac_android/services/automix_analyzer.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/utils/playback_artwork.dart';
+import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 
@@ -1509,6 +1510,9 @@ class MusicPlayerHandler extends BaseAudioHandler
     _broadcastState(playerState: PlayerState.playing, loading: true);
     await _claimHardwareMediaButtons();
     if (!_isCurrentPlayRequest(generation, media)) return;
+    if (media.isContentUri) {
+      unawaited(_recoverDocumentArtwork(media, generation));
+    }
 
     // Android opens SAF files through a short-lived file-descriptor lease.
     // MediaPlayer duplicates that descriptor, so the original can be closed
@@ -1618,7 +1622,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       // the same metadata twice on every Next. SAF needs this second event so
       // the UI can inspect its temporary local copy.
       if (usingLocalSafCopy) {
-        mediaItem.add(media.toMediaItem(resolvedSource: resolved));
+        mediaItem.add(_media[_index].toMediaItem(resolvedSource: resolved));
       }
       _broadcastPosition(effectiveStartPosition, force: true);
       _broadcastState();
@@ -1640,6 +1644,36 @@ class MusicPlayerHandler extends BaseAudioHandler
         _switchingGeneration = 0;
       }
     }
+  }
+
+  Future<void> _recoverDocumentArtwork(
+    PlayableMedia media,
+    int generation,
+  ) async {
+    final artwork = await resolveMissingDocumentArtworkUri(
+      media.source,
+      media.artUri,
+      extract: (source) =>
+          DownloadedEmbeddedCoverResolver.resolveOrExtract(source),
+    );
+    if (artwork == null || !_isCurrentPlayRequest(generation, media)) return;
+    final current = mediaItem.value;
+    if (current == null) return;
+    final updated = current.copyWith(artUri: Uri.parse(artwork));
+    mediaItem.add(updated);
+    _media[_index] = PlayableMedia.fromJson({
+      ..._media[_index].toJson(),
+      'artUri': artwork,
+    })!;
+    final old = _queueItems[_index];
+    _queueItems[_index] = updated;
+    final original = _originalQueueOrder;
+    if (original != null) {
+      final i = original.indexWhere((item) => identical(item, old));
+      if (i >= 0) original[i] = updated;
+    }
+    queue.add(List<MediaItem>.unmodifiable(_queueItems));
+    unawaited(_persistSession(position: playbackState.value.position));
   }
 
   /// Resolves the real track duration when the initial metadata had none and
