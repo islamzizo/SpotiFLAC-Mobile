@@ -6,6 +6,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/services.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
 import 'package:spotiflac_android/services/player_widget_service.dart';
+import 'package:spotiflac_android/services/discord_presence_service.dart';
 import 'package:audio_session/audio_session.dart'
     show AudioSession, AudioSessionConfiguration, AudioInterruptionType;
 import 'package:audioplayers/audioplayers.dart';
@@ -2092,6 +2093,7 @@ Future<MusicPlayerHandler> _doInitMusicPlayer() async {
     _handler = handler;
     if (Platform.isAndroid || Platform.isIOS) {
       PlayerWidgetService.instance.bind(handler);
+      DiscordPresenceService.instance.bind(handler);
     }
     _handlerReadyController.add(handler);
     return handler;

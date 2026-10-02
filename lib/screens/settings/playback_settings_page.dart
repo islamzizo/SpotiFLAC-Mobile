@@ -11,6 +11,7 @@ import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/mornye_volume_control.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
+import 'package:spotiflac_android/widgets/discord_presence_settings.dart';
 
 class PlaybackSettingsPage extends ConsumerStatefulWidget {
   const PlaybackSettingsPage({super.key});
@@ -132,6 +133,12 @@ class _PlaybackSettingsPageState extends ConsumerState<PlaybackSettingsPage> {
               ],
             ),
           ),
+          if (Platform.isAndroid || Platform.isIOS) ...[
+            const SliverToBoxAdapter(
+              child: SettingsSectionHeader(title: 'Discord'),
+            ),
+            const SliverToBoxAdapter(child: DiscordPresenceSettings()),
+          ],
           if (Platform.isAndroid)
             SliverToBoxAdapter(
               child: SettingsSectionHeader(

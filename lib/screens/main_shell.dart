@@ -29,6 +29,7 @@ import 'package:spotiflac_android/services/share_intent_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/listening_statistics.dart';
+import 'package:spotiflac_android/services/discord_presence_service.dart';
 import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/services/update_checker.dart';
@@ -107,6 +108,11 @@ class _MainShellState extends ConsumerState<MainShell>
       ref.read(settingsProvider).playbackNormalization,
     );
     setAutoMixEnabled(ref.read(settingsProvider).autoMix);
+    unawaited(
+      DiscordPresenceService.instance.setEnabled(
+        ref.read(settingsProvider).discordRichPresenceEnabled,
+      ),
+    );
     listeningRecorder.setEnabled(
       ref.read(settingsProvider).listeningStatisticsEnabled,
     );
@@ -784,6 +790,12 @@ class _MainShellState extends ConsumerState<MainShell>
     });
     ref.listen(settingsProvider.select((s) => s.autoMix), (_, enabled) {
       setAutoMixEnabled(enabled);
+    });
+    ref.listen(settingsProvider.select((s) => s.discordRichPresenceEnabled), (
+      _,
+      enabled,
+    ) {
+      unawaited(DiscordPresenceService.instance.setEnabled(enabled));
     });
     ref.listen(
       settingsProvider.select((s) => s.listeningStatisticsEnabled),

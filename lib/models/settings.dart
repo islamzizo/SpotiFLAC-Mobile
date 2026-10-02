@@ -32,6 +32,7 @@ class AppSettings {
   // Apply ReplayGain/R128 tags as volume normalization in the built-in player.
   final bool playbackNormalization;
   final bool autoMix;
+  final bool discordRichPresenceEnabled;
   final bool usbBitPerfect;
   final bool usbDirect;
   final bool usbDsdOverPcm;
@@ -153,6 +154,7 @@ class AppSettings {
     this.embedReplayGain = false,
     this.playbackNormalization = false,
     this.autoMix = false,
+    this.discordRichPresenceEnabled = false,
     this.usbBitPerfect = false,
     this.usbDirect = false,
     this.usbDsdOverPcm = false,
@@ -249,6 +251,7 @@ class AppSettings {
     bool? embedReplayGain,
     bool? playbackNormalization,
     bool? autoMix,
+    bool? discordRichPresenceEnabled,
     bool? usbBitPerfect,
     bool? usbDirect,
     bool? usbDsdOverPcm,
@@ -341,6 +344,8 @@ class AppSettings {
       playbackNormalization:
           playbackNormalization ?? this.playbackNormalization,
       autoMix: autoMix ?? this.autoMix,
+      discordRichPresenceEnabled:
+          discordRichPresenceEnabled ?? this.discordRichPresenceEnabled,
       usbBitPerfect: usbBitPerfect ?? this.usbBitPerfect,
       usbDirect: usbDirect ?? this.usbDirect,
       usbDsdOverPcm: usbDsdOverPcm ?? this.usbDsdOverPcm,

@@ -32,6 +32,7 @@ jobs:
           filters: |
             dart:
               - 'third_party/audio_service/**'
+              - 'third_party/spotiflac_discord/**'
               - 'lib/**'
               - 'test/**'
               - 'android/app/src/test/resources/**'
@@ -50,6 +51,8 @@ jobs:
               - '.github/workflows/ci.yml'
             ios:
               - 'third_party/audio_service/**'
+              - 'third_party/spotiflac_discord/**'
+              - 'scripts/setup_discord_sdk.sh'
               - 'ios/**'
               - 'scripts/build_ios.sh'
               - 'scripts/check_backend_ios.py'
@@ -63,6 +66,8 @@ jobs:
               - '.github/workflows/ci.yml'
             android:
               - 'third_party/audio_service/**'
+              - 'third_party/spotiflac_discord/**'
+              - 'scripts/setup_discord_sdk.sh'
               - 'android/**'
               - 'rust_backend/**'
               - 'scripts/build_android.sh'

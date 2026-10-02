@@ -7071,6 +7071,17 @@
   "motionArtworkDescription": "Loop video covers supplied by metadata providers. Turn off to use still artwork and reduce battery use.",
   "libraryLoading": "Loading Library…",
   "libraryLoadFailed": "Library could not be loaded. Retry to load the saved folders and track index.",
+  "discordPresenceDescription": "Share the title, artist, album and progress of music played in the built-in player on your Discord profile. Local audio and artwork files are never uploaded. Clears when playback pauses or stops.",
+  "discordPresenceDisabled": "Disabled",
+  "discordPresenceLink": "Link Discord account",
+  "discordPresenceConnecting": "Connecting to Discord…",
+  "discordPresenceReady": "Ready when music plays",
+  "discordPresenceActive": "Sharing current track",
+  "discordPresenceUnavailable": "Discord is unavailable. Retrying during playback.",
+  "discordPresenceBuildUnavailable": "Discord SDK is not available in this build.",
+  "discordPresenceAndroidHelp": "Install Discord and sign in on this phone. Allow activity sharing in Discord. External players are not supported.",
+  "discordPresenceIosHelp": "Link your account through Discord and allow activity sharing. Tap to link again if authorization fails.",
+  "discordPresenceDisconnect": "Disconnect and forget account",
   "optionsEmbeddedCoverSizeOriginal": "Original resolution",
   "@optionsEmbeddedCoverSizeOriginal": {
     "description": "Option that preserves the provider artwork at its original resolution"

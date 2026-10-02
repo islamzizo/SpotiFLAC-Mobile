@@ -2,11 +2,14 @@ PODS:
   - Flutter (1.0.0)
   - open_filex (0.0.2):
     - Flutter
+  - spotiflac_discord (0.1.0):
+    - Flutter
   - SpotiFLACBackend (0.1.0)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - open_filex (from `.symlinks/plugins/open_filex/ios`)
+  - spotiflac_discord (from `.symlinks/plugins/spotiflac_discord/ios`)
   - SpotiFLACBackend (from `../rust_backend/target/ios`)
 
 EXTERNAL SOURCES:
@@ -14,12 +17,15 @@ EXTERNAL SOURCES:
     :path: Flutter
   open_filex:
     :path: ".symlinks/plugins/open_filex/ios"
+  spotiflac_discord:
+    :path: ".symlinks/plugins/spotiflac_discord/ios"
   SpotiFLACBackend:
     :path: "../rust_backend/target/ios"
 
 SPEC CHECKSUMS:
   Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
   open_filex: 6e26e659846ec990262224a12ef1c528bb4edbe4
+  spotiflac_discord: 4f9417d5583e2d8a8ef15b5a746041d2cb064fd5
   SpotiFLACBackend: e0c81656e8e4c31e86b9f14bbb8e245fb3a14011
 
 PODFILE CHECKSUM: 6ca58d78915f3e4fcb64938b9167b26e33d44a8a

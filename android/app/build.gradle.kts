@@ -35,6 +35,9 @@ android {
     buildFeatures {
         buildConfig = true
     }
+    packaging {
+        jniLibs.pickFirsts += "**/libdiscord_partner_sdk.so"
+    }
 
     externalNativeBuild {
         cmake {
@@ -167,6 +170,10 @@ flutter {
 }
 
 dependencies {
+    val discordSdk = file("../../third_party/spotiflac_discord/sdk/discord_partner_sdk.aar")
+    if (discordSdk.exists()) {
+        implementation(files(discordSdk))
+    }
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("net.java.dev.jna:jna:5.19.1@aar")
 
@@ -180,6 +187,9 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")
+    // Keep Flutter integration_test's older runner aligned with native tests.
+    debugImplementation("androidx.test:runner:1.7.0")
+    debugImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
 }

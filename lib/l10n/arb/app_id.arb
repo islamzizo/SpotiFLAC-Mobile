@@ -6986,5 +6986,16 @@
   "weeklyReleasesLoadError": "Rilis baru tidak dapat diperiksa. Tarik untuk memuat ulang.",
   "motionArtworkDescription": "Putar berulang cover video dari penyedia metadata. Matikan untuk memakai cover diam dan menghemat baterai.",
   "libraryLoading": "Memuat Library…",
-  "libraryLoadFailed": "Library tidak dapat dimuat. Coba lagi untuk memuat folder tersimpan dan indeks lagu."
+  "libraryLoadFailed": "Library tidak dapat dimuat. Coba lagi untuk memuat folder tersimpan dan indeks lagu.",
+  "discordPresenceDescription": "Tampilkan judul, artis, album, dan progres musik dari pemutar bawaan di profil Discord Anda. File audio dan cover lokal tidak diunggah. Status dihapus saat musik dijeda atau dihentikan.",
+  "discordPresenceDisabled": "Nonaktif",
+  "discordPresenceLink": "Hubungkan akun Discord",
+  "discordPresenceConnecting": "Menghubungkan ke Discord…",
+  "discordPresenceReady": "Siap saat musik diputar",
+  "discordPresenceActive": "Menampilkan lagu saat ini",
+  "discordPresenceUnavailable": "Discord tidak tersedia. Mencoba lagi saat musik diputar.",
+  "discordPresenceBuildUnavailable": "SDK Discord tidak tersedia di build ini.",
+  "discordPresenceAndroidHelp": "Pasang Discord dan masuk di ponsel ini. Izinkan berbagi aktivitas di Discord. Pemutar eksternal tidak didukung.",
+  "discordPresenceIosHelp": "Hubungkan akun melalui Discord dan izinkan berbagi aktivitas. Ketuk untuk menghubungkan ulang jika otorisasi gagal.",
+  "discordPresenceDisconnect": "Putuskan dan lupakan akun"
 }

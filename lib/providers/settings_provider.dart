@@ -556,6 +556,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _saveSettings();
   }
 
+  void setDiscordRichPresenceEnabled(bool enabled) {
+    state = state.copyWith(discordRichPresenceEnabled: enabled);
+    _saveSettings();
+  }
+
   void setAutoplay(bool enabled) {
     state = state.copyWith(autoplay: enabled);
     _saveSettings();

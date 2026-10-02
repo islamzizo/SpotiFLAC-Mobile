@@ -25,6 +25,8 @@ dependencies:
 # Storage & Persistence
   shared_preferences: ^2.5.5
   flutter_secure_storage: ^11.0.0
+  spotiflac_discord:
+    path: third_party/spotiflac_discord
   path_provider: ^2.1.6
   path: ^1.9.1
   sqflite: ^2.4.3
@@ -87,6 +89,8 @@ dependency_overrides:
     path: third_party/audioplayers_android
 
 dev_dependencies:
+  integration_test:
+    sdk: flutter
   flutter_test:
     sdk: flutter
   analyzer: ^14.4.0

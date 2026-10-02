@@ -1,0 +1,25 @@
+group 'com.zarz.spotiflac.discord'
+version '1.0'
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'com.zarz.spotiflac.discord'
+    compileSdk 37
+    defaultConfig {
+        minSdk 24
+        externalNativeBuild {
+            cmake { arguments '-DANDROID_STL=c++_static' }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_25
+        targetCompatibility JavaVersion.VERSION_25
+    }
+    kotlinOptions { jvmTarget = '25' }
+    sourceSets.main.assets.srcDir('../sdk/notices')
+    externalNativeBuild {
+        cmake { path 'CMakeLists.txt'; version '3.22.1' }
+    }
+}
