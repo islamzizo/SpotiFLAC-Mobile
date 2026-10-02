@@ -14,8 +14,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/repo_provider.dart';
-import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/extension_auth_launcher.dart';
+import 'package:spotiflac_android/utils/extension_action_forms.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 
@@ -1223,10 +1223,12 @@ class _SettingItemState extends State<_SettingItem> {
     setState(() => _isLoading = true);
 
     try {
-      final result = await PlatformBridge.invokeExtensionAction(
+      final result = await runExtensionActionWithForms(
+        context,
         widget.extensionId,
         widget.setting.action!,
       );
+      if (result == null) return;
 
       if (context.mounted) {
         // Go may return either a flat map or { success, result: { ... } }.

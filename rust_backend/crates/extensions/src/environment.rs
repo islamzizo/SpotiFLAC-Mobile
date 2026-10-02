@@ -37,6 +37,9 @@ pub(crate) static SUPPORTED_RUNTIME_FEATURES: LazyLock<BTreeMap<String, isize>> 
             ("downloadSegments", 1),
             ("patternedFileTransform", 1),
             ("preparedContext", 1),
+            ("accountForms", 1),
+            ("accountDownloadMode", 1),
+            ("directMedia", 1),
         ]
         .into_iter()
         .map(|(name, version)| (name.to_owned(), version))

@@ -317,6 +317,7 @@ impl NetworkService {
             service: Arc::clone(self),
             permissions: Some(permissions),
             native_media: false,
+            follow_redirects: true,
             timeout,
             cookies: Mutex::default(),
         })
@@ -329,6 +330,7 @@ impl NetworkService {
             service: Arc::clone(self),
             permissions: None,
             native_media: false,
+            follow_redirects: true,
             timeout,
             cookies: Mutex::default(),
         })
@@ -342,6 +344,7 @@ impl NetworkService {
             service: Arc::clone(self),
             permissions: None,
             native_media: true,
+            follow_redirects: true,
             timeout,
             cookies: Mutex::default(),
         })
@@ -514,11 +517,25 @@ pub struct NetworkSession {
     service: Arc<NetworkService>,
     permissions: Option<NetworkPermissions>,
     native_media: bool,
+    follow_redirects: bool,
     timeout: Duration,
     cookies: Mutex<CookieJar>,
 }
 
 impl NetworkSession {
+    /// Account-owned media must not carry metadata cookies or follow a redirect
+    /// outside its descriptor. Keep the original manifest/DNS/TLS permissions.
+    pub fn direct_media(&self) -> Self {
+        Self {
+            service: Arc::clone(&self.service),
+            permissions: self.permissions.clone(),
+            native_media: true,
+            follow_redirects: false,
+            timeout: self.timeout,
+            cookies: Mutex::default(),
+        }
+    }
+
     pub fn reset_connections(&self) {
         self.service.reset_connections();
     }
@@ -833,6 +850,9 @@ impl NetworkSession {
                     .store(&url, response.headers());
             }
             let status = response.status();
+            if !self.follow_redirects && matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
+                return Err("media redirect blocked: request a fresh descriptor".into());
+            }
             if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
                 && let Some(location) = response
                     .headers()
@@ -1037,6 +1057,90 @@ mod tests {
     use super::*;
     use std::future::poll_fn;
     use std::sync::{atomic::AtomicBool, mpsc};
+
+    #[test]
+    fn direct_media_keeps_manifest_permissions_and_https_requirement() {
+        let service = NetworkService::new().unwrap();
+        let original = service.session(
+            NetworkPermissions {
+                domains: vec!["cdn.example.test".into()],
+                allow_http: false,
+            },
+            Duration::from_secs(30),
+        );
+        let media = original.direct_media();
+        assert!(media.validate_url("https://cdn.example.test/audio").is_ok());
+        assert!(
+            media
+                .validate_url("https://unlisted.example.test/audio")
+                .is_err()
+        );
+        assert!(media.validate_url("http://cdn.example.test/audio").is_err());
+        assert!(!media.follow_redirects);
+        assert!(media.native_media);
+    }
+
+    #[test]
+    fn direct_media_does_not_send_metadata_cookies_or_follow_redirects() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for response in [
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                "HTTP/1.1 302 Found\r\nLocation: /unexpected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                    assert!(request.len() < 8192);
+                }
+                assert!(
+                    !String::from_utf8(request)
+                        .unwrap()
+                        .to_lowercase()
+                        .contains("\r\ncookie:")
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let service = NetworkService::new().unwrap();
+        service.set_allow_private_network(true);
+        let original = service.session(
+            NetworkPermissions {
+                domains: vec!["127.0.0.1".into()],
+                allow_http: true,
+            },
+            Duration::from_secs(3),
+        );
+        let mut cookies = http::HeaderMap::new();
+        cookies.insert(
+            http::header::SET_COOKIE,
+            "metadata=private; Path=/".parse().unwrap(),
+        );
+        original
+            .cookies
+            .lock()
+            .unwrap()
+            .store(&UrlParts::parse(&base).unwrap(), &cookies);
+        let media = original.direct_media();
+        let request =
+            || serde_json::from_value(serde_json::json!({"url":format!("{base}/media")})).unwrap();
+        assert_eq!(media.request(request(), || Ok(())).unwrap().body, b"ok");
+        assert!(
+            media
+                .request(request(), || Ok(()))
+                .unwrap_err()
+                .contains("media redirect blocked")
+        );
+        server.join().unwrap();
+    }
 
     #[test]
     fn cancellation_after_operation_is_pending_drops_it_before_return() {

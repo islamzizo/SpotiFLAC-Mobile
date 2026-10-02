@@ -710,7 +710,12 @@ final class RustCoreBackend: CoreBackend {
         case "removeExtension": try current.remove(extensionId: string("extension_id")); return nil
         case "getExtensionSettings": return try current.environment().settings(extensionId: string("extension_id"))
         case "setExtensionSettings": try current.updateSettings(extensionId: string("extension_id"), settingsJson: string("settings", "{}")); return nil
-        case "invokeExtensionAction": return try current.invokeAction(extensionId: string("extension_id"), action: string("action"))
+        case "invokeExtensionAction":
+            if args["arguments_json"] != nil {
+                // Transient form input bypasses persistent extension settings.
+                return try current.call(extensionId: string("extension_id"), method: string("action"), argumentsJson: string("arguments_json", "[]"), lease: nil, timeoutMs: 120000)
+            }
+            return try current.invokeAction(extensionId: string("extension_id"), action: string("action"))
         case "checkExtensionHealth": return try current.checkExtensionHealthJson(extensionId: string("extension_id"))
         case "searchTracksWithMetadataProviders":
             return try current.searchMetadataProviders(query: string("query"), limit: (args["limit"] as? NSNumber)?.int64Value ?? 20, includeExtensions: args["include_extensions"] as? Bool ?? true, itemId: "", timeoutMs: 30000)

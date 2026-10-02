@@ -561,8 +561,9 @@ impl ExtensionManager {
         let runtime = self
             .ready(&entry, &mut engine, true)
             .inspect_err(|e| self.failed(&entry, e))?;
+        let timeout = entry.manifest.action_timeout_ms(self.limits.timeout_ms);
         runtime
-            .managed_call(action, "[]", true, self.limits.timeout_ms)
+            .managed_call(action, "[]", true, timeout)
             .map_err(|e| cause("action failed", e))
     }
 

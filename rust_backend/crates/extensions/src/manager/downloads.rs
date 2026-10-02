@@ -72,6 +72,24 @@ impl ExtensionManager {
         Ok(entry.manifest.clone())
     }
 
+    /// Extensions may opt into account-owned downloads using a declared setting.
+    /// That mode owns authentication and must never enter shared-account fallback.
+    pub(crate) fn account_download_enabled(&self, id: &str) -> Result<bool, ManagerError> {
+        let entry = self.get(id)?;
+        if !entry
+            .manifest
+            .capabilities
+            .contains_key("accountDownloadMode")
+        {
+            return Ok(false);
+        }
+        let settings = self
+            .environment
+            .settings(&entry.manifest.name)
+            .map_err(error_from_environment)?;
+        Ok(entry.manifest.account_download_enabled(&settings))
+    }
+
     pub(crate) fn preflight_download(
         &self,
         id: &str,
@@ -102,6 +120,9 @@ impl ExtensionManager {
             || (download_only && !entry.manifest.has_type("download_provider"))
             || entry.manifest.signed_session.is_none()
         {
+            return Ok(false);
+        }
+        if self.account_download_enabled(id)? {
             return Ok(false);
         }
         let runtime = {
@@ -420,6 +441,63 @@ fn normalize_decryption(value: &mut Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_download_mode_is_declared_and_selected_by_settings() {
+        let directory = tempfile::tempdir().unwrap();
+        let sources = directory.path().join("sources");
+        let manager = ExtensionManager::new(
+            &sources,
+            &directory.path().join("data"),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "1",
+            RuntimeLimits::default(),
+        )
+        .unwrap();
+        let source = sources.join("example.account");
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("manifest.json"), json!({"name":"example.account","version":"1",
+            "description":"Generic account mode fixture","type":["download_provider"],
+            "permissions":{"storage":true,"network":["accounts.example.test"]},
+            "signedSession":{"namespace":"example-account","baseUrl":"https://accounts.example.test","appVersion":"1","platform":"extension",
+                "endpoints":{"bootstrap":"/bootstrap","challenge":"/challenge","exchange":"/exchange","refresh":"/refresh"}},
+            "capabilities":{"accountDownloadMode":{"setting":"accountMode","value":"personal"}}}).to_string()).unwrap();
+        fs::write(
+            source.join("index.js"),
+            "registerExtension({download(){return {success:false}}});",
+        )
+        .unwrap();
+        manager.load_all().unwrap();
+        manager.set_enabled("example.account", true).unwrap();
+        assert!(!manager.account_download_enabled("example.account").unwrap());
+        manager
+            .update_settings(
+                "example.account",
+                serde_json::from_value(json!({"accountMode":"personal"})).unwrap(),
+            )
+            .unwrap();
+        assert!(manager.account_download_enabled("example.account").unwrap());
+        // No signed-session service is contacted in personal account mode.
+        let lease = Arc::new(
+            manager
+                .environment
+                .download_state()
+                .acquire("test-account")
+                .unwrap(),
+        );
+        assert!(
+            !manager
+                .preflight_download("example.account", lease)
+                .unwrap()
+        );
+        manager
+            .update_settings(
+                "example.account",
+                serde_json::from_value(json!({"accountMode":"community"})).unwrap(),
+            )
+            .unwrap();
+        assert!(!manager.account_download_enabled("example.account").unwrap());
+    }
 
     #[test]
     fn returning_a_borrow_after_uninstall_cannot_recreate_extension_data() {

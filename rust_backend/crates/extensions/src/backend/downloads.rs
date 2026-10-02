@@ -282,6 +282,9 @@ impl Backend {
             if !manifest.has_type("download_provider") {
                 continue;
             }
+            let account_mode = self
+                .account_download_enabled(&id)
+                .map_err(|error| error.to_string())?;
             let availability = if direct {
                 source_availability
                     .clone()
@@ -297,6 +300,9 @@ impl Backend {
                     Ok(value) => value,
                     Err(error) => {
                         let response = failure(&id, &error, "", 0);
+                        if account_mode {
+                            return Ok(response);
+                        }
                         if response["error_type"] == "verification_required" {
                             self.cache_prepared(&key, &request, true);
                             return Ok(failure(
@@ -311,7 +317,7 @@ impl Backend {
                     }
                 }
             };
-            let stop = availability["skip_fallback"] == true;
+            let stop = availability["skip_fallback"] == true || account_mode;
             if availability["available"] != true {
                 if stop {
                     return Ok(stopped(&id, &availability, ""));
@@ -339,6 +345,18 @@ impl Backend {
             let message = text(&response, "error");
             let kind = text(&response, "error_type");
             let retry = response["retry_after_seconds"].as_i64().unwrap_or_default();
+            if account_mode
+                || self
+                    .account_download_enabled(&id)
+                    .map_err(|error| error.to_string())?
+            {
+                return Ok(failure(
+                    &id,
+                    &format!("Download failed: {message}"),
+                    kind,
+                    retry,
+                ));
+            }
             if kind == "verification_required" {
                 self.cache_prepared(&key, &request, true);
                 return Ok(failure(
@@ -1770,3 +1788,7 @@ fn storage_failure(kind: &str, message: &str) -> bool {
 #[cfg(test)]
 #[path = "download_latency_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "download_account_tests.rs"]
+mod account_tests;

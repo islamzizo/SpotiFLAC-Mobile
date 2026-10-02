@@ -462,11 +462,59 @@ impl ExtensionManifest {
         }
         crate::transfer_policy::validate(&self.capabilities)
             .map_err(|message| invalid("capabilities.downloadTransfer", message))?;
+        if let Some(mode) = self.capabilities.get("accountDownloadMode") {
+            let valid = mode.as_object().is_some_and(|mode| {
+                mode.get("setting")
+                    .and_then(Value::as_str)
+                    .is_some_and(|key| !key.is_empty() && !key.starts_with('_') && key.len() <= 64)
+                    && mode
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.is_empty() && value.len() <= 64)
+            });
+            if !valid {
+                return Err(invalid(
+                    "capabilities.accountDownloadMode",
+                    "expected a setting and value",
+                ));
+            }
+        }
+        if let Some(timeout) = self.capabilities.get("actionTimeoutSeconds")
+            && !timeout
+                .as_u64()
+                .is_some_and(|seconds| (1..=120).contains(&seconds))
+        {
+            return Err(invalid(
+                "capabilities.actionTimeoutSeconds",
+                "expected 1 to 120 seconds",
+            ));
+        }
         Ok(())
     }
 
     pub fn has_capability(&self, name: &str) -> bool {
         self.capabilities.get(name) == Some(&Value::Bool(true))
+    }
+
+    pub(crate) fn account_download_enabled(&self, settings: &Map<String, Value>) -> bool {
+        self.capabilities
+            .get("accountDownloadMode")
+            .is_some_and(|mode| {
+                let Some(setting) = mode["setting"].as_str() else {
+                    return false;
+                };
+                let Some(value) = mode["value"].as_str() else {
+                    return false;
+                };
+                settings.get(setting).and_then(Value::as_str) == Some(value)
+            })
+    }
+
+    pub(crate) fn action_timeout_ms(&self, default: u64) -> u64 {
+        self.capabilities
+            .get("actionTimeoutSeconds")
+            .and_then(Value::as_u64)
+            .map_or(default, |seconds| seconds.clamp(1, 120) * 1000)
     }
 
     pub fn find_quality(&self, requested: &str) -> Option<&QualityOption> {

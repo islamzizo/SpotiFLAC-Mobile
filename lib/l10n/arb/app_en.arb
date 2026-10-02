@@ -1,4 +1,9 @@
 {
+  "extensionAccountTitle": "Extension account",
+  "extensionAccountInvalidForm": "The extension returned an invalid account form.",
+  "extensionAccountRestartLogin": "Restart account login to continue.",
+  "extensionAccountRequiredValue": "Enter a value.",
+  "extensionAccountInvalidNumber": "Enter a valid number.",
   "settingsPlaybackSubtitle": "Player, volume, AutoMix, and audio output",
   "sectionPlayer": "Player",
   "sectionVolumeAndTransitions": "Volume and transitions",

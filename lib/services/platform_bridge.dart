@@ -1795,12 +1795,15 @@ class PlatformBridge {
 
   static Future<Map<String, dynamic>> invokeExtensionAction(
     String extensionId,
-    String actionName,
-  ) async {
+    String actionName, {
+    Map<String, dynamic>? input,
+  }) async {
+    // Log action identity only. Input may contain account credentials or OTP.
     _log.d('invokeExtensionAction: $extensionId.$actionName');
     final result = await _channel.invokeMethod('invokeExtensionAction', {
       'extension_id': extensionId,
       'action': actionName,
+      if (input != null) 'arguments_json': jsonEncode([input]),
     });
     if (result == null || (result as String).isEmpty) {
       return {'success': true};

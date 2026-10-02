@@ -709,7 +709,10 @@ internal object RustCoreBackend : CoreBackend {
                 current.updateSettings(string("extension_id"), string("settings", "{}"))
                 null
             }
-            "invokeExtensionAction" -> current.invokeAction(string("extension_id"), string("action"))
+            "invokeExtensionAction" -> if (args.containsKey("arguments_json")) {
+                // Transient form input bypasses persistent extension settings.
+                current.call(string("extension_id"), string("action"), string("arguments_json", "[]"), null, 120_000uL)
+            } else current.invokeAction(string("extension_id"), string("action"))
             "checkExtensionHealth" -> current.checkExtensionHealthJson(string("extension_id"))
             "setProviderPriority", "setMetadataProviderPriority" -> {
                 current.setProviderPriority(if (method == "setProviderPriority") "download" else "metadata", ids(string("priority", "[]")))

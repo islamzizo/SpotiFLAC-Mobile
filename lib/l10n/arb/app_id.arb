@@ -1,4 +1,9 @@
 {
+  "extensionAccountTitle": "Akun extension",
+  "extensionAccountInvalidForm": "Extension mengembalikan formulir akun yang tidak valid.",
+  "extensionAccountRestartLogin": "Mulai ulang login akun untuk melanjutkan.",
+  "extensionAccountRequiredValue": "Masukkan nilai.",
+  "extensionAccountInvalidNumber": "Masukkan angka yang valid.",
   "settingsPlaybackSubtitle": "Pemutar, volume, AutoMix, dan keluaran audio",
   "sectionPlayer": "Pemutar",
   "sectionVolumeAndTransitions": "Volume dan transisi",
