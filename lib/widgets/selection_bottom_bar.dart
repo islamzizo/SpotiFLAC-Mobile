@@ -347,30 +347,163 @@ class SelectionBottomBar extends StatelessWidget {
         ),
       ),
     );
-    final boundedContent = ConstrainedBox(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * 0.72,
-      ),
-      child: SingleChildScrollView(child: content),
-    );
-    if (context.isMornye) {
-      return MornyeGlassPanel.overlay(child: boundedContent);
-    }
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.vertical(
-          top: Radius.circular(tokens.radiusSheet),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.shadow.withValues(alpha: 0.15),
-            blurRadius: 12,
-            offset: const Offset(0, -4),
+    return _SelectionPanelDrag(
+      onClose: onClose,
+      builder: (scrollController) {
+        final boundedContent = ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.72,
           ),
-        ],
-      ),
-      child: boundedContent,
+          child: SingleChildScrollView(
+            controller: scrollController,
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: ClampingScrollPhysics(),
+            ),
+            child: content,
+          ),
+        );
+        if (context.isMornye) {
+          return MornyeGlassPanel.overlay(child: boundedContent);
+        }
+        return Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(tokens.radiusSheet),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: colorScheme.shadow.withValues(alpha: 0.15),
+                blurRadius: 12,
+                offset: const Offset(0, -4),
+              ),
+            ],
+          ),
+          child: boundedContent,
+        );
+      },
     );
+  }
+}
+
+/// Shares the scrollable's gesture: downward motion at its top pulls the whole
+/// surface instead of bouncing the header inside a stationary glass panel.
+class _SelectionPanelDrag extends StatefulWidget {
+  const _SelectionPanelDrag({required this.onClose, required this.builder});
+
+  final VoidCallback onClose;
+  final Widget Function(ScrollController) builder;
+
+  @override
+  State<_SelectionPanelDrag> createState() => _SelectionPanelDragState();
+}
+
+class _SelectionPanelDragState extends State<_SelectionPanelDrag>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _offset = AnimationController.unbounded(
+    vsync: this,
+  );
+  late final _SelectionPanelScrollController _scroll =
+      _SelectionPanelScrollController(_drag, _settle);
+  bool _closing = false;
+
+  double _drag(double delta) {
+    if (_closing) return 0;
+    _offset.stop();
+    final previous = _offset.value;
+    _offset.value = (previous + delta).clamp(0.0, double.infinity);
+    return delta - (_offset.value - previous);
+  }
+
+  bool _settle(double velocity) {
+    if (_closing) return true;
+    if (_offset.value == 0) return false;
+    final height = context.size?.height ?? 0;
+    _closing =
+        velocity > 700 ||
+        (velocity >= -700 && _offset.value >= (height * 0.25).clamp(64, 120));
+    _animateToRest(_closing ? height : 0);
+    return true;
+  }
+
+  Future<void> _animateToRest(double target) async {
+    try {
+      await _offset
+          .animateTo(
+            target,
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+          )
+          .orCancel;
+      if (mounted && _closing) widget.onClose();
+    } on TickerCanceled {
+      // Another drag or route disposal can interrupt the settling animation.
+    }
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _offset.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _offset,
+    builder: (_, child) =>
+        Transform.translate(offset: Offset(0, _offset.value), child: child),
+    child: widget.builder(_scroll),
+  );
+}
+
+class _SelectionPanelScrollController extends ScrollController {
+  _SelectionPanelScrollController(this.dragPanel, this.settlePanel);
+
+  final double Function(double) dragPanel;
+  final bool Function(double) settlePanel;
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) => _SelectionPanelScrollPosition(
+    physics: physics,
+    context: context,
+    oldPosition: oldPosition,
+    dragPanel: dragPanel,
+    settlePanel: settlePanel,
+  );
+}
+
+class _SelectionPanelScrollPosition extends ScrollPositionWithSingleContext {
+  _SelectionPanelScrollPosition({
+    required super.physics,
+    required super.context,
+    super.oldPosition,
+    required this.dragPanel,
+    required this.settlePanel,
+  });
+
+  final double Function(double) dragPanel;
+  final bool Function(double) settlePanel;
+
+  @override
+  void applyUserOffset(double delta) {
+    // Scroll back to the top before handing any remaining drag to the panel.
+    if (delta > 0 && pixels > minScrollExtent) {
+      final scrollDelta = delta.clamp(0.0, pixels - minScrollExtent);
+      super.applyUserOffset(scrollDelta);
+      delta -= scrollDelta;
+    }
+    final remaining = dragPanel(delta);
+    if (remaining != 0) super.applyUserOffset(remaining);
+  }
+
+  @override
+  void goBallistic(double velocity) {
+    final movingPanel = settlePanel(-velocity);
+    super.goBallistic(movingPanel ? 0 : velocity);
   }
 }
