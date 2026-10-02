@@ -816,50 +816,83 @@ void main() {
     expect(bar.title, isNull);
   });
 
-  testWidgets('manual lyric scrolling hides controls down and restores them up', (
-    tester,
-  ) async {
-    metadataOverrides = {
-      'lyrics': List.generate(
-        20,
-        (index) =>
-            '[00:${(index * 3).toString().padLeft(2, '0')}.00]Lyric $index with several words on this line',
-      ).join('\n'),
-    };
-    await pumpNowPlaying(
-      tester,
-      theme: MornyeTheme.build(Brightness.dark),
-      size: const Size(393, 780),
-      playback: PlaybackState(updatePosition: const Duration(seconds: 30)),
+  for (final height in [780.0, 520.0]) {
+    testWidgets(
+      'manual lyric scrolling keeps its viewport stable while controls animate (height: $height)',
+      (tester) async {
+        metadataOverrides['lyrics'] = List.generate(
+          20,
+          (index) =>
+              '[00:${(index * 3).toString().padLeft(2, '0')}.00]Lyric $index with several words on this line',
+        ).join('\n');
+        await pumpNowPlaying(
+          tester,
+          theme: MornyeTheme.build(Brightness.dark),
+          size: Size(393, height),
+          playback: PlaybackState(updatePosition: const Duration(seconds: 30)),
+        );
+        mediaItems.add(item('many'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
+        await tester.pumpAndSettle();
+        final list = find.byType(ListView);
+        final bounds = tester.getRect(list);
+        final scrollable = find.descendant(
+          of: list,
+          matching: find.byType(Scrollable),
+        );
+        final state = tester.state<ScrollableState>(scrollable);
+        final initialOffset = state.position.pixels;
+        final headerTop = tester.getTopLeft(find.text('Second')).dy;
+        final transport = find.byWidgetPredicate(
+          (widget) =>
+              widget is MornyePlaybackButton &&
+              const [
+                CupertinoIcons.play_fill,
+                CupertinoIcons.backward_fill,
+                CupertinoIcons.forward_fill,
+              ].contains(widget.icon),
+        );
+        expect(transport.hitTestable(), findsNWidgets(3));
+        final touch = await tester.startGesture(
+          Offset(bounds.center.dx, bounds.top + 100),
+        );
+        await touch.moveBy(const Offset(0, -20));
+        await tester.pump();
+        await touch.moveBy(const Offset(0, -60));
+        await tester.pump();
+        final hiddenOffset = state.position.pixels;
+        expect(hiddenOffset, greaterThan(initialOffset));
+        expect(transport.hitTestable(), findsNothing);
+        for (var frame = 0; frame < 3; frame++) {
+          await tester.pump(const Duration(milliseconds: 40));
+          expect(tester.getRect(list), bounds);
+          expect(tester.state<ScrollableState>(scrollable), same(state));
+          expect(state.position.pixels, closeTo(hiddenOffset, 0.01));
+        }
+
+        // Continue the same drag, then reverse before the hide completes.
+        await touch.moveBy(const Offset(0, -32));
+        await tester.pump();
+        expect(state.position.pixels, closeTo(hiddenOffset + 32, 0.01));
+        await touch.moveBy(const Offset(0, 48));
+        await tester.pump();
+        final restoredOffset = state.position.pixels;
+        expect(restoredOffset, closeTo(hiddenOffset - 16, 0.01));
+        for (var frame = 0; frame < 10; frame++) {
+          await tester.pump(const Duration(milliseconds: 40));
+          expect(tester.getRect(list), bounds);
+          expect(tester.state<ScrollableState>(scrollable), same(state));
+          expect(state.position.pixels, closeTo(restoredOffset, 0.01));
+        }
+        expect(tester.getTopLeft(find.text('Second')).dy, headerTop);
+        expect(transport.hitTestable(), findsNWidgets(3));
+        await touch.up();
+        await tester.pumpWidget(const SizedBox());
+        expect(tester.takeException(), isNull);
+      },
     );
-    mediaItems.add(item('many'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
-    final list = find.byType(ListView);
-    final initialHeight = tester.getSize(list).height;
-    final headerTop = tester.getTopLeft(find.text('Second')).dy;
-    final transport = find.byWidgetPredicate(
-      (widget) =>
-          widget is MornyePlaybackButton &&
-          const [
-            CupertinoIcons.play_fill,
-            CupertinoIcons.backward_fill,
-            CupertinoIcons.forward_fill,
-          ].contains(widget.icon),
-    );
-    expect(transport.hitTestable(), findsNWidgets(3));
-    await tester.drag(list, const Offset(0, -140));
-    await tester.pumpAndSettle();
-    expect(tester.getSize(list).height, greaterThan(initialHeight + 100));
-    expect(tester.getTopLeft(find.text('Second')).dy, closeTo(headerTop, 1));
-    expect(transport.hitTestable(), findsNothing);
-    await tester.drag(list, const Offset(0, 140));
-    await tester.pumpAndSettle();
-    expect(tester.getSize(list).height, closeTo(initialHeight, 1));
-    expect(transport.hitTestable(), findsNWidgets(3));
-    expect(tester.takeException(), isNull);
-  });
+  }
 
   for (final reducedMotion in [false, true]) {
     testWidgets(
@@ -910,7 +943,7 @@ void main() {
         expect(volume.hitTestable(), findsNothing);
         expect(lyricsButton.hitTestable(), findsNothing);
         expect(queueButton.hitTestable(), findsNothing);
-        expect(tester.getSize(list).height, greaterThan(originalHeight + 150));
+        expect(tester.getSize(list).height, originalHeight);
         expect(
           find.byKey(const ValueKey('player-track-header')).hitTestable(),
           findsOneWidget,

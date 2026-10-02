@@ -1181,37 +1181,56 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     _scheduleLyricsControlsHide();
   }
 
+  Duration get _lyricsControlsMotion => MediaQuery.disableAnimationsOf(context)
+      ? Duration.zero
+      : const Duration(milliseconds: 220);
+
   Widget _autoHidingLyricsControls(Widget child) {
     if (!context.isMornye) return child;
     final hidden = _currentPage == 1 && _lyricsControlsHidden && !_landscape;
-    final motion = MediaQuery.disableAnimationsOf(context)
-        ? Duration.zero
-        : const Duration(milliseconds: 380);
-    final content = ClipRect(
-      child: Align(
-        heightFactor: hidden ? 0 : 1,
-        child: IgnorePointer(
-          ignoring: hidden,
-          child: ExcludeSemantics(
-            excluding: hidden,
-            child: AnimatedOpacity(
-              opacity: hidden ? 0 : 1,
-              duration: motion,
-              child: child,
-            ),
-          ),
+    // Fade in place: resizing controls also resizes the lyric viewport and can
+    // interrupt its active drag or trigger a playback auto-scroll correction.
+    return IgnorePointer(
+      ignoring: hidden,
+      child: ExcludeSemantics(
+        excluding: hidden,
+        child: AnimatedOpacity(
+          opacity: hidden ? 0 : 1,
+          duration: _lyricsControlsMotion,
+          curve: Curves.easeOutCubic,
+          child: child,
         ),
       ),
     );
-    return motion == Duration.zero
-        ? content
-        : AnimatedSize(
-            duration: motion,
-            curve: Curves.easeInOutCubic,
-            alignment: Alignment.topCenter,
-            child: content,
-          );
   }
+
+  Widget _mornyeLyricsViewport(Widget child, {required double visibleHeight}) =>
+      TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0, end: _lyricsControlsHidden ? 1 : 0),
+        duration: _lyricsControlsMotion,
+        curve: Curves.easeOutCubic,
+        builder: (context, reveal, child) => ShaderMask(
+          blendMode: BlendMode.dstIn,
+          shaderCallback: (bounds) {
+            final height = bounds.height.clamp(1.0, double.infinity);
+            final end = visibleHeight.clamp(0.0, height);
+            final start = (end - 24).clamp(0.0, end);
+            return LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              stops: [0, start / height, end / height, 1],
+              colors: [
+                Colors.white,
+                Colors.white,
+                Colors.white.withValues(alpha: reveal),
+                Colors.white.withValues(alpha: reveal),
+              ],
+            ).createShader(bounds);
+          },
+          child: child,
+        ),
+        child: child,
+      );
 
   Widget _mornyePlayerPage(
     MediaItem mediaItem,
@@ -1370,9 +1389,15 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                                       ? MornyePlayerQueue(
                                           colorScheme: colorScheme,
                                         )
-                                      : _lyricsSection(
-                                          colorScheme,
-                                          isActive: showLyrics,
+                                      : _mornyeLyricsViewport(
+                                          _lyricsSection(
+                                            colorScheme,
+                                            isActive: showLyrics,
+                                            showOptions: false,
+                                          ),
+                                          visibleHeight:
+                                              stage.minHeight -
+                                              (8 + compactHeaderHeight + 16),
                                         ),
                                 )
                               : null,
@@ -1558,68 +1583,70 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
             );
           }
 
-          Widget content() => Column(
-            children: [
-              Expanded(
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: compactStage ? 1 : 0),
-                  duration: motion,
-                  curve: Curves.easeInOutCubic,
-                  builder: (context, progress, _) => CustomMultiChildLayout(
-                    delegate: _PlayerHeaderLayout(
-                      progress: progress,
-                      compactHeight: compactHeaderHeight,
-                      compactLeft: _mornyeContentInset + compactCoverSize + 12,
+          final lyricsOptions = showLyrics
+              ? _lyricsOptionsButton(colorScheme)
+              : null;
+          Widget content() => TweenAnimationBuilder<double>(
+            tween: Tween(begin: 0, end: compactStage ? 1 : 0),
+            duration: motion,
+            curve: Curves.easeInOutCubic,
+            builder: (context, progress, controls) => CustomMultiChildLayout(
+              delegate: _PlayerHeaderLayout(
+                progress: progress,
+                compactHeight: compactHeaderHeight,
+                compactLeft: _mornyeContentInset + compactCoverSize + 12,
+                expandLyrics: showLyrics,
+              ),
+              children: [
+                LayoutId(
+                  id: _PlayerHeaderSlot.stage,
+                  child: stage(progress: progress),
+                ),
+                LayoutId(
+                  id: _PlayerHeaderSlot.header,
+                  child: KeyedSubtree(
+                    key: const ValueKey('player-track-header'),
+                    child: AnimatedBuilder(
+                      key: _artworkHeaderKey,
+                      animation: _artworkColorsChanged,
+                      builder: (context, _) => _trackHeader(
+                        mediaItem,
+                        foreground('header'),
+                        compactProgress: progress,
+                      ),
                     ),
-                    children: [
-                      LayoutId(
-                        id: _PlayerHeaderSlot.stage,
-                        child: stage(progress: progress),
-                      ),
-                      LayoutId(
-                        id: _PlayerHeaderSlot.header,
-                        child: KeyedSubtree(
-                          key: const ValueKey('player-track-header'),
-                          child: AnimatedBuilder(
-                            key: _artworkHeaderKey,
-                            animation: _artworkColorsChanged,
-                            builder: (context, _) => _trackHeader(
-                              mediaItem,
-                              foreground('header'),
-                              compactProgress: progress,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
-              ),
-              _autoHidingLyricsControls(
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    controls(),
-                    SizedBox(height: volumeGap - transportShift),
-                    AnimatedBuilder(
-                      animation: _artworkColorsChanged,
-                      builder: (context, _) => MornyeVolumeControl(
-                        key: _artworkVolumeKey,
-                        foreground: foreground('volume').onSurface,
-                      ),
+                LayoutId(id: _PlayerHeaderSlot.controls, child: controls!),
+                if (lyricsOptions != null)
+                  LayoutId(
+                    id: _PlayerHeaderSlot.lyricsOptions,
+                    child: _autoHidingLyricsControls(lyricsOptions),
+                  ),
+              ],
+            ),
+            child: _autoHidingLyricsControls(
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  controls(),
+                  SizedBox(height: volumeGap - transportShift),
+                  AnimatedBuilder(
+                    animation: _artworkColorsChanged,
+                    builder: (context, _) => MornyeVolumeControl(
+                      key: _artworkVolumeKey,
+                      foreground: foreground('volume').onSurface,
                     ),
-                    const SizedBox(height: 8),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
               ),
-            ],
+            ),
           );
 
           // Controls keep their intrinsic height. Small portrait screens and
           // large accessibility text can scroll instead of clipping the volume.
-          final minHeight =
-              (showLyrics && _lyricsControlsHidden ? 250.0 : 480.0) +
-              (scale - 1).clamp(0, 3) * 120;
+          final minHeight = 480.0 + (scale - 1).clamp(0, 3) * 120;
           if (constraints.maxHeight < minHeight) {
             return SingleChildScrollView(
               child: SizedBox(height: minHeight, child: content()),
@@ -1820,7 +1847,11 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     ];
   }
 
-  Widget _lyricsSection(ColorScheme colorScheme, {required bool isActive}) {
+  Widget _lyricsSection(
+    ColorScheme colorScheme, {
+    required bool isActive,
+    bool showOptions = true,
+  }) {
     if (_loadingMeta) {
       return const Center(child: AppLoadingIndicator());
     }
@@ -1854,7 +1885,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
           ),
         ),
       );
-      final options = isActive && !_landscape
+      final options = showOptions && isActive && !_landscape
           ? _lyricsOptionsButton(colorScheme)
           : null;
       return Stack(
@@ -2675,7 +2706,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   }
 }
 
-enum _PlayerHeaderSlot { stage, header }
+enum _PlayerHeaderSlot { stage, header, controls, lyricsOptions }
 
 /// Keep one live header throughout the cover/lyrics/queue transition. Measuring
 /// it at its current width also accommodates accessibility text sizes without
@@ -2685,14 +2716,25 @@ class _PlayerHeaderLayout extends MultiChildLayoutDelegate {
     required this.progress,
     required this.compactHeight,
     required this.compactLeft,
+    required this.expandLyrics,
   });
 
   final double progress;
   final double compactHeight;
   final double compactLeft;
+  final bool expandLyrics;
 
   @override
   void performLayout(Size size) {
+    final controls = layoutChild(
+      _PlayerHeaderSlot.controls,
+      BoxConstraints.tightFor(width: size.width),
+    );
+    final contentHeight = (size.height - controls.height).clamp(
+      0.0,
+      size.height,
+    );
+    positionChild(_PlayerHeaderSlot.controls, Offset(0, contentHeight));
     final left = 28 + (compactLeft - 28) * progress;
     // Align the visible ellipsis with the timeline while leaving its touch
     // target wider than the glyph and interpolating the same live header.
@@ -2708,27 +2750,47 @@ class _PlayerHeaderLayout extends MultiChildLayoutDelegate {
         minHeight: compactHeight * progress,
       ),
     );
-    final stageHeight = (size.height - (header.height + 20) * (1 - progress))
-        .clamp(0.0, size.height);
+    final stageHeight = (contentHeight - (header.height + 20) * (1 - progress))
+        .clamp(0.0, contentHeight);
     layoutChild(
       _PlayerHeaderSlot.stage,
-      BoxConstraints.tight(Size(size.width, stageHeight)),
+      // Lyrics always extend behind controls. The minimum height marks their
+      // unobscured area for the paint mask; hiding controls never changes either
+      // constraint, scroll padding or the Scrollable's identity.
+      BoxConstraints(
+        minWidth: size.width,
+        maxWidth: size.width,
+        minHeight: stageHeight,
+        maxHeight:
+            stageHeight + (expandLyrics ? controls.height * progress : 0),
+      ),
     );
     positionChild(_PlayerHeaderSlot.stage, Offset.zero);
     positionChild(
       _PlayerHeaderSlot.header,
       Offset(
         left,
-        (size.height - header.height - 8) * (1 - progress) + 8 * progress,
+        (contentHeight - header.height - 8) * (1 - progress) + 8 * progress,
       ),
     );
+    if (hasChild(_PlayerHeaderSlot.lyricsOptions)) {
+      final options = layoutChild(
+        _PlayerHeaderSlot.lyricsOptions,
+        BoxConstraints.loose(size),
+      );
+      positionChild(
+        _PlayerHeaderSlot.lyricsOptions,
+        Offset(_mornyeContentInset, contentHeight - options.height - 8),
+      );
+    }
   }
 
   @override
   bool shouldRelayout(_PlayerHeaderLayout oldDelegate) =>
       progress != oldDelegate.progress ||
       compactHeight != oldDelegate.compactHeight ||
-      compactLeft != oldDelegate.compactLeft;
+      compactLeft != oldDelegate.compactLeft ||
+      expandLyrics != oldDelegate.expandLyrics;
 }
 
 class _PlaybackControls extends ConsumerWidget {
