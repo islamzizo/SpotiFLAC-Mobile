@@ -7,10 +7,8 @@ String confirmedMissingLyricsSqlPredicate({
   required String lyricsKnownExpr,
 }) => '($lyricsKnownExpr) AND COALESCE($hasLyricsExpr, 0) = 0';
 
-String confirmedMissingReplayGainSqlPredicate({
-  required String hasReplayGainExpr,
-  required String replayGainKnownExpr,
-}) => '($replayGainKnownExpr) AND COALESCE($hasReplayGainExpr, 0) = 0';
+String missingReplayGainSqlPredicate({required String hasReplayGainExpr}) =>
+    'COALESCE($hasReplayGainExpr, 0) = 0';
 
 class _QueueOrderTerm {
   final String column;
@@ -421,8 +419,6 @@ extension _LibraryDbQueueSql on LibraryDatabase {
       hasLyricsExpr: 'h.has_lyrics',
       lyricsKnownExpr: 'COALESCE(h.lyrics_metadata_scan_version, 0) >= 1',
       hasReplayGainExpr: 'h.has_replaygain',
-      replayGainKnownExpr:
-          'COALESCE(h.replaygain_metadata_scan_version, 0) >= 1',
     );
   }
 
@@ -473,8 +469,6 @@ extension _LibraryDbQueueSql on LibraryDatabase {
       lyricsKnownExpr:
           'COALESCE(l.audio_metadata_scan_version, 0) >= ${LibraryDatabase.lyricsMetadataScanVersion}',
       hasReplayGainExpr: 'l.has_replaygain',
-      replayGainKnownExpr:
-          'COALESCE(l.audio_metadata_scan_version, 0) >= ${LibraryDatabase.audioMetadataScanVersion}',
     );
   }
 
@@ -497,7 +491,6 @@ extension _LibraryDbQueueSql on LibraryDatabase {
     required String hasLyricsExpr,
     required String lyricsKnownExpr,
     required String hasReplayGainExpr,
-    required String replayGainKnownExpr,
   }) {
     final quality = request.quality?.trim().toLowerCase();
     if (quality != null && quality.isNotEmpty) {
@@ -593,12 +586,11 @@ extension _LibraryDbQueueSql on LibraryDatabase {
         );
         break;
       case 'missing-replaygain':
-        // Only files whose tags were read since ReplayGain was indexed.
+        // Include legacy rows without indexed ReplayGain as candidates until
+        // a metadata refresh confirms their tags. Requiring a new scan version
+        // hides the entire older collection before it has been rescanned.
         where.add(
-          confirmedMissingReplayGainSqlPredicate(
-            hasReplayGainExpr: hasReplayGainExpr,
-            replayGainKnownExpr: replayGainKnownExpr,
-          ),
+          missingReplayGainSqlPredicate(hasReplayGainExpr: hasReplayGainExpr),
         );
         break;
     }
