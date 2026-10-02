@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:go_router/go_router.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/screens/playlist_screen.dart';
 import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/spotify_library_extras_service.dart';
+import 'package:spotiflac_android/services/shell_navigation_service.dart';
+import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 
 class SpotifyAccountScreen extends ConsumerStatefulWidget {
   const SpotifyAccountScreen({super.key});
@@ -123,6 +126,16 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
     duration: ((track.durationMs ?? 0) / 1000).round(),
   );
 
+  void _openQueueFromSpotify() {
+    if (!mounted) return;
+    context.go('/');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ShellNavigationService.requestTab(ShellTab.library);
+      }
+    });
+  }
+
   Future<void> _openPlaylist(SpotifyPlaylist playlist) async {
     if (_openingId != null) return;
     setState(() { _openingId = playlist.id; _error = null; });
@@ -138,11 +151,14 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
         return;
       }
       await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => PlaylistScreen(
-          playlistName: playlist.name,
-          coverUrl: playlist.coverUrl,
-          tracks: tracks.map(_toTrack).toList(growable: false),
-          playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
+        builder: (_) => SpotifyNavigationScope(
+          onViewQueue: _openQueueFromSpotify,
+          child: PlaylistScreen(
+            playlistName: playlist.name,
+            coverUrl: playlist.coverUrl,
+            tracks: tracks.map(_toTrack).toList(growable: false),
+            playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
+          ),
         ),
       ));
     } catch (error) {
