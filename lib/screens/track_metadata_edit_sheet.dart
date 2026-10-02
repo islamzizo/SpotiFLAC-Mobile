@@ -2174,7 +2174,7 @@ class _EditMetadataSheetState extends State<_EditMetadataSheet> {
         minChildSize: 0.5,
         maxChildSize: 0.95,
         expand: false,
-        builder: (context, scrollController) => ScaffoldMessenger(
+        builder: (context, scrollController) => AppScaffoldMessenger(
           key: _sheetMessengerKey,
           child: Scaffold(
             backgroundColor: Colors.transparent,

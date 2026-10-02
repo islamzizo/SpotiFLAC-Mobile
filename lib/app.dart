@@ -14,6 +14,7 @@ import 'package:spotiflac_android/theme/dynamic_color_wrapper.dart';
 import 'package:spotiflac_android/l10n/app_localizations.dart';
 import 'package:spotiflac_android/l10n/supported_locales.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 
 String initialLocationForAppState({
   required bool isFirstLaunch,
@@ -203,7 +204,9 @@ class SpotiFLACApp extends ConsumerWidget {
           builder: (context, child) {
             final mediaQuery = MediaQuery.of(context);
             final appContent = _OrientationFade(
-              child: child ?? const SizedBox.shrink(),
+              child: AppScaffoldMessenger(
+                child: child ?? const SizedBox.shrink(),
+              ),
             );
             return MediaQuery(
               data: mediaQuery.copyWith(displayFeatures: const []),

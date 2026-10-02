@@ -18,6 +18,9 @@ void showAddedToQueueSnackBar(BuildContext context, String trackName) {
     SnackBar(
       content: Text(context.l10n.snackbarAddedToQueue(trackName)),
       action: buildViewQueueSnackBarAction(context),
+      duration: const Duration(seconds: 3),
+      persist: false,
+      showCloseIcon: true,
     ),
   );
 }
