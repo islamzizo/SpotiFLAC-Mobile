@@ -194,6 +194,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.android == 'true'
+    env:
+      SPOTIFLAC_KEYSTORE_BASE64: ${{ secrets.SPOTIFLAC_KEYSTORE_BASE64 }}
+      SPOTIFLAC_KEYSTORE_PASSWORD: ${{ secrets.SPOTIFLAC_KEYSTORE_PASSWORD }}
+      SPOTIFLAC_KEY_ALIAS: ${{ secrets.SPOTIFLAC_KEY_ALIAS }}
+      SPOTIFLAC_KEY_PASSWORD: ${{ secrets.SPOTIFLAC_KEY_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -241,6 +246,20 @@ jobs:
       - name: Configure Flutter SDK for Gradle
         run: echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
 
+      - name: Configure persistent Android release signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SPOTIFLAC_KEYSTORE_BASE64 SPOTIFLAC_KEYSTORE_PASSWORD SPOTIFLAC_KEY_ALIAS SPOTIFLAC_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+          printf '%s' "$SPOTIFLAC_KEYSTORE_BASE64" | base64 --decode > android/spotiflac-release.jks
+          chmod 600 android/spotiflac-release.jks
+          echo "SPOTIFLAC_KEYSTORE_FILE=$GITHUB_WORKSPACE/android/spotiflac-release.jks" >> "$GITHUB_ENV"
+
       - name: Install Rust application build and media test prerequisites
         run: |
           cd rust_backend
@@ -254,6 +273,11 @@ jobs:
         run: gradle -p android :app:assembleDebug :app:testDebugUnitTest
 
       - name: Build Rust release application
+        env:
+          SPOTIFLAC_KEYSTORE_FILE: ${{ env.SPOTIFLAC_KEYSTORE_FILE }}
+          SPOTIFLAC_KEYSTORE_PASSWORD: ${{ secrets.SPOTIFLAC_KEYSTORE_PASSWORD }}
+          SPOTIFLAC_KEY_ALIAS: ${{ secrets.SPOTIFLAC_KEY_ALIAS }}
+          SPOTIFLAC_KEY_PASSWORD: ${{ secrets.SPOTIFLAC_KEY_PASSWORD }}
         run: bash scripts/build_android.sh --target lib/main.dart
 
       - name: Verify Rust release APK payloads
@@ -264,11 +288,24 @@ jobs:
           python3 scripts/check_backend_apk.py \
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
             --backend rust --abis armeabi-v7a
-          # PR builds use Gradle's test key; production signing stays in Release.
           for abi in arm64-v8a armeabi-v7a; do
             "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose \
               "build/app/outputs/flutter-apk/app-${abi}-release.apk"
           done
+
+      - name: Verify all APKs use the persistent release certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}')"
+          test -n "$expected"
+          for apk in build/app/outputs/flutter-apk/app-*-release.apk; do
+            actual="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" |
+              awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}')"
+            test "$actual" = "$expected"
+          done
+          echo "Release certificate SHA-256: $expected"
 
       - name: Upload verified Android APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
