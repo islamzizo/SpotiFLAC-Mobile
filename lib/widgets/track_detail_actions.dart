@@ -11,6 +11,7 @@ import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/widgets/download_service_picker.dart';
 import 'package:spotiflac_android/widgets/view_queue_snackbar_action.dart';
+import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 
 /// Shared single-track "add to queue" flow for detail screens: shows the
 /// quality/service picker when the user opted into it, otherwise resolves
@@ -27,7 +28,11 @@ void downloadSingleTrack(
   final settings = ref.read(settingsProvider);
 
   void notifyQueued() {
-    showAddedToQueueSnackBar(context, track.name);
+    showAddedToQueueSnackBar(
+      context,
+      track.name,
+      onViewQueue: SpotifyNavigationScope.maybeOf(context)?.onViewQueue,
+    );
   }
 
   if (settings.askQualityBeforeDownload || forceQualityPicker) {
