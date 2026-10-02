@@ -887,9 +887,9 @@ class MainActivity: FlutterFragmentActivity() {
 
     /**
      * Opens a short-lived descriptor lease for zero-copy SAF playback. The
-     * returned proc path has no URI scheme, so MediaPlayer opens it in this
-     * process and duplicates the descriptor before the Dart side closes the
-     * lease. A small hard cap protects against abandoned method calls.
+     * returned proc path identifies the lease. The Android audio plugin must
+     * duplicate this descriptor, never reopen it (AppFuse rejects reopening).
+     * A small hard cap protects against abandoned method calls.
      */
     private fun openSafPlaybackLease(uriStr: String): Map<String, String>? {
         if (!uriStr.startsWith("content://")) return null
@@ -900,6 +900,10 @@ class MainActivity: FlutterFragmentActivity() {
             null
         } ?: return null
 
+        if (!isSeekableSafDescriptor(descriptor)) {
+            descriptor.close()
+            return null
+        }
         val token = UUID.randomUUID().toString()
         synchronized(playbackLeaseLock) {
             while (playbackLeases.size >= 4) {
@@ -1732,15 +1736,8 @@ class MainActivity: FlutterFragmentActivity() {
                             val response = withContext(Dispatchers.IO) {
                                 try {
                                     if (audioPath.startsWith("content://")) {
-                                        val uri = Uri.parse(audioPath)
-                                        val tempPath = copyUriToTemp(uri)
-                                            ?: return@withContext """{"success":false,"error":"Failed to copy SAF file to temp"}"""
-                                        try {
-                                            coreBackend.extractCoverToFile(tempPath, outputPath)
-                                            """{"success":true}"""
-                                        } finally {
-                                            try { File(tempPath).delete() } catch (_: Exception) {}
-                                        }
+                                        extractCoverFromUri(Uri.parse(audioPath), outputPath)
+                                        """{"success":true}"""
                                     } else {
                                         coreBackend.extractCoverToFile(audioPath, outputPath)
                                         """{"success":true}"""

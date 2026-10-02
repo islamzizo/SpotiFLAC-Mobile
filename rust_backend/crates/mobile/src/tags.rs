@@ -301,6 +301,29 @@ pub(crate) fn check_lease(lease: Option<&RequestLease>) -> Result<(), String> {
 }
 
 pub(crate) fn open_audio_file(path: &str) -> Result<File, String> {
+    #[cfg(unix)]
+    if let Some(descriptor) = path
+        .strip_prefix("/proc/self/fd/")
+        .or_else(|| path.strip_prefix("/dev/fd/"))
+    {
+        use std::os::fd::BorrowedFd;
+        let descriptor = descriptor.parse::<i32>().map_err(|e| e.to_string())?;
+        if descriptor < 0 {
+            return Err("invalid audio descriptor".into());
+        }
+        // The native caller retains this lease for the synchronous operation.
+        // Reopening /proc/self/fd issues FUSE_OPEN, which Android AppFuse
+        // explicitly rejects for an already-open proxy. Duplicate instead.
+        #[allow(unsafe_code)] // Native owner retains the descriptor during this call.
+        let owned = unsafe { BorrowedFd::borrow_raw(descriptor) }
+            .try_clone_to_owned()
+            .map_err(|e| e.to_string())?;
+        let file = File::from(owned);
+        if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+            return Err("audio tags require a regular file".into());
+        }
+        return Ok(file);
+    }
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]

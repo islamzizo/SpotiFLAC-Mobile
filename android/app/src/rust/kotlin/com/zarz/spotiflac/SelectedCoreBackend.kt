@@ -386,7 +386,23 @@ internal object RustCoreBackend : CoreBackend {
     override fun rewriteSplitArtistTags(path: String, artist: String, albumArtist: String): String =
         withMediaFiles(listOf(path)) { it.rewriteSplitArtistTags(mediaPath(path), artist, albumArtist, null) }
 
-    override fun extractCoverToFile(audioPath: String, outputPath: String) {
+    override fun extractCoverToFile(audioPath: String, outputPath: String, hint: String) {
+        val descriptor = if (audioPath.startsWith("/proc/self/fd/")) {
+            audioPath.removePrefix("/proc/self/fd/").toIntOrNull()
+        } else null
+        if (descriptor != null) {
+            val result = com.spotiflac.backend.readLibraryMetadataFromDescriptor(
+                descriptor, hint, java.time.Instant.now().toString(), true, null,
+            )
+            check(result.coverBytes.isNotEmpty()) { "No embedded artwork" }
+            val output = File(outputPath)
+            val staged = File.createTempFile("cover_", ".tmp", output.parentFile)
+            try {
+                staged.writeBytes(result.coverBytes)
+                check(staged.renameTo(output)) { "Could not publish artwork" }
+            } finally { staged.delete() }
+            return
+        }
         withMediaFiles(listOf(audioPath, outputPath)) {
             it.extractCoverToFile(mediaPath(audioPath), mediaPath(outputPath), null)
         }

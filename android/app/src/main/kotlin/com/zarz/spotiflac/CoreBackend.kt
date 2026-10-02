@@ -211,7 +211,7 @@ internal interface CoreBackend {
     fun editFileMetadata(path: String, metadataJson: String): String
     fun reEnrichFile(requestJson: String): String
     fun rewriteSplitArtistTags(path: String, artist: String, albumArtist: String): String
-    fun extractCoverToFile(audioPath: String, outputPath: String)
+    fun extractCoverToFile(audioPath: String, outputPath: String, hint: String = "")
     fun writeM4aFreeformTags(path: String, metadataJson: String): String
     fun ensureAc4Config(path: String, reference: String): String
     fun writeAc4Metadata(path: String, metadataJson: String, coverPath: String): String

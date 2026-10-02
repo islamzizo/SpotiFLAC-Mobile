@@ -81,6 +81,11 @@ dependencies:
     path: third_party/audio_service
   audio_session: ^0.2.4
 
+dependency_overrides:
+  # Preserve Android proxy descriptors supplied by network document providers.
+  audioplayers_android:
+    path: third_party/audioplayers_android
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

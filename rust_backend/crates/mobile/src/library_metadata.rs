@@ -14,8 +14,8 @@ pub struct DescriptorLibraryMetadata {
 }
 
 /// The caller keeps the descriptor open until this synchronous read returns.
-/// Reopening its descriptor path preserves SAF access instead of resolving a
-/// protected /storage or /mnt/media_rw path and copying the entire audio file.
+/// Duplicating its descriptor preserves SAF access, including single-open
+/// AppFuse proxies, without resolving a protected path or copying the audio.
 #[uniffi::export]
 pub fn read_library_metadata_from_descriptor(
     descriptor: i32,

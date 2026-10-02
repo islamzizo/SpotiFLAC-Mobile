@@ -252,7 +252,7 @@ internal fun MainActivity.buildLibraryCoverCacheKey(stablePath: String, lastModi
         return if (lastModified > 0L) "$normalizedPath|$lastModified" else normalizedPath
     }
 
-private fun isSeekableSafDescriptor(descriptor: ParcelFileDescriptor): Boolean {
+internal fun isSeekableSafDescriptor(descriptor: ParcelFileDescriptor): Boolean {
     return try {
         val position = Os.lseek(
             descriptor.fileDescriptor,
@@ -338,6 +338,23 @@ internal fun MainActivity.readCompleteMetadataFromUri(
     displayNameHint: String? = null,
 ): JSONObject? = readMetadataFromUri(uri, displayNameHint) { path, name ->
     JSONObject(coreBackend.readFileMetadata(path, name)).takeUnless { it.has("error") }
+}
+
+/** Seekable remote documents need only tag reads, not a full audio download. */
+internal fun MainActivity.extractCoverFromUri(uri: Uri, outputPath: String) {
+    val name = buildUriDisplayName(uri)
+    contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+        if (isSeekableSafDescriptor(descriptor)) {
+            coreBackend.extractCoverToFile("/proc/self/fd/${descriptor.fd}", outputPath, name)
+            return
+        }
+    }
+    // Providers exposing a pipe cannot support random-access tag readers.
+    val tempPath = copyUriToTemp(uri, displayName = name)
+        ?: error("Failed to read document artwork")
+    try {
+        coreBackend.extractCoverToFile(tempPath, outputPath)
+    } finally { File(tempPath).delete() }
 }
 
 internal fun MainActivity.writeUriFromPath(uri: Uri, srcPath: String): Boolean {
