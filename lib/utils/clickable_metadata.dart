@@ -13,6 +13,7 @@ import 'package:spotiflac_android/screens/home_tab.dart'
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 import 'package:spotiflac_android/utils/logger.dart';
+import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 
 final _log = AppLogger('ClickableMetadata');
 
@@ -430,7 +431,17 @@ void _pushAlbumScreen(
 /// is immediately visible instead of being hidden behind it.
 void pushViaPreferredNavigator(BuildContext context, WidgetBuilder builder) {
   final currentNavigator = Navigator.of(context);
+  final spotifyNavigation = SpotifyNavigationScope.maybeOf(context);
   final rootNavigator = Navigator.of(context, rootNavigator: true);
+
+  // Spotify playlists live on the root GoRouter route rather than inside the
+  // MainShell tab navigators. Keep their album/artist pages on the current
+  // stack so they are visible immediately instead of being pushed underneath
+  // the Spotify screen.
+  if (spotifyNavigation != null) {
+    currentNavigator.push(MaterialPageRoute<void>(builder: builder));
+    return;
+  }
   final activeTabNavigator = ShellNavigationService.activeTabNavigator();
 
   final shouldRouteToTabNavigator =
