@@ -3161,7 +3161,12 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _syncPositionSubscription();
+    // Appearance can rebuild when transport controls fade (for example with
+    // custom glass clarity). Keep the existing playback subscription and the
+    // user's scroll ownership; only new lyrics/page activation should reset it.
+    if (_positionSubscription == null && widget.isActive) {
+      _syncPositionSubscription();
+    }
   }
 
   @override
@@ -3567,13 +3572,29 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
         ? Duration.zero
         : const Duration(milliseconds: 280);
 
-    return NotificationListener<UserScrollNotification>(
+    return NotificationListener<ScrollNotification>(
       onNotification: (notification) {
-        if (notification.direction != ScrollDirection.idle) {
+        if (notification.depth != 0 ||
+            notification.metrics.axis != Axis.vertical) {
+          return false;
+        }
+        final dragging =
+            (notification is ScrollStartNotification &&
+                notification.dragDetails != null) ||
+            (notification is ScrollUpdateNotification &&
+                notification.dragDetails != null) ||
+            (notification is UserScrollNotification &&
+                notification.direction != ScrollDirection.idle);
+        if (dragging) {
           _userScrolling = true;
           _userScrollIdleTimer?.cancel();
+        } else if (notification is ScrollEndNotification && _userScrolling) {
+          // Start the return-to-playback timeout only after the drag and its
+          // momentum finish. A direction notification is not an idle event:
+          // a long drag can keep that direction while controls fade in/out.
+          _userScrollIdleTimer?.cancel();
           _userScrollIdleTimer = Timer(const Duration(seconds: 4), () {
-            if (!mounted) return;
+            if (!mounted || !widget.isActive) return;
             _userScrolling = false;
             unawaited(_maybeAutoScroll(_active));
           });

@@ -317,6 +317,76 @@ void main() {
     },
   );
 
+  testWidgets('custom glass keeps live lyrics under the finger on reversal', (
+    tester,
+  ) async {
+    metadataOverrides['lyrics'] = List.generate(
+      20,
+      (index) =>
+          '[00:${(index * 3).toString().padLeft(2, '0')}.00]Live lyric $index with several words on this line',
+    ).join('\n');
+    final playback = StreamController<PlaybackState>.broadcast();
+    addTearDown(playback.close);
+    await pumpNowPlaying(
+      tester,
+      theme: MornyeTheme.build(Brightness.dark, glassClarity: 0.5),
+      size: const Size(393, 852),
+      playbackEvents: playback.stream,
+    );
+    mediaItems.add(item('many'));
+    playback.add(
+      PlaybackState(
+        playing: true,
+        processingState: AudioProcessingState.ready,
+        updatePosition: const Duration(seconds: 30),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
+    await tester.pumpAndSettle();
+    final list = find.byType(ListView);
+    final bounds = tester.getRect(list);
+    final scroll = tester.widget<ListView>(list).controller!;
+    final initial = scroll.offset;
+    final pause = find.widgetWithIcon(
+      MornyePlaybackButton,
+      CupertinoIcons.pause_fill,
+    );
+    final touch = await tester.startGesture(
+      Offset(bounds.center.dx, bounds.top + 180),
+    );
+    await touch.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await touch.moveBy(const Offset(0, -100));
+    await tester.pump();
+    final hidden = scroll.offset;
+    expect(hidden, greaterThan(initial));
+    expect(pause.hitTestable(), findsNothing);
+
+    playback.add(
+      PlaybackState(
+        playing: true,
+        processingState: AudioProcessingState.ready,
+        updatePosition: const Duration(seconds: 33),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(scroll.offset, closeTo(hidden, 0.01));
+    await touch.moveBy(const Offset(0, 24));
+    await tester.pump();
+    expect(scroll.offset, closeTo(hidden - 24, 0.01));
+    expect(pause.hitTestable(), findsOneWidget);
+    for (var frame = 0; frame < 15; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(scroll.offset, closeTo(hidden - 24, 0.01));
+      expect(tester.getRect(list), bounds);
+    }
+    await touch.up();
+    await tester.pumpWidget(const SizedBox());
+    expect(tester.takeException(), isNull);
+  });
+
   for (final reducedMotion in [false, true]) {
     testWidgets(
       'static cover shrinks on pause without moving controls (reduced motion: $reducedMotion)',
@@ -820,6 +890,8 @@ void main() {
     testWidgets(
       'manual lyric scrolling keeps its viewport stable while controls animate (height: $height)',
       (tester) async {
+        final clarity = ValueNotifier(0.5);
+        addTearDown(clarity.dispose);
         metadataOverrides['lyrics'] = List.generate(
           20,
           (index) =>
@@ -830,6 +902,14 @@ void main() {
           theme: MornyeTheme.build(Brightness.dark),
           size: Size(393, height),
           playback: PlaybackState(updatePosition: const Duration(seconds: 30)),
+          wrapPlayer: (player) => ValueListenableBuilder<double>(
+            valueListenable: clarity,
+            builder: (context, value, child) => Theme(
+              data: MornyeTheme.build(Brightness.dark, glassClarity: value),
+              child: child!,
+            ),
+            child: player,
+          ),
         );
         mediaItems.add(item('many'));
         await tester.pumpAndSettle();
@@ -864,6 +944,12 @@ void main() {
         final hiddenOffset = state.position.pixels;
         expect(hiddenOffset, greaterThan(initialOffset));
         expect(transport.hitTestable(), findsNothing);
+        // An inherited appearance update must not reset playback following
+        // while the user owns the scroll position.
+        clarity.value = 0.6;
+        await tester.pump();
+        await tester.pump();
+        expect(state.position.pixels, closeTo(hiddenOffset, 0.01));
         for (var frame = 0; frame < 3; frame++) {
           await tester.pump(const Duration(milliseconds: 40));
           expect(tester.getRect(list), bounds);
@@ -871,7 +957,13 @@ void main() {
           expect(state.position.pixels, closeTo(hiddenOffset, 0.01));
         }
 
-        // Continue the same drag, then reverse before the hide completes.
+        // A held drag must not expire the manual-scroll pause, even if the
+        // finger has not changed direction for longer than its idle timeout.
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(state.position.pixels, closeTo(hiddenOffset, 0.01));
+
+        // Continue the same drag and reverse while controls reappear.
         await touch.moveBy(const Offset(0, -32));
         await tester.pump();
         expect(state.position.pixels, closeTo(hiddenOffset + 32, 0.01));
@@ -888,6 +980,32 @@ void main() {
         expect(tester.getTopLeft(find.text('Second')).dy, headerTop);
         expect(transport.hitTestable(), findsNWidgets(3));
         await touch.up();
+        await tester.pumpAndSettle();
+        final releasedOffset = state.position.pixels;
+        clarity.value = 0.5;
+        await tester.pump();
+        await tester.pumpAndSettle();
+        expect(state.position.pixels, closeTo(releasedOffset, 0.01));
+        await tester.pump(const Duration(seconds: 3));
+
+        // Starting another drag cancels the previous idle timeout. It must
+        // remain paused through further scrolling in the same direction.
+        final nextTouch = await tester.startGesture(
+          Offset(bounds.center.dx, bounds.top + 100),
+        );
+        await nextTouch.moveBy(const Offset(0, -20));
+        await tester.pump();
+        await nextTouch.moveBy(const Offset(0, -40));
+        await tester.pump();
+        final nextOffset = state.position.pixels;
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(state.position.pixels, closeTo(nextOffset, 0.01));
+        await nextTouch.up();
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(seconds: 4));
+        await tester.pumpAndSettle();
+        expect(state.position.pixels, closeTo(initialOffset, 0.01));
         await tester.pumpWidget(const SizedBox());
         expect(tester.takeException(), isNull);
       },
