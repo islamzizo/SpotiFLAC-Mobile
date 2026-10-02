@@ -300,12 +300,17 @@ jobs:
           expected="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs \
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}')"
           test -n "$expected"
+          echo "Expected release certificate SHA-256: $expected"
           for apk in build/app/outputs/flutter-apk/app-*-release.apk; do
             actual="$("$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$apk" |
               awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print $2; exit}')"
-            test "$actual" = "$expected"
+            echo "$(basename "$apk"): $actual"
+            if [[ "$actual" != "$expected" ]]; then
+              echo "::error::APK certificate mismatch: $(basename "$apk")"
+              exit 1
+            fi
           done
-          echo "Release certificate SHA-256: $expected"
+          echo "All release APKs use the same persistent release certificate."
 
       - name: Upload verified Android APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
