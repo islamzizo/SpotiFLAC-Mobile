@@ -204,6 +204,14 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
     await ref.read(localLibraryProvider.notifier).cancelScan();
   }
 
+  Future<void> _pauseScan() async {
+    await ref.read(localLibraryProvider.notifier).pauseScan();
+  }
+
+  Future<void> _resumeScan() async {
+    await ref.read(localLibraryProvider.notifier).resumeScan();
+  }
+
   Future<void> _clearLibrary() async {
     final confirmed = await showAppDialog<bool>(
       context: context,
@@ -557,6 +565,7 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
                   excludedDownloadedCount: libraryState.excludedDownloadedCount,
                   isScanning: libraryState.isScanning,
                   scanIsFinalizing: libraryState.scanIsFinalizing,
+                  scanIsPaused: libraryState.scanIsPaused,
                   scanProgress: libraryState.scanProgress,
                   scanCurrentFile: libraryState.scanCurrentFile,
                   scanTotalFiles: libraryState.scanTotalFiles,
@@ -627,6 +636,7 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
                           return (
                             active: active,
                             finalizing: active && state.scanIsFinalizing,
+                            paused: active && state.scanIsPaused,
                             scanned: active ? state.scannedFiles : 0,
                             total: active ? state.scanTotalFiles : 0,
                             progress: active ? state.scanProgress : 0.0,
@@ -637,6 +647,7 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
                         source: source,
                         isScanning: scan.active,
                         isFinalizing: scan.finalizing,
+                        isPaused: scan.paused,
                         scannedFiles: scan.scanned,
                         totalFiles: scan.total,
                         progress: scan.progress,
@@ -774,10 +785,13 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
                       if (libraryState.isScanning)
                         _ScanProgressTile(
                           isFinalizing: libraryState.scanIsFinalizing,
+                          isPaused: libraryState.scanIsPaused,
                           progress: libraryState.scanProgress,
                           currentFile: libraryState.scanCurrentFile,
                           scannedFiles: libraryState.scannedFiles,
                           totalFiles: libraryState.scanTotalFiles,
+                          onPause: _pauseScan,
+                          onResume: _resumeScan,
                           onCancel: _cancelScan,
                         )
                       else ...[
@@ -858,6 +872,7 @@ class _LibrarySourceSettingsItem extends StatelessWidget {
   final LocalLibrarySource source;
   final bool isScanning;
   final bool isFinalizing;
+  final bool isPaused;
   final int scannedFiles;
   final int totalFiles;
   final double progress;
@@ -871,6 +886,7 @@ class _LibrarySourceSettingsItem extends StatelessWidget {
     required this.source,
     required this.isScanning,
     required this.isFinalizing,
+    required this.isPaused,
     required this.scannedFiles,
     required this.totalFiles,
     required this.progress,
@@ -960,6 +976,8 @@ class _LibrarySourceSettingsItem extends StatelessWidget {
         : isScanning
         ? isFinalizing
               ? context.l10n.libraryScanFinalizing
+              : isPaused
+              ? context.l10n.libraryScanPaused
               : totalFiles > 0
               ? context.l10n.librarySourceScanCount(
                   scannedFiles,
@@ -1066,6 +1084,7 @@ class _LibraryHeroCard extends StatelessWidget {
   final int excludedDownloadedCount;
   final bool isScanning;
   final bool scanIsFinalizing;
+  final bool scanIsPaused;
   final double scanProgress;
   final String? scanCurrentFile;
   final int scanTotalFiles;
@@ -1077,6 +1096,7 @@ class _LibraryHeroCard extends StatelessWidget {
     required this.excludedDownloadedCount,
     required this.isScanning,
     required this.scanIsFinalizing,
+    required this.scanIsPaused,
     required this.scanProgress,
     this.scanCurrentFile,
     required this.scanTotalFiles,
@@ -1103,6 +1123,7 @@ class _LibraryHeroCard extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final showIndeterminateProgress =
         isScanning &&
+        !scanIsPaused &&
         (scanIsFinalizing ||
             scanTotalFiles <= 0 ||
             (scannedFiles <= 0 && scanProgress <= 0));
@@ -1168,7 +1189,11 @@ class _LibraryHeroCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Icon(
-                        isScanning ? Icons.sync : Icons.music_note,
+                        isScanning
+                            ? scanIsPaused
+                                  ? Icons.pause_rounded
+                                  : Icons.sync
+                            : Icons.music_note,
                         color: colorScheme.onPrimaryContainer,
                         size: 32,
                       ),
@@ -1190,14 +1215,22 @@ class _LibraryHeroCard extends StatelessWidget {
                             SizedBox(
                               width: 12,
                               height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: colorScheme.onPrimary,
-                              ),
+                              child: scanIsPaused
+                                  ? Icon(
+                                      Icons.pause_rounded,
+                                      size: 12,
+                                      color: colorScheme.onPrimary,
+                                    )
+                                  : CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: colorScheme.onPrimary,
+                                    ),
                             ),
                             const SizedBox(width: 8),
                             Text(
-                              context.l10n.libraryScanning,
+                              scanIsPaused
+                                  ? context.l10n.libraryScanPaused
+                                  : context.l10n.libraryScanning,
                               style: TextStyle(
                                 color: colorScheme.onPrimary,
                                 fontSize: 12,
@@ -1256,7 +1289,9 @@ class _LibraryHeroCard extends StatelessWidget {
                   LinearProgressIndicator(
                     value: showIndeterminateProgress
                         ? null
-                        : scanProgress / 100,
+                        : scanTotalFiles > 0
+                        ? scanProgress / 100
+                        : 0,
                     backgroundColor: colorScheme.surfaceContainerHighest,
                     color: colorScheme.primary,
                     borderRadius: BorderRadius.circular(4),
@@ -1270,6 +1305,8 @@ class _LibraryHeroCard extends StatelessWidget {
                             scanProgress.toStringAsFixed(0),
                             scanTotalFiles,
                           )
+                        : scanIsPaused
+                        ? context.l10n.libraryScanPaused
                         : context.l10n.libraryScanning,
                     style: TextStyle(
                       fontSize: 12,
@@ -1331,26 +1368,37 @@ class _LibraryHeroCard extends StatelessWidget {
 
 class _ScanProgressTile extends StatelessWidget {
   final bool isFinalizing;
+  final bool isPaused;
   final double progress;
   final String? currentFile;
   final int scannedFiles;
   final int totalFiles;
+  final VoidCallback onPause;
+  final VoidCallback onResume;
   final VoidCallback onCancel;
 
   const _ScanProgressTile({
     required this.isFinalizing,
+    required this.isPaused,
     required this.progress,
     this.currentFile,
     required this.scannedFiles,
     required this.totalFiles,
+    required this.onPause,
+    required this.onResume,
     required this.onCancel,
   });
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    // A paused bar stays still at its last position instead of animating.
     final showIndeterminateProgress =
-        isFinalizing || totalFiles <= 0 || (scannedFiles <= 0 && progress <= 0);
+        !isPaused &&
+        (isFinalizing ||
+            totalFiles <= 0 ||
+            (scannedFiles <= 0 && progress <= 0));
+    final progressValue = totalFiles > 0 ? progress / 100 : 0.0;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1359,14 +1407,19 @@ class _ScanProgressTile extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.scanner, color: colorScheme.primary),
+              Icon(
+                isPaused ? Icons.pause_circle_outline : Icons.scanner,
+                color: colorScheme.primary,
+              ),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      context.l10n.libraryScanning,
+                      isPaused
+                          ? context.l10n.libraryScanPaused
+                          : context.l10n.libraryScanning,
                       style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         fontWeight: FontWeight.w500,
                       ),
@@ -1387,6 +1440,15 @@ class _ScanProgressTile extends StatelessWidget {
                   ],
                 ),
               ),
+              if (!isFinalizing)
+                TextButton(
+                  onPressed: isPaused ? onResume : onPause,
+                  child: Text(
+                    isPaused
+                        ? context.l10n.actionResume
+                        : context.l10n.actionPause,
+                  ),
+                ),
               TextButton(
                 onPressed: onCancel,
                 child: Text(context.l10n.actionCancel),
@@ -1395,7 +1457,7 @@ class _ScanProgressTile extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           LinearProgressIndicator(
-            value: showIndeterminateProgress ? null : progress / 100,
+            value: showIndeterminateProgress ? null : progressValue,
             backgroundColor: colorScheme.surfaceContainerHighest,
             color: colorScheme.primary,
             borderRadius: BorderRadius.circular(4),

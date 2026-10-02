@@ -2,7 +2,7 @@ use super::Backend;
 use serde::Serialize;
 use serde_json::{Value, json};
 use spotiflac_core::metadata::TrackMetadata;
-use spotiflac_providers::deezer::{self, MetadataLookup};
+use spotiflac_providers::deezer::MetadataLookup;
 use spotiflac_providers::musicbrainz::MusicBrainzOptions;
 use spotiflac_providers::resolver::{Check, ResolverError, ResolverOptions};
 use std::time::{Duration, Instant};
@@ -97,13 +97,6 @@ impl Backend {
             .map_err(|error| error.to_string())
     }
 
-    pub fn get_song_link_region(&self) -> Result<String, String> {
-        let _operation = self.enter()?;
-        self.availability
-            .region()
-            .map_err(|error| error.to_string())
-    }
-
     // The retired Settings track-ID cache is distinct from catalog caches.
     pub fn get_track_cache_size(&self) -> Result<u64, String> {
         let _operation = self.enter()?;
@@ -113,11 +106,6 @@ impl Backend {
     pub fn clear_track_id_cache(&self) -> Result<(), String> {
         let _operation = self.enter()?;
         Ok(())
-    }
-
-    pub fn parse_deezer_url(&self, url: &str) -> Result<(String, String), String> {
-        let _operation = self.enter()?;
-        deezer::parse_url(url).map_err(|error| error.to_string())
     }
 
     pub fn search_deezer(
@@ -135,15 +123,6 @@ impl Backend {
                     .as_ref(),
             )
         })
-    }
-
-    pub fn get_deezer_metadata(
-        &self,
-        kind: &str,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| self.deezer_metadata(kind, id, check))
     }
 
     pub(super) fn deezer_metadata(
@@ -173,10 +152,6 @@ impl Backend {
             let metadata = self.deezer.get_extended_metadata_by_track_id(id, check)?;
             encode(&json!({"genre":metadata.genre,"label":metadata.label,"copyright":metadata.copyright}))
         })
-    }
-
-    pub fn search_deezer_by_isrc(&self, isrc: &str, check: &Check<'_>) -> Result<String, String> {
-        self.search_deezer_by_isrc_for_item_id(isrc, "", check)
     }
 
     pub fn search_deezer_by_isrc_for_item_id(
@@ -246,135 +221,12 @@ impl Backend {
         })
     }
 
-    pub fn check_track_availability_json(
-        &self,
-        id: &str,
-        isrc: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            encode(&self.availability.check_track(id, isrc, check)?)
-        })
-    }
-
-    pub fn check_album_availability_json(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            encode(&self.availability.check_album(id, check)?)
-        })
-    }
-
-    pub fn check_availability_from_deezer_json(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            encode(&self.availability.check_from_deezer(id, check)?)
-        })
-    }
-
-    pub fn check_availability_by_platform_json(
-        &self,
-        platform: &str,
-        kind: &str,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            encode(
-                &self
-                    .availability
-                    .check_by_platform(platform, kind, id, check)?,
-            )
-        })
-    }
-
-    pub fn check_availability_from_url_json(
-        &self,
-        url: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            encode(&self.availability.check_from_url(url, check)?)
-        })
-    }
-
-    pub fn get_streaming_urls_json(&self, id: &str, check: &Check<'_>) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            encode(&self.availability.streaming_urls(id, check)?)
-        })
-    }
-
     pub fn get_deezer_id_from_spotify(
         &self,
         id: &str,
         check: &Check<'_>,
     ) -> Result<String, String> {
         self.metadata_operation(30, check, |check| self.deezer_id_from_spotify(id, check))
-    }
-
-    pub fn get_deezer_album_id_from_spotify(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            self.availability.deezer_album_id(id, check)
-        })
-    }
-
-    pub fn get_youtube_url_from_spotify(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            self.availability.youtube_url_from_spotify(id, check)
-        })
-    }
-
-    pub fn get_spotify_id_from_deezer_track(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            self.availability.platform_from_deezer(id, "spotify", check)
-        })
-    }
-
-    pub fn get_tidal_url_from_deezer_track(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            self.availability.platform_from_deezer(id, "tidal", check)
-        })
-    }
-
-    pub fn get_amazon_url_from_deezer_track(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            self.availability.platform_from_deezer(id, "amazon", check)
-        })
-    }
-
-    pub fn get_youtube_url_from_deezer_track(
-        &self,
-        id: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        self.metadata_operation(30, check, |check| {
-            self.availability.platform_from_deezer(id, "youtube", check)
-        })
     }
 }
 

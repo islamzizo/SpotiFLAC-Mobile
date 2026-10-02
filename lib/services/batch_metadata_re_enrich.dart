@@ -1,7 +1,7 @@
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 
-/// Field group keys understood by the Go re-enrich backend.
+/// Field group keys understood by the native re-enrich backend.
 class ReEnrichFields {
   static const String cover = 'cover';
   static const String lyrics = 'lyrics';

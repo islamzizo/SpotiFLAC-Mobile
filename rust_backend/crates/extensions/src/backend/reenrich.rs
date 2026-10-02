@@ -11,24 +11,6 @@ use std::io::Write;
 use std::sync::Mutex;
 
 impl Backend {
-    /// Resolve proposed tags without reading audio, downloading covers or writing files.
-    pub fn preview_reenrich_file(
-        &self,
-        request_json: &str,
-        check: &Check<'_>,
-    ) -> Result<String, String> {
-        let _operation = self.enter()?;
-        let check = || {
-            self.check()?;
-            check()
-        };
-        check()?;
-        let request = self.resolve_reenrich_request(request_json, &check)?;
-        serde_json::to_string(&json!({"method":"preview","success":true,
-            "enriched_metadata":request.result_metadata()}))
-        .map_err(|error| error.to_string())
-    }
-
     /// Execute FLAC enrichment or return the existing native FFmpeg plan.
     /// Returned cover files belong to the caller, which removes them after use.
     pub fn reenrich_file(&self, request_json: &str, check: &Check<'_>) -> Result<String, String> {

@@ -93,17 +93,17 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
   /// a download is active, but only every [_idleProgressPollEveryTicks]th
   /// tick while idle-but-queued, and not at all while paused/empty.
   bool _shouldPollDownloadProgressTick() {
-    final currentItems = state.items;
-    final hasQueuedItems = currentItems.any(
-      (item) => item.status == DownloadStatus.queued,
-    );
-    final hasActiveItems = currentItems.any(
-      (item) =>
-          item.status == DownloadStatus.downloading ||
-          item.status == DownloadStatus.finalizing,
-    );
+    // The lookup's maintained counters replace two full-queue scans per tick.
+    final lookup = state.lookup;
+    final hasItems = state.items.isNotEmpty;
+    final hasActiveItems =
+        hasItems &&
+        (lookup.activeDownloadsCount > 0 || lookup.finalizingCount > 0);
 
     if (!hasActiveItems) {
+      // With nothing downloading or finalizing, every entry counted by
+      // queuedCount has the queued status.
+      final hasQueuedItems = hasItems && lookup.queuedCount > 0;
       if (state.isPaused || !hasQueuedItems) {
         _idleProgressPollTick = 0;
         return false;
@@ -121,9 +121,9 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
 
   void _processAllDownloadProgress(Map<String, dynamic> allProgress) {
     final rawItems = allProgress['items'];
-    final items = rawItems is Map
-        ? rawItems.map((key, value) => MapEntry(key.toString(), value))
-        : const <String, dynamic>{};
+    // Native progress maps are only read here, so view them without copying
+    // the queue map and every item map on each tick.
+    final items = rawItems is Map ? rawItems : const <Object?, Object?>{};
     final currentItems = state.items;
     final lookup = state.lookup;
     _lastProgressLogBucketByItem.removeWhere((itemId, _) {
@@ -160,7 +160,7 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
     final progressUpdates = <String, _ProgressUpdate>{};
 
     for (final entry in items.entries) {
-      final itemId = entry.key;
+      final itemId = entry.key.toString();
       final localItem = lookup.byItemId[itemId];
       if (localItem == null) {
         continue;
@@ -188,7 +188,7 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
       if (rawItemProgress is! Map) {
         continue;
       }
-      final itemProgress = Map<String, dynamic>.from(rawItemProgress);
+      final itemProgress = rawItemProgress;
       final bytesReceived =
           (itemProgress['bytes_received'] as num?)?.toInt() ?? 0;
       final bytesTotal = (itemProgress['bytes_total'] as num?)?.toInt() ?? 0;
@@ -346,7 +346,7 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
         if (rawProgress is! Map) {
           return;
         }
-        final selectedProgress = Map<String, dynamic>.from(rawProgress);
+        final selectedProgress = rawProgress;
         final bytesReceived =
             (selectedProgress['bytes_received'] as num?)?.toInt() ?? 0;
         final bytesTotal =

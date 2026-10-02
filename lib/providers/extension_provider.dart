@@ -618,8 +618,9 @@ class ExtensionNotifier extends Notifier<ExtensionState> {
     return keys;
   }
 
-  /// Builds the extensions section of a backup: the store registry URL plus the
-  /// installed extensions with their id, version, enabled flag and settings.
+  /// Builds the extensions section of a backup: the store registry URL, the
+  /// installed extensions with their id, version, enabled flag and settings,
+  /// and the download and metadata provider priority order.
   /// Secret-flagged settings (tokens, API keys) are only included when
   /// [includeSecrets] is true.
   Future<Map<String, dynamic>> exportBackup({
@@ -674,7 +675,11 @@ class ExtensionNotifier extends Notifier<ExtensionState> {
       });
     }
 
-    return {'registry_url': registryUrl, 'items': items};
+    return {
+      'registry_url': registryUrl,
+      'items': items,
+      ...providerPriorityBackup(),
+    };
   }
 
   /// Restores extensions from a backup section produced by [exportBackup]:
@@ -782,6 +787,9 @@ class ExtensionNotifier extends Notifier<ExtensionState> {
     }
 
     await refreshExtensions();
+    // Reinstalled and re-enabled extensions now exist, so the saved order can
+    // be applied in full instead of defaults winning.
+    await restoreProviderPriorityBackup(data);
 
     return ExtensionRestoreResult(
       installed: installedCount,

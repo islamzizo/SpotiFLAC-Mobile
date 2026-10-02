@@ -72,58 +72,6 @@ impl DownloadState {
         self.inner.progress.remove(&item_id).map_err(Into::into)
     }
 
-    pub fn clear_all_progress(&self) -> Result<(), DownloadProgressError> {
-        self.inner.progress.clear().map_err(Into::into)
-    }
-
-    pub fn set_preparing(
-        &self,
-        item_id: String,
-        stage: String,
-    ) -> Result<(), DownloadProgressError> {
-        self.inner
-            .progress
-            .preparing(&item_id, &stage)
-            .map_err(Into::into)
-    }
-
-    pub fn set_downloading(&self, item_id: String) -> Result<(), DownloadProgressError> {
-        self.inner
-            .progress
-            .downloading(&item_id)
-            .map_err(Into::into)
-    }
-
-    pub fn set_total(&self, item_id: String, total: i64) -> Result<(), DownloadProgressError> {
-        self.inner
-            .progress
-            .set_total(&item_id, total)
-            .map_err(Into::into)
-    }
-
-    pub fn set_received(
-        &self,
-        item_id: String,
-        received: i64,
-    ) -> Result<(), DownloadProgressError> {
-        self.inner
-            .progress
-            .set_received(&item_id, received)
-            .map_err(Into::into)
-    }
-
-    pub fn set_received_with_speed(
-        &self,
-        item_id: String,
-        received: i64,
-        speed: f64,
-    ) -> Result<(), DownloadProgressError> {
-        self.inner
-            .progress
-            .set_received_with_speed(&item_id, received, speed)
-            .map_err(Into::into)
-    }
-
     pub fn set_progress(
         &self,
         item_id: String,
@@ -137,24 +85,8 @@ impl DownloadState {
             .map_err(Into::into)
     }
 
-    pub fn set_finalizing(&self, item_id: String) -> Result<(), DownloadProgressError> {
-        self.inner.progress.finalizing(&item_id).map_err(Into::into)
-    }
-
-    pub fn complete_item(&self, item_id: String) -> Result<(), DownloadProgressError> {
-        self.inner.progress.complete(&item_id).map_err(Into::into)
-    }
-
-    pub fn item_progress(&self, item_id: String) -> Result<String, DownloadProgressError> {
-        self.inner.progress.item(&item_id).map_err(Into::into)
-    }
-
     pub fn all_progress(&self) -> Result<String, DownloadProgressError> {
         self.inner.progress.snapshot().map_err(Into::into)
-    }
-
-    pub fn progress_delta(&self, since: i64) -> Result<String, DownloadProgressError> {
-        self.inner.progress.delta(since).map_err(Into::into)
     }
 
     pub fn wait_progress_delta(

@@ -21,64 +21,22 @@ extension _QueueTabBatchActions on _QueueTabState {
         onComplete: _exitSelectionMode,
       );
 
-  Future<void> _reEnrichSelectedLocalFromQueue(
-    List<UnifiedLibraryItem> allItems,
-  ) => reEnrichLocalTracks(
-    context,
-    ref,
-    _selectedItemsFromAll(allItems)
-        .map((item) => item.localItem)
-        .whereType<LocalLibraryItem>()
-        .toList(growable: false),
-    isActive: () => mounted,
-    onSelectionHide: () async {
-      _setState(() => _isSelectionMode = false);
-      _hideSelectionOverlay();
-    },
-    onSelectionRestore: () => _setState(() => _isSelectionMode = true),
-    onComplete: _exitSelectionMode,
-  );
-
-  /// Share selected tracks via system share sheet
-  Future<void> _shareSelected(List<UnifiedLibraryItem> allItems) async {
-    final itemsById = {for (final item in allItems) item.id: item};
-    final safUris = <String>[];
-    final filesToShare = <XFile>[];
-
-    for (final id in _selectedIds) {
-      final item = itemsById[id];
-      if (item == null) continue;
-      final path = item.filePath;
-      if (isContentUri(path)) {
-        if (await fileExists(path)) safUris.add(path);
-      } else if (await fileExists(path)) {
-        filesToShare.add(XFile(path));
-      }
-    }
-
-    if (safUris.isEmpty && filesToShare.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(context.l10n.selectionShareNoFiles)),
-        );
-      }
-      return;
-    }
-
-    if (safUris.isNotEmpty) {
-      try {
-        if (safUris.length == 1) {
-          await PlatformBridge.shareContentUri(safUris.first);
-        } else {
-          await PlatformBridge.shareMultipleContentUris(safUris);
-        }
-      } catch (_) {}
-    }
-
-    if (filesToShare.isNotEmpty) {
-      await SharePlus.instance.share(ShareParams(files: filesToShare));
-    }
-  }
+  Future<void> _reEnrichSelectedFromQueue(List<UnifiedLibraryItem> allItems) =>
+      reEnrichLibraryTracks(
+        context,
+        ref,
+        _selectedItemsFromAll(allItems),
+        isActive: () => mounted,
+        onSelectionHide: () async {
+          _setState(() => _isSelectionMode = false);
+          _hideSelectionOverlay();
+        },
+        onSelectionRestore: () => _setState(() => _isSelectionMode = true),
+        onComplete: () {
+          _onEmbeddedCoverChanged();
+          _exitSelectionMode();
+        },
+      );
 
   Future<void> _showBatchConvertSheet(
     BuildContext context,

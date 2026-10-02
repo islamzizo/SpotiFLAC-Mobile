@@ -4,6 +4,9 @@ use image::{DynamicImage, ImageFormat, ImageReader};
 use std::borrow::Cow;
 use std::io::Cursor;
 
+mod library;
+pub use library::library_thumbnail;
+
 pub const MAX_DOWNLOAD_BYTES: usize = 24 << 20;
 pub const LIBRARY_MAX_DIMENSION: i64 = 800;
 const MAX_DECODE_PIXELS: u64 = 16_000_000;

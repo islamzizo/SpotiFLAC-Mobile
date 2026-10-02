@@ -16,6 +16,7 @@ import com.antonkarpenko.ffmpegkit.ReturnCode
 import com.zarz.spotiflac.SafDownloadHandler.mimeTypeForExt
 import com.zarz.spotiflac.SafDownloadHandler.normalizeExt
 import com.zarz.spotiflac.NativeFinalizationPolicy.applyQualityVariantFilenameLabel
+import com.zarz.spotiflac.NativeFinalizationPolicy.artistTagValue
 import com.zarz.spotiflac.NativeFinalizationPolicy.authoritativeAlbumArtist
 import com.zarz.spotiflac.NativeFinalizationPolicy.displayAudioQuality
 import com.zarz.spotiflac.NativeFinalizationPolicy.formatIndexTag
@@ -314,6 +315,7 @@ internal fun NativeDownloadFinalizer.embedBasicMetadata(context: Context, path: 
     val shouldEmbedLyrics = shouldResolveLyrics &&
         NativeFinalizationPolicy.hasUsableLyricsContent(lyrics) &&
         !lyrics.trim().equals("[instrumental:true]", ignoreCase = true)
+    val artistTagMode = input.request.optString("artist_tag_mode", "")
     // FLAC, MP3, Opus, and M4A all have backend tag writers that edit the
     // tag block atomically without an ffmpeg remux (which drops foreign
     // frames and rewrites the whole container). The backend answers
@@ -326,7 +328,7 @@ internal fun NativeDownloadFinalizer.embedBasicMetadata(context: Context, path: 
                 .put("artist", artist)
                 .put("album", album)
                 .put("album_artist", albumArtist)
-                .put("artist_tag_mode", input.request.optString("artist_tag_mode", ""))
+                .put("artist_tag_mode", artistTagMode)
                 .put("date", date)
                 .put("isrc", isrc)
                 .put("composer", composer)
@@ -368,11 +370,13 @@ internal fun NativeDownloadFinalizer.embedBasicMetadata(context: Context, path: 
     val isOpus = format == "opus"
     val coverFile = if (isM4a || isOpus) downloadCoverForMetadata(context, input) else null
     val labelKey = if (isM4a) "organization" else "label"
+    // The backend writer applies the artist mode itself; this FFmpeg fallback
+    // must store the same primary artist when that mode is selected.
     val metadataPairs = mutableListOf(
         "title" to title,
-        "artist" to artist,
+        "artist" to artistTagValue(artist, artistTagMode),
         "album" to album,
-        "album_artist" to albumArtist,
+        "album_artist" to artistTagValue(albumArtist, artistTagMode),
         "date" to date,
         "track" to trackNumber,
         "disc" to discNumber,

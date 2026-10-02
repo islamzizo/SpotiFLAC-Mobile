@@ -1,5 +1,4 @@
 use crate::matching::uppercase;
-use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError, Weak};
@@ -246,47 +245,6 @@ impl IndexCache {
     pub fn clear(&self) {
         self.indexes.lock().expect("ISRC cache lock").clear();
     }
-
-    pub fn prebuild(
-        &self,
-        directory: &str,
-        files: &dyn IndexFiles,
-        check: Check<'_>,
-    ) -> Result<(), String> {
-        if directory.is_empty() {
-            return Err("output directory is required".into());
-        }
-        self.index(directory, files, true, check).map(|_| ())
-    }
-
-    pub fn check_batch(
-        &self,
-        directory: &str,
-        tracks: &[TrackQuery],
-        files: &dyn IndexFiles,
-        check: Check<'_>,
-    ) -> Result<Vec<TrackExistence>, String> {
-        let index = self.index(directory, files, false, check)?;
-        let index = index.lock().expect("ISRC index lock");
-        tracks
-            .iter()
-            .map(|track| {
-                check()?;
-                // Go's batch API deliberately trusts the cache without stat calls.
-                let path = index
-                    .entries
-                    .get(&uppercase(&track.isrc))
-                    .filter(|_| !track.isrc.is_empty());
-                Ok(TrackExistence {
-                    isrc: track.isrc.clone(),
-                    exists: path.is_some(),
-                    file_path: path.cloned().unwrap_or_default(),
-                    track_name: track.track_name.clone(),
-                    artist_name: track.artist_name.clone(),
-                })
-            })
-            .collect()
-    }
 }
 
 fn wait_for_builder<'a>(
@@ -301,85 +259,4 @@ fn wait_for_builder<'a>(
             Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(5)),
         }
     }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct TrackQuery {
-    pub isrc: String,
-    pub track_name: String,
-    pub artist_name: String,
-}
-
-impl<'de> Deserialize<'de> for TrackQuery {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Visitor;
-        impl<'de> serde::de::Visitor<'de> for Visitor {
-            type Value = TrackQuery;
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("a track object")
-            }
-            fn visit_map<M: serde::de::MapAccess<'de>>(
-                self,
-                mut map: M,
-            ) -> Result<TrackQuery, M::Error> {
-                let mut track = TrackQuery::default();
-                while let Some(key) = map.next_key::<String>()? {
-                    let field = if equal_field(&key, "isrc") {
-                        Some(&mut track.isrc)
-                    } else if equal_field(&key, "track_name") {
-                        Some(&mut track.track_name)
-                    } else if equal_field(&key, "artist_name") {
-                        Some(&mut track.artist_name)
-                    } else {
-                        None
-                    };
-                    if let Some(field) = field {
-                        if let Some(value) = map.next_value::<Option<String>>()? {
-                            *field = value;
-                        }
-                    } else {
-                        map.next_value::<serde::de::IgnoredAny>()?;
-                    }
-                }
-                Ok(track)
-            }
-        }
-        deserializer.deserialize_map(Visitor)
-    }
-}
-
-pub fn parse_tracks(json: &str) -> Result<Vec<TrackQuery>, String> {
-    // Go matches the snake_case JSON tags, folds field-name case, and ignores
-    // null string values without overwriting an earlier duplicate field.
-    serde_json::from_str::<Option<Vec<Option<TrackQuery>>>>(&crate::text::json_surrogates(json))
-        .map(|tracks| {
-            tracks
-                .unwrap_or_default()
-                .into_iter()
-                .map(Option::unwrap_or_default)
-                .collect()
-        })
-        .map_err(|error| format!("failed to parse tracks JSON: {error}"))
-}
-
-fn equal_field(value: &str, target: &str) -> bool {
-    value.eq_ignore_ascii_case(target)
-        || (value.chars().count() == target.len()
-            && value.chars().zip(target.chars()).all(|(actual, expected)| {
-                actual.eq_ignore_ascii_case(&expected)
-                    || (actual == 'ſ' && expected == 's')
-                    || (actual == 'K' && expected == 'k')
-            }))
-}
-
-#[derive(Debug, Serialize)]
-pub struct TrackExistence {
-    pub isrc: String,
-    pub exists: bool,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub file_path: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub track_name: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub artist_name: String,
 }

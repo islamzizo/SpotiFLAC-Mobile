@@ -50,8 +50,8 @@ class AppSwitch extends StatelessWidget {
             enabled &&
             !MediaQuery.disableAnimationsOf(context) &&
             !MediaQuery.highContrastOf(context) &&
-            (!ref.watch(lowEndDeviceProvider) ||
-                ref.watch(backdropBlurEnabledProvider));
+            // One shader lens per switch; settings pages show many at once.
+            ref.watch(mornyeLiquidGlassProvider);
         final inactive = scheme.brightness == Brightness.dark
             ? const Color(0xff39393d)
             : const Color(0xff8e8e93);

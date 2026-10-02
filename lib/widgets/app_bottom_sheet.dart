@@ -42,39 +42,6 @@ class AppSheetHandle extends StatelessWidget {
   }
 }
 
-/// A modal-sheet surface whose height and inner scroll position share one drag.
-///
-/// The child must attach the supplied [ScrollController] to its primary
-/// vertical scroll view. Pulling down at the top then moves the whole surface;
-/// releasing either restores it or dismisses it at the minimum extent.
-class AppDraggableSheet extends StatelessWidget {
-  const AppDraggableSheet({
-    super.key,
-    required this.builder,
-    this.initialChildSize = 0.88,
-    this.minChildSize = 0.25,
-    this.maxChildSize = 0.88,
-  });
-
-  final ScrollableWidgetBuilder builder;
-  final double initialChildSize;
-  final double minChildSize;
-  final double maxChildSize;
-
-  @override
-  Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      expand: false,
-      snap: true,
-      shouldCloseOnMinExtent: true,
-      initialChildSize: initialChildSize,
-      minChildSize: minChildSize,
-      maxChildSize: maxChildSize,
-      builder: builder,
-    );
-  }
-}
-
 /// Standard chrome for modal sheet content: drag handle, optional title block,
 /// height cap, keyboard inset and bottom safe area, so each sheet only supplies
 /// its own body.

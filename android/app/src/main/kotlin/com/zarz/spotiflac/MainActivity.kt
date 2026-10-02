@@ -81,6 +81,7 @@ class MainActivity: FlutterFragmentActivity() {
     private var concertCalendarChannel: MethodChannel? = null
     internal val coreBackend: CoreBackend by lazy { createCoreBackend(applicationContext) }
     private val nativeBackendMethods = setOf(
+        "setScreenAwake",
         "getBackendImplementations",
         "ensureInstallMarker",
         "prepareRuntimeState",
@@ -92,16 +93,16 @@ class MainActivity: FlutterFragmentActivity() {
         "editFileMetadata",
         "reEnrichFile",
         "setLibraryCoverCacheDir",
-        "scanLibraryFolder",
         "scanLibraryFolderToNDJSONFile",
         "scanLibraryFolderIncremental",
         "scanLibraryFolderIncrementalFromSnapshot",
-        "scanSafTree",
         "scanSafTreeToNDJSONFile",
         "scanSafTreeIncremental",
         "scanSafTreeIncrementalFromSnapshot",
         "getLibraryScanProgress",
         "cancelLibraryScan",
+        "pauseLibraryScan",
+        "resumeLibraryScan",
         "parseCueSheet",
         "pickSafTree",
         "safExists",
@@ -136,6 +137,9 @@ class MainActivity: FlutterFragmentActivity() {
         "stopDownloadService",
         "updateDownloadServiceProgress",
         "isDownloadServiceRunning",
+        "startBackgroundWork",
+        "updateBackgroundWork",
+        "stopBackgroundWork",
         "startNativeDownloadWorker",
         "appendNativeDownloadWorkerRequests",
         "finishNativeDownloadWorkerPreparation",
@@ -165,6 +169,7 @@ class MainActivity: FlutterFragmentActivity() {
     private val playbackLeaseLock = Any()
     private val playbackLeases = LinkedHashMap<String, ParcelFileDescriptor>()
     @Volatile internal var safScanCancel = false
+    @Volatile internal var safScanPaused = false
     @Volatile internal var safScanActive = false
     private val safTreeLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -537,14 +542,12 @@ class MainActivity: FlutterFragmentActivity() {
         }
     }
 
-    private fun updateDownloadProgressSeq(payload: String) {
-        try {
-            val objectValue = JSONObject(payload)
-            val seq = objectValue.optLong("seq", lastDownloadProgressSeq)
-            if (objectValue.optBoolean("reset", false) || seq > lastDownloadProgressSeq) {
-                lastDownloadProgressSeq = seq
-            }
-        } catch (_: Exception) {}
+    private fun updateDownloadProgressSeq(progress: Any?) {
+        val objectValue = progress as? Map<*, *> ?: return
+        val seq = (objectValue["seq"] as? Number)?.toLong() ?: lastDownloadProgressSeq
+        if (objectValue["reset"] == true || seq > lastDownloadProgressSeq) {
+            lastDownloadProgressSeq = seq
+        }
     }
 
     private fun startDownloadProgressStream(sink: EventChannel.EventSink) {
@@ -558,16 +561,19 @@ class MainActivity: FlutterFragmentActivity() {
             try {
                 while (isActive && downloadProgressConnection === connection) {
                     try {
-                        val payload = withContext(Dispatchers.IO) {
+                        // Decode once on IO. Reset snapshots of large queues
+                        // previously parsed twice on the UI thread.
+                        val (payload, progress) = withContext(Dispatchers.IO) {
                             val reader = connection.get() ?: coreBackend.openDownloadProgress().also { connection.set(it) }
                             ensureActive()
-                            reader.waitDelta(lastDownloadProgressSeq, 15_000L)
+                            val payload = reader.waitDelta(lastDownloadProgressSeq, 15_000L)
+                            payload to if (payload.isEmpty()) null else parseJsonPayload(payload)
                         }
                         if (!isActive || downloadProgressConnection !== connection) break
                         if (payload.isNotEmpty() && payload != lastDownloadProgressPayload) {
-                            updateDownloadProgressSeq(payload)
+                            updateDownloadProgressSeq(progress)
                             lastDownloadProgressPayload = payload
-                            sink.success(parseJsonPayload(payload))
+                            sink.success(progress)
                             delay(250L)
                         }
                     } catch (e: Exception) {
@@ -945,11 +951,9 @@ class MainActivity: FlutterFragmentActivity() {
             } catch (_: Exception) {}
         }
         libraryStorageReceiver = null
-        try {
-            coreBackend.cleanupExtensions()
-        } catch (e: Exception) {
-            android.util.Log.w("SpotiFLAC", "Failed to cleanup extensions on destroy: ${e.message}")
-        }
+        // The backend belongs to the process/shared Flutter engine and download
+        // service. Activity recreation must not shut it down (or wait for its
+        // active scans/downloads on the UI thread).
         stopDownloadProgressStream()
         stopLibraryScanProgressStream()
         closeAllSafPlaybackLeases()
@@ -1080,6 +1084,15 @@ class MainActivity: FlutterFragmentActivity() {
                         return@launch
                     }
                     when (call.method) {
+                        "setScreenAwake" -> {
+                            val flag = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                            if (call.argument<Boolean>("enabled") == true) {
+                                window.addFlags(flag)
+                            } else {
+                                window.clearFlags(flag)
+                            }
+                            result.success(null)
+                        }
                         "consumeVerificationNotification" -> {
                             val payload = pendingVerificationNotification
                             pendingVerificationNotification = null
@@ -1774,6 +1787,29 @@ class MainActivity: FlutterFragmentActivity() {
                         "isDownloadServiceRunning" -> {
                             result.success(DownloadService.isServiceRunning())
                         }
+                        "startBackgroundWork" -> {
+                            result.success(
+                                BackgroundWorkService.start(
+                                    this@MainActivity,
+                                    call.argument<String>("kind") ?: "",
+                                    call.argument<String>("title") ?: "",
+                                    call.argument<String>("text") ?: "",
+                                ),
+                            )
+                        }
+                        "updateBackgroundWork" -> {
+                            BackgroundWorkService.update(
+                                call.argument<String>("kind") ?: "",
+                                call.argument<String>("title") ?: "",
+                                call.argument<String>("text") ?: "",
+                                call.argument<Int>("progress") ?: -1,
+                            )
+                            result.success(null)
+                        }
+                        "stopBackgroundWork" -> {
+                            BackgroundWorkService.stop(call.argument<String>("kind") ?: "")
+                            result.success(null)
+                        }
                         "startNativeDownloadWorker" -> {
                             val requestsJson = call.argument<String>("requests_json") ?: "[]"
                             val settingsJson = call.argument<String>("settings_json") ?: "{}"
@@ -1896,14 +1932,6 @@ class MainActivity: FlutterFragmentActivity() {
                             }
                             result.success(null)
                         }
-                        "scanLibraryFolder" -> {
-                            val folderPath = call.argument<String>("folder_path") ?: ""
-                            val response = withContext(Dispatchers.IO) {
-                                safScanActive = false
-                                bridgeJsonResult(coreBackend.scanLibraryFolder(folderPath))
-                            }
-                            result.success(response)
-                        }
                         "scanLibraryFolderToNDJSONFile" -> {
                             val folderPath = call.argument<String>("folder_path") ?: ""
                             val outputPath = call.argument<String>("output_path") ?: ""
@@ -1944,13 +1972,6 @@ class MainActivity: FlutterFragmentActivity() {
                                         snapshotPath,
                                     )
                                 )
-                            }
-                            result.success(response)
-                        }
-                        "scanSafTree" -> {
-                            val treeUri = call.argument<String>("tree_uri") ?: ""
-                            val response = withContext(Dispatchers.IO) {
-                                scanSafTree(treeUri)
                             }
                             result.success(response)
                         }
@@ -2000,7 +2021,22 @@ class MainActivity: FlutterFragmentActivity() {
                         "cancelLibraryScan" -> {
                             withContext(Dispatchers.IO) {
                                 safScanCancel = true
+                                safScanPaused = false
                                 coreBackend.cancelLibraryScan()
+                            }
+                            result.success(null)
+                        }
+                        "pauseLibraryScan" -> {
+                            withContext(Dispatchers.IO) {
+                                safScanPaused = true
+                                coreBackend.pauseLibraryScan()
+                            }
+                            result.success(null)
+                        }
+                        "resumeLibraryScan" -> {
+                            withContext(Dispatchers.IO) {
+                                safScanPaused = false
+                                coreBackend.resumeLibraryScan()
                             }
                             result.success(null)
                         }

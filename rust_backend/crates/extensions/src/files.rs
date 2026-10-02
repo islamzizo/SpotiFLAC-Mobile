@@ -323,6 +323,19 @@ impl FilePath {
         self.root.directory.metadata(&self.relative)
     }
 
+    /// Validates only the final component, for walkers whose parent directory
+    /// was already checked by [`Self::native_display`] or by this method. One
+    /// lstat replaces a per-component walk plus separate size and time stats.
+    pub(crate) fn native_child_metadata(&self) -> io::Result<cap_std::fs::Metadata> {
+        let metadata = self.root.directory.symlink_metadata(&self.relative)?;
+        if metadata.is_symlink() || (!metadata.is_file() && !metadata.is_dir()) {
+            return Err(io::Error::other(
+                "native media path must not contain symlinks or special files",
+            ));
+        }
+        Ok(metadata)
+    }
+
     pub(crate) fn entries(&self) -> io::Result<Vec<(String, bool)>> {
         let mut entries = self
             .root

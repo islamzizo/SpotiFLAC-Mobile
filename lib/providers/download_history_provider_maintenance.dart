@@ -272,6 +272,7 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
 
   bool _shouldBackfillAudioMetadata(DownloadHistoryItem item) {
     return item.lyricsMetadataScanVersion < 1 ||
+        item.replayGainMetadataScanVersion < 1 ||
         _needsAverageBitrateBackfill(item) ||
         _shouldBackfillAudioMetadataIgnoringBitrate(item);
   }
@@ -506,6 +507,10 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
         'totalDiscs': totalDiscs,
         'hasLyrics': hasLyrics,
         'lyricsMetadataScanVersion': lyricsMetadataScanVersion,
+        if (replayGainMetadataWasRead(result)) ...{
+          'hasReplayGain': metadataHasReplayGain(result),
+          'replayGainMetadataScanVersion': 1,
+        },
       };
     } catch (e) {
       _historyLog.d('Audio metadata probe failed for $filePath: $e');
@@ -562,6 +567,7 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
 
         Map<String, dynamic>? probed;
         if (item.lyricsMetadataScanVersion < 1 ||
+            item.replayGainMetadataScanVersion < 1 ||
             _shouldBackfillAudioMetadataIgnoringBitrate(item)) {
           probed = await _probeAudioMetadata(
             item,
@@ -609,6 +615,9 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
         final resolvedHasLyrics = probed['hasLyrics'] as bool?;
         final resolvedLyricsScanVersion =
             probed['lyricsMetadataScanVersion'] as int?;
+        final resolvedHasReplayGain = probed['hasReplayGain'] as bool?;
+        final resolvedReplayGainScanVersion =
+            probed['replayGainMetadataScanVersion'] as int?;
 
         final qualityChanged =
             resolvedQuality != null && resolvedQuality != item.quality;
@@ -639,6 +648,12 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
         final lyricsScanVersionChanged =
             resolvedLyricsScanVersion != null &&
             resolvedLyricsScanVersion != item.lyricsMetadataScanVersion;
+        final replayGainChanged =
+            resolvedHasReplayGain != null &&
+            resolvedHasReplayGain != item.hasReplayGain;
+        final replayGainScanVersionChanged =
+            resolvedReplayGainScanVersion != null &&
+            resolvedReplayGainScanVersion != item.replayGainMetadataScanVersion;
 
         if (!qualityChanged &&
             !bitDepthChanged &&
@@ -652,7 +667,9 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
             !discNumberChanged &&
             !totalDiscsChanged &&
             !hasLyricsChanged &&
-            !lyricsScanVersionChanged) {
+            !lyricsScanVersionChanged &&
+            !replayGainChanged &&
+            !replayGainScanVersionChanged) {
           continue;
         }
 
@@ -670,6 +687,8 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
           totalDiscs: resolvedTotalDiscs,
           hasLyrics: resolvedHasLyrics,
           lyricsMetadataScanVersion: resolvedLyricsScanVersion,
+          hasReplayGain: resolvedHasReplayGain,
+          replayGainMetadataScanVersion: resolvedReplayGainScanVersion,
         );
         updatedItems ??= [...items];
         updatedItems[index] = updated;

@@ -328,13 +328,18 @@ Future<void> backfillPathKeys(
   await batch.commit(noResult: true);
 }
 
+/// [replaceExisting] may be false when the caller knows [table] holds no keys
+/// for [id] yet, such as the first row for an id in a fresh staging table.
 void putPathKeysInBatch(
   Batch batch,
   String table,
   String id,
-  String? filePath,
-) {
-  batch.delete(table, where: 'item_id = ?', whereArgs: [id]);
+  String? filePath, {
+  bool replaceExisting = true,
+}) {
+  if (replaceExisting) {
+    batch.delete(table, where: 'item_id = ?', whereArgs: [id]);
+  }
   for (final key in buildPathMatchKeys(filePath)) {
     batch.insert(table, {
       'item_id': id,

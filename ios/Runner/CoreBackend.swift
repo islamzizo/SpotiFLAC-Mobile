@@ -173,11 +173,12 @@ protocol CoreBackend {
     func ensureAc4Config(path: String, reference: String) throws -> String
     func writeAc4Metadata(path: String, metadataJson: String, coverPath: String) throws -> String
     func setLibraryCoverCacheDirectory(path: String) throws
-    func scanLibraryFolder(folder: String) throws -> String
     func scanLibraryFolderToNdjsonFile(folder: String, output: String) throws -> Int
     func scanLibraryFolderIncremental(folder: String, existing: String) throws -> String
     func getLibraryScanProgress() throws -> String
     func cancelLibraryScan() throws
+    func pauseLibraryScan() throws
+    func resumeLibraryScan() throws
     func parseCueSheet(path: String, audioDirectory: String) throws -> String
     func openDownloadDirectory(path: String) throws -> CoreDirectoryScope
     func createTemporaryMediaFile(prefix: String, suffix: String) throws -> URL
@@ -318,6 +319,14 @@ final class RustCoreBackend: CoreBackend {
         return try block(current)
     }
 
+    private func withMediaFiles<T>(_ paths: [String], block: (ExtensionManager) throws -> T) throws -> T {
+        let directories = try paths.filter { !$0.isEmpty }.map { path -> String in
+            guard path.hasPrefix("/") else { throw failure("Media paths must be absolute") }
+            return URL(fileURLWithPath: path).deletingLastPathComponent().path
+        }
+        return try withLibraryDirectories(Array(Set(directories)), block: block)
+    }
+
     func setLibraryCoverCacheDirectory(path: String) throws {
         ownerLock.lock()
         defer { ownerLock.unlock() }
@@ -330,12 +339,6 @@ final class RustCoreBackend: CoreBackend {
         catch { next?.close(); throw error }
         libraryCoverScope?.close()
         libraryCoverScope = next
-    }
-
-    func scanLibraryFolder(folder: String) throws -> String {
-        try withLibraryDirectories([folder]) {
-            try $0.scanLibraryFolder(folder: URL(fileURLWithPath: folder).resolvingSymlinksInPath().standardizedFileURL.path, lease: nil)
-        }
     }
 
     func scanLibraryFolderToNdjsonFile(folder: String, output: String) throws -> Int {
@@ -375,6 +378,20 @@ final class RustCoreBackend: CoreBackend {
         let current = manager
         ownerLock.unlock()
         try current?.cancelLibraryScan()
+    }
+
+    func pauseLibraryScan() throws {
+        ownerLock.lock()
+        let current = manager
+        ownerLock.unlock()
+        try current?.pauseLibraryScan()
+    }
+
+    func resumeLibraryScan() throws {
+        ownerLock.lock()
+        let current = manager
+        ownerLock.unlock()
+        try current?.resumeLibraryScan()
     }
 
     func parseCueSheet(path: String, audioDirectory: String) throws -> String {
@@ -489,7 +506,10 @@ final class RustCoreBackend: CoreBackend {
     }
 
     func editFileMetadata(path: String, metadataJson: String) throws -> String {
-        try owner().editFileMetadata(path: URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path, metadataJson: metadataJson, lease: nil)
+        let fields = try JSONSerialization.jsonObject(with: Data(metadataJson.utf8), options: [.fragmentsAllowed]) as? [String: Any]
+        return try withMediaFiles([path, fields?["cover_path"] as? String ?? ""]) {
+            try $0.editFileMetadata(path: mediaPath(path), metadataJson: metadataJson, lease: nil)
+        }
     }
 
     private func mediaPath(_ path: String) -> String {
@@ -505,19 +525,29 @@ final class RustCoreBackend: CoreBackend {
             request["file_path"] = mediaPath(path)
         }
         let data = try JSONSerialization.data(withJSONObject: request)
-        return try owner().reenrichFile(requestJson: String(decoding: data, as: UTF8.self), lease: nil)
+        let resolved = String(decoding: data, as: UTF8.self)
+        if request["preview_only"] as? Bool != true, let path = request["file_path"] as? String, !path.isEmpty {
+            return try withMediaFiles([path]) { try $0.reenrichFile(requestJson: resolved, lease: nil) }
+        }
+        return try owner().reenrichFile(requestJson: resolved, lease: nil)
     }
 
     func rewriteSplitArtistTags(path: String, artist: String, albumArtist: String) throws -> String {
-        try owner().rewriteSplitArtistTags(path: mediaPath(path), artist: artist, albumArtist: albumArtist, lease: nil)
+        try withMediaFiles([path]) {
+            try $0.rewriteSplitArtistTags(path: mediaPath(path), artist: artist, albumArtist: albumArtist, lease: nil)
+        }
     }
 
     func extractCoverToFile(audioPath: String, outputPath: String) throws {
-        try owner().extractCoverToFile(audioPath: mediaPath(audioPath), outputPath: mediaPath(outputPath), lease: nil)
+        try withMediaFiles([audioPath, outputPath]) {
+            try $0.extractCoverToFile(audioPath: mediaPath(audioPath), outputPath: mediaPath(outputPath), lease: nil)
+        }
     }
 
     func writeM4aFreeformTags(path: String, metadataJson: String) throws -> String {
-        try owner().writeM4aFreeformTags(path: mediaPath(path), metadataJson: metadataJson, lease: nil)
+        try withMediaFiles([path]) {
+            try $0.writeM4aFreeformTags(path: mediaPath(path), metadataJson: metadataJson, lease: nil)
+        }
     }
 
     func ensureAc4Config(path: String, reference: String) throws -> String {
@@ -611,11 +641,7 @@ final class RustCoreBackend: CoreBackend {
         case "setRepoRegistryUrl": try repositoryOwner().setRegistryUrl(url: string("registry_url")); return nil
         case "clearRepoRegistryUrl": try repositoryOwner().clearRegistryUrl(); return nil
         case "getRepoExtensions": return try repositoryOwner().extensions(forceRefresh: args["force_refresh"] as? Bool ?? false)
-        case "searchRepoExtensions": return try repositoryOwner().search(query: string("query"), category: string("category"))
-        case "getRepoCategories":
-            return String(decoding: try JSONSerialization.data(withJSONObject: repositoryOwner().categories()), as: UTF8.self)
         case "downloadRepoExtension": return try repositoryOwner().download(extensionId: string("extension_id"), destinationDirectory: string("dest_dir"))
-        case "clearRepoCache": try repositoryOwner().clearCache(); return nil
         case "cleanupExtensions": shutdownOwner(); return nil
         case "buildFilename": return try buildFilename(template: string("template"), metadataJson: string("metadata", "{}"))
         case "sanitizeFilename": return sanitizeFilename(filename: string("filename"))
@@ -630,7 +656,7 @@ final class RustCoreBackend: CoreBackend {
             defer { ownerLock.unlock() }
             try manager?.environment().logBuffer().clear()
             return nil
-        case "setLoggingEnabled", "setAllowPrivateNetwork", "setDownloadFallbackExtensionIds", "setLyricsProviders", "setLyricsFetchOptions", "setNetworkCompatibilityOptions", "setSongLinkNetworkOptions":
+        case "setLoggingEnabled", "setAllowPrivateNetwork", "setDownloadFallbackExtensionIds", "setLyricsProviders", "setLyricsFetchOptions", "setNetworkCompatibilityOptions":
             ownerLock.lock()
             defer { ownerLock.unlock() }
             switch method {
@@ -642,7 +668,7 @@ final class RustCoreBackend: CoreBackend {
                 let allowed = args["allowed"] as? Bool ?? false
                 try manager?.environment().setAllowPrivateNetwork(allow: allowed)
                 allowPrivateNetwork = allowed
-            case "setNetworkCompatibilityOptions", "setSongLinkNetworkOptions":
+            case "setNetworkCompatibilityOptions":
                 let allowed = args["allow_http"] as? Bool ?? false
                 let insecureTLS = args["insecure_tls"] as? Bool ?? false
                 try manager?.environment().setNetworkCompatibilityOptions(allowHttp: allowed, insecureTls: insecureTLS)
@@ -681,7 +707,6 @@ final class RustCoreBackend: CoreBackend {
         case "checkExtensionUpgrade": return try current.checkUpgrade(packagePath: string("file_path"))
         case "getInstalledExtensions": return try current.installed()
         case "setExtensionEnabled": try current.setEnabled(extensionId: string("extension_id"), enabled: args["enabled"] as? Bool ?? false); return nil
-        case "unloadExtension": try current.unload(extensionId: string("extension_id")); return nil
         case "removeExtension": try current.remove(extensionId: string("extension_id")); return nil
         case "getExtensionSettings": return try current.environment().settings(extensionId: string("extension_id"))
         case "setExtensionSettings": try current.updateSettings(extensionId: string("extension_id"), settingsJson: string("settings", "{}")); return nil
@@ -695,29 +720,29 @@ final class RustCoreBackend: CoreBackend {
             return try current.getProviderMetadataJson(providerId: string("provider_id"), resourceType: string("resource_type"), resourceId: string("resource_id"), lease: nil)
         case "findCollectionAcrossExtensions":
             return try current.findCollectionAcrossExtensionsJson(requestJson: arguments as? String ?? "{}", lease: nil)
-        case "enrichTrackWithExtension": return try current.enrichTrackJson(extensionId: string("extension_id"), trackJson: string("track", "{}"))
         case "handleURLWithExtension": return try current.handleUrlJson(url: string("url"))
         case "findURLHandler": return try current.findUrlHandler(url: string("url")) ?? ""
         case "searchDeezerByISRC": return try current.searchDeezerByIsrcForItemId(isrc: string("isrc"), itemId: string("item_id"), lease: nil)
         case "getDeezerExtendedMetadata": return try current.getDeezerExtendedMetadata(trackId: string("track_id"), lease: nil)
         case "convertSpotifyToDeezer": return try current.convertSpotifyToDeezer(resourceType: string("resource_type"), spotifyId: string("spotify_id"), lease: nil)
-        case "getSpotifyIDFromDeezerTrack": return try current.getSpotifyIdFromDeezerTrack(trackId: string("deezer_track_id"), lease: nil)
-        case "getTidalURLFromDeezerTrack": return try current.getTidalUrlFromDeezerTrack(trackId: string("deezer_track_id"), lease: nil)
         case "getTrackPlatformLinks": return try current.getTrackPlatformLinksJson(spotifyId: string("spotify_id"), isrc: string("isrc"), lease: nil)
         case "fetchMusicBrainzTags":
             let genre = (try? current.fetchMusicBrainzGenreByIsrc(isrc: string("isrc"), lease: nil)) ?? ""
             let albumArtist = (try? current.fetchMusicBrainzAlbumArtistByIsrc(isrc: string("isrc"), albumName: string("album_name"), lease: nil)) ?? ""
             return String(decoding: try JSONSerialization.data(withJSONObject: ["genre": genre, "album_artist": albumArtist]), as: UTF8.self)
         case "getTrackCacheSize": return Int(try current.getTrackCacheSize())
-        case "readAudioMetadata": return try current.readAudioMetadata(path: string("file_path"), hint: "", cacheKey: "", lease: nil)
+        case "readAudioMetadata":
+            let path = string("file_path")
+            return try withMediaFiles([path]) {
+                try $0.readAudioMetadata(path: mediaPath(path), hint: "", cacheKey: "", lease: nil)
+            }
         case "clearTrackCache": try current.clearTrackIdCache(); return nil
         case "setMetadataLanguage": try current.setMetadataLanguage(tag: string("tag")); return nil
-        case "downloadByStrategy", "downloadWithExtensions":
+        case "downloadByStrategy":
             guard let request = arguments as? String else {
                 throw NSError(domain: "CoreBackend", code: 1, userInfo: [NSLocalizedDescriptionKey: "Download request must be a JSON string"])
             }
             return try withFFmpegCommands(current) {
-                if method == "downloadWithExtensions" { return try current.downloadWithExtensionsJson(requestJson: request) }
                 return try current.downloadByStrategy(requestJson: request)
             }
         case "getAllDownloadProgress": return try current.environment().downloadState().allProgress()
@@ -726,16 +751,9 @@ final class RustCoreBackend: CoreBackend {
         case "cancelDownload": try current.environment().downloadState().cancelDownload(itemId: string("item_id")); return nil
         case "resetDownloadCancel": try current.environment().downloadState().resetDownloadCancel(itemId: string("item_id")); return nil
         case "getExtensionPendingAuth": return try current.getExtensionPendingAuthJson(extensionId: string("extension_id"))
-        case "setExtensionAuthCode": try current.environment().setAuthCode(extensionId: string("extension_id"), code: string("auth_code")); return nil
         case "completeExtensionSessionGrant":
             try completeSessionGrant(current, id: string("extension_id"), grant: string("grant"))
             return true
-        case "setExtensionTokens":
-            try current.environment().setAuthTokens(extensionId: string("extension_id"), accessToken: string("access_token"), refreshToken: string("refresh_token"), expiresIn: (args["expires_in"] as? NSNumber)?.int64Value ?? 0)
-            return nil
-        case "clearExtensionPendingAuth": try current.environment().clearPendingAuth(extensionId: string("extension_id")); return nil
-        case "isExtensionAuthenticated": return try current.environment().isAuthenticated(extensionId: string("extension_id"))
-        case "getAllPendingAuthRequests": return try current.environment().allPendingAuth()
         case "getLyricsLRC", "getLyricsLRCWithSource", "fetchAndSaveLyrics":
             let request = LyricsRequest(
                 spotifyId: string("spotify_id"),
@@ -748,18 +766,6 @@ final class RustCoreBackend: CoreBackend {
             if method == "getLyricsLRCWithSource" { return try current.getLyricsLrcWithSource(request: request, lease: nil) }
             try current.fetchAndSaveLyrics(request: request, outputPath: string("output_path"), lease: nil)
             return "{\"success\":true}"
-        case "getPendingFFmpegCommand":
-            return try current.environment().ffmpegCommands().getCommand(commandId: string("command_id"))
-        case "getAllPendingFFmpegCommands":
-            return try current.environment().ffmpegCommands().pending()
-        case "setFFmpegCommandResult":
-            _ = try current.environment().ffmpegCommands().complete(
-                commandId: string("command_id"),
-                success: args["success"] as? Bool ?? false,
-                output: string("output"),
-                error: string("error")
-            )
-            return nil
         case "runPostProcessingV2":
             return try withFFmpegCommands(current) {
                 try current.runPostProcessing(inputJson: string("input"), metadataJson: string("metadata"), timeoutMs: 120_000)
@@ -773,8 +779,6 @@ final class RustCoreBackend: CoreBackend {
             let priorities = try JSONSerialization.jsonObject(with: Data(current.providerPriorities().utf8)) as! [String: Any]
             let value = priorities[method == "getProviderPriority" ? "download" : "metadata"] as? [String] ?? []
             return String(decoding: try JSONSerialization.data(withJSONObject: value), as: UTF8.self)
-        case "getLyricsProviders": return try current.getLyricsProvidersJson()
-        case "getLyricsFetchOptions": return try current.getLyricsFetchOptionsJson()
         case "getAvailableLyricsProviders": return try current.getAvailableLyricsProvidersJson()
         default: throw failure("Rust application method is not connected yet: \(method)")
         }

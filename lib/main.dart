@@ -92,6 +92,11 @@ void main() {
             deviceSupportsBackdropBlurProvider.overrideWithValue(
               runtimeProfile.enableBackdropBlur,
             ),
+            // The RAM tiers describe Android hardware. Other platforms keep
+            // the existing full material by default.
+            deviceSupportsLiquidGlassProvider.overrideWithValue(
+              !Platform.isAndroid || runtimeProfile.enableBackdropBlur,
+            ),
             initialSettingsProvider.overrideWithValue(bootstrapSettings),
             initialSafAccessLostProvider.overrideWithValue(
               initialSafAccessLost,
@@ -243,7 +248,7 @@ Future<bool> _detectInitialSafAccessLoss(AppSettings settings) async {
   try {
     return !await PlatformBridge.validateSafTreeAccess(
       settings.downloadTreeUri,
-    );
+    ).timeout(const Duration(seconds: 2));
   } catch (e) {
     // A transient bridge failure must not trap the user at launch. Download
     // preflight validates strictly again before any write starts.

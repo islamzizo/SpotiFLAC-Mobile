@@ -6,6 +6,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/l10n/app_localizations.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/verification_notification.dart';
 
 class NotificationService {
@@ -29,6 +30,72 @@ class NotificationService {
 
   String get embeddingMetadataLabel =>
       _l10n?.notifEmbeddingMetadata ?? 'Embedding metadata...';
+
+  static const String libraryScanWorkKind = 'library_scan';
+  static const String updateDownloadWorkKind = 'app_update';
+
+  // Kinds whose progress the Android foreground-service notification shows,
+  // replacing the plugin's progress notification so only one is visible.
+  final Set<String> _serviceNotificationKinds = {};
+
+  /// Keeps user-started work running when the screen turns off (Android
+  /// foreground service, iOS background task). Pair with [endBackgroundWork].
+  Future<void> beginBackgroundWork(String kind, {required String title}) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    try {
+      final started = await PlatformBridge.startBackgroundWork(
+        kind,
+        title: title,
+      );
+      if (started && Platform.isAndroid) _serviceNotificationKinds.add(kind);
+    } catch (e) {
+      debugPrint('Background work $kind could not start: $e');
+    }
+  }
+
+  Future<void> endBackgroundWork(String kind) async {
+    if (!Platform.isAndroid && !Platform.isIOS) return;
+    _serviceNotificationKinds.remove(kind);
+    try {
+      await PlatformBridge.stopBackgroundWork(kind);
+    } catch (e) {
+      debugPrint('Background work $kind could not stop: $e');
+    }
+  }
+
+  Future<void> beginLibraryScanWork() => beginBackgroundWork(
+    libraryScanWorkKind,
+    title: _l10n?.notifScanningLibrary ?? 'Scanning local library',
+  );
+
+  Future<void> beginUpdateDownloadWork({required String version}) =>
+      beginBackgroundWork(
+        updateDownloadWorkKind,
+        title:
+            _l10n?.notifDownloadingUpdate(version) ??
+            'Downloading ${AppInfo.appName} v$version',
+      );
+
+  Future<bool> _showInBackgroundWork(
+    String kind, {
+    required String title,
+    required String body,
+    required int progress,
+  }) async {
+    if (!_serviceNotificationKinds.contains(kind)) return false;
+    try {
+      await PlatformBridge.updateBackgroundWork(
+        kind,
+        title: title,
+        text: body,
+        progress: progress,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('Background work $kind notification failed: $e');
+      return false;
+    }
+  }
 
   static const int downloadProgressId = 1;
   static const int updateDownloadId = 2;
@@ -402,10 +469,19 @@ class NotificationService {
     final body = (currentFile != null && currentFile.isNotEmpty)
         ? '$progressBody\n$currentFile'
         : progressBody;
+    final title = _l10n?.notifScanningLibrary ?? 'Scanning local library';
+    if (await _showInBackgroundWork(
+      libraryScanWorkKind,
+      title: title,
+      body: body,
+      progress: percentage,
+    )) {
+      return;
+    }
 
     await _showSafely(
       id: libraryScanId,
-      title: _l10n?.notifScanningLibrary ?? 'Scanning local library',
+      title: title,
       body: body,
       details: _details(library: true, progress: percentage),
     );
@@ -463,6 +539,25 @@ class NotificationService {
     );
   }
 
+  Future<void> showLibraryScanPaused({required int scannedFiles}) async {
+    if (!_isInitialized) await initialize();
+
+    await _showSafely(
+      id: libraryScanId,
+      title: _l10n?.notifLibraryScanPaused ?? 'Library scan paused',
+      body:
+          _l10n?.notifLibraryScanPausedBody(scannedFiles) ??
+          '$scannedFiles files scanned. Resume in Local Library settings to '
+              'continue from here.',
+      details: _details(library: true),
+    );
+  }
+
+  /// Clears a paused-scan notice once the foreground service shows progress.
+  Future<void> cancelLibraryScanNotification() async {
+    await _notifications.cancel(id: libraryScanId);
+  }
+
   Future<void> showUpdateDownloadProgress({
     required String version,
     required int received,
@@ -473,15 +568,25 @@ class NotificationService {
     final percentage = total > 0 ? (received * 100 ~/ total) : 0;
     final receivedMB = (received / 1024 / 1024).toStringAsFixed(1);
     final totalMB = (total / 1024 / 1024).toStringAsFixed(1);
+    final title =
+        _l10n?.notifDownloadingUpdate(version) ??
+        'Downloading ${AppInfo.appName} v$version';
+    final body =
+        _l10n?.notifUpdateProgress(receivedMB, totalMB, percentage) ??
+        '$receivedMB / $totalMB MB • $percentage%';
+    if (await _showInBackgroundWork(
+      updateDownloadWorkKind,
+      title: title,
+      body: body,
+      progress: total > 0 ? percentage : -1,
+    )) {
+      return;
+    }
 
     await _showSafely(
       id: updateDownloadId,
-      title:
-          _l10n?.notifDownloadingUpdate(version) ??
-          'Downloading ${AppInfo.appName} v$version',
-      body:
-          _l10n?.notifUpdateProgress(receivedMB, totalMB, percentage) ??
-          '$receivedMB / $totalMB MB • $percentage%',
+      title: title,
+      body: body,
       details: _details(progress: percentage),
     );
   }

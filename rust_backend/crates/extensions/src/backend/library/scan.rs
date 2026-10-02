@@ -1,6 +1,6 @@
 //! One scan owner, bounded worker results and shared full/incremental traversal.
 
-use super::{Backend, library_extension, modified, scan_time};
+use super::{Backend, library_extension, modified_time, scan_time};
 use cap_std::fs::OpenOptions;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -8,16 +8,23 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, TryLockError, mpsc};
+use std::sync::{Arc, Condvar, Mutex, TryLockError, mpsc};
 use std::thread;
 use std::time::Duration;
 
 type Check<'a> = &'a (dyn Fn() -> Result<(), String> + Sync);
 
+/// How often a paused scan re-checks backend shutdown and its request lease.
+const PAUSE_POLL: Duration = Duration::from_millis(250);
+
 #[derive(Default)]
 pub(in crate::backend) struct ScanState {
     current: Mutex<Option<Arc<Run>>>,
     owner: Mutex<()>,
+    // Pausing is scan-wide rather than per run so a pause requested just
+    // before the native scan starts still holds it at its first checkpoint.
+    paused: Mutex<bool>,
+    resumed: Condvar,
 }
 
 #[derive(Default)]
@@ -72,22 +79,52 @@ impl Backend {
         {
             run.cancelled.store(true, Ordering::Release);
         }
+        // Wake paused workers so they observe the cancellation.
+        self.set_library_scan_paused(false);
         Ok(())
     }
 
-    pub fn scan_library_folder(&self, folder: &str, check: Check<'_>) -> Result<Value, String> {
-        let mut tracks = Vec::new();
-        self.scan_library(
-            folder,
-            None,
-            true,
-            &mut |value| {
-                tracks.push(value);
-                Ok(())
-            },
-            check,
-        )?;
-        Ok(tracks.into())
+    /// Holds the scan at its next checkpoint. Workers keep their position in
+    /// memory, so [`Self::resume_library_scan`] continues with the next file.
+    pub fn pause_library_scan(&self) -> Result<(), String> {
+        let _operation = self.enter()?;
+        self.set_library_scan_paused(true);
+        Ok(())
+    }
+
+    pub fn resume_library_scan(&self) -> Result<(), String> {
+        let _operation = self.enter()?;
+        self.set_library_scan_paused(false);
+        Ok(())
+    }
+
+    fn set_library_scan_paused(&self, paused: bool) {
+        *self
+            .library_scan
+            .paused
+            .lock()
+            .expect("library scan pause lock") = paused;
+        self.library_scan.resumed.notify_all();
+    }
+
+    fn wait_while_library_scan_paused(&self, run: &Run, check: Check<'_>) -> Result<(), String> {
+        let state = &self.library_scan;
+        let mut paused = state.paused.lock().expect("library scan pause lock");
+        while *paused && !run.cancelled.load(Ordering::Acquire) {
+            paused = state
+                .resumed
+                .wait_timeout(paused, PAUSE_POLL)
+                .expect("library scan pause lock")
+                .0;
+            if *paused {
+                drop(paused);
+                // Shutdown and released request leases still end a paused scan.
+                self.check()?;
+                check()?;
+                paused = state.paused.lock().expect("library scan pause lock");
+            }
+        }
+        Ok(())
     }
 
     pub fn scan_library_folder_incremental(
@@ -252,15 +289,29 @@ impl Backend {
         check: Check<'_>,
     ) -> Result<Vec<AudioFile>, String> {
         let files = self.environment().native_files()?;
-        let mut pending = vec![folder.to_owned()];
+        // Each entry records whether its parent directory was already
+        // validated. Children then need one lstat of their own name instead of
+        // re-checking every ancestor plus two more stats per file; on FUSE SD
+        // cards, USB drives and network mounts each of those is a round trip.
+        let mut pending = vec![(folder.to_owned(), false)];
         let mut collected = Vec::new();
-        while let Some(path) = pending.pop() {
+        while let Some((path, parent_validated)) = pending.pop() {
             check()?;
             let input = files.resolve_legacy(&path)?;
-            input.native_display()?;
-            let metadata = input
-                .metadata()
-                .map_err(|error| format!("walk library path {path}: {error}"))?;
+            let metadata = if parent_validated {
+                input.native_child_metadata().map_err(|error| {
+                    if error.kind() == std::io::ErrorKind::NotFound {
+                        format!("walk library path {path}: {error}")
+                    } else {
+                        error.to_string()
+                    }
+                })?
+            } else {
+                input.native_display()?;
+                input
+                    .metadata()
+                    .map_err(|error| format!("walk library path {path}: {error}"))?
+            };
             if metadata.is_dir() {
                 let entries = input
                     .entries()
@@ -269,16 +320,17 @@ impl Backend {
                     if !directory && (!supported(&name) || staging(&name)) {
                         continue;
                     }
-                    pending.push(
+                    pending.push((
                         crate::files::clean(&Path::new(&path).join(name))
                             .to_string_lossy()
                             .into_owned(),
-                    );
+                        true,
+                    ));
                 }
             } else if supported(&path) && !staging(&path) {
                 collected.push(AudioFile {
                     path,
-                    modified: modified(&input),
+                    modified: modified_time(&metadata),
                     size: metadata.len(),
                 });
             }
@@ -321,6 +373,9 @@ impl Backend {
             previous.cancelled.store(true, Ordering::Release);
         }
         let check = || {
+            // Wait before taking the failure lock so paused workers do not
+            // serialize on it.
+            self.wait_while_library_scan_paused(&run, check)?;
             let mut failure = run.failure.lock().expect("scan failure lock");
             if let Some(error) = failure.as_ref() {
                 return Err(error.clone());
@@ -447,13 +502,15 @@ impl Backend {
             }
         }
         // Allow short bursts without parking workers after each result. At most
-        // 64 completed tracks wait; NDJSON still uses bounded memory.
+        // 96 completed tracks wait; NDJSON still uses bounded memory. Tag reads
+        // mostly wait on storage, so slow media benefits from more files in
+        // flight than the core count; artwork decoding stays serialized.
         let workers = if audio.len() < 16 {
             1
         } else {
             thread::available_parallelism()
                 .map_or(2, usize::from)
-                .clamp(2, 4)
+                .clamp(2, 6)
         };
         let next = AtomicUsize::new(0);
         let stop = AtomicBool::new(false);
@@ -590,5 +647,161 @@ fn update(run: &Run, completed: usize, path: &str, error: bool) {
     progress.error_count += usize::from(error);
     if progress.total_files > 0 {
         progress.progress_pct = completed as f64 / progress.total_files as f64 * 100.0;
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use crate::RuntimeLimits;
+    use std::fs;
+
+    fn backend(root: &Path, library: &Path) -> Backend {
+        let backend = Backend::new(
+            &root.join("sources"),
+            &root.join("data"),
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "1",
+            RuntimeLimits::default(),
+        )
+        .unwrap();
+        backend
+            .environment()
+            .set_allowed_download_directories(&[library.to_path_buf()])
+            .unwrap();
+        backend
+    }
+
+    fn walk(backend: &Backend, folder: &Path) -> Result<Vec<AudioFile>, String> {
+        backend.collect_library_files(&folder.to_string_lossy(), &|| Ok(()))
+    }
+
+    #[test]
+    fn walk_keeps_order_size_and_time_with_one_stat_per_child() {
+        let root = tempfile::tempdir().unwrap();
+        let library = fs::canonicalize(root.path()).unwrap().join("library");
+        fs::create_dir_all(library.join("A/B")).unwrap();
+        fs::write(library.join("A/B/song.flac"), b"flac bytes").unwrap();
+        fs::write(library.join("A/c.mp3"), b"mp3").unwrap();
+        fs::write(library.join("notes.txt"), b"ignored").unwrap();
+        fs::write(library.join("x.partial.flac"), b"staging").unwrap();
+        let backend = backend(root.path(), &library);
+
+        let files = walk(&backend, &library).unwrap();
+
+        let expected = [library.join("A/B/song.flac"), library.join("A/c.mp3")];
+        assert_eq!(
+            files
+                .iter()
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+        );
+        for (file, path) in files.iter().zip(&expected) {
+            let metadata = fs::metadata(path).unwrap();
+            let modified = metadata
+                .modified()
+                .unwrap()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64;
+            assert_eq!(file.size, metadata.len());
+            assert_eq!(file.modified, modified);
+        }
+    }
+
+    #[test]
+    fn walk_still_rejects_nested_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let library = fs::canonicalize(root.path()).unwrap().join("library");
+        fs::create_dir_all(library.join("A")).unwrap();
+        fs::write(library.join("A/song.flac"), b"flac").unwrap();
+        std::os::unix::fs::symlink(library.join("A/song.flac"), library.join("A/link.flac"))
+            .unwrap();
+        let backend = backend(root.path(), &library);
+
+        let error = walk(&backend, &library).err().expect("linked file");
+        assert_eq!(
+            error,
+            "native media path must not contain symlinks or special files"
+        );
+
+        fs::remove_file(library.join("A/link.flac")).unwrap();
+        // A linked directory with an audio-like name reaches the stat check.
+        std::os::unix::fs::symlink(library.join("A"), library.join("B.flac")).unwrap();
+        let error = walk(&backend, &library).err().expect("linked directory");
+        assert_eq!(
+            error,
+            "native media path must not contain symlinks or special files"
+        );
+    }
+
+    fn paused_library(root: &Path) -> (Backend, String) {
+        let library = fs::canonicalize(root).unwrap().join("library");
+        fs::create_dir_all(&library).unwrap();
+        for index in 0..3 {
+            fs::write(library.join(format!("{index}.mp3")), b"not audio").unwrap();
+        }
+        let backend = backend(root, &library);
+        backend.pause_library_scan().unwrap();
+        (backend, library.to_string_lossy().into_owned())
+    }
+
+    fn wait_for_run(backend: &Backend) {
+        while backend
+            .library_scan
+            .current
+            .lock()
+            .expect("library scan lock")
+            .is_none()
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn paused_scan_holds_its_position_until_resumed() {
+        let root = tempfile::tempdir().unwrap();
+        let (backend, folder) = paused_library(root.path());
+
+        thread::scope(|scope| {
+            let scan =
+                scope.spawn(|| backend.scan_library_folder_incremental(&folder, "{}", &|| Ok(())));
+            wait_for_run(&backend);
+            thread::sleep(Duration::from_millis(300));
+            assert!(!scan.is_finished());
+            let progress = backend.get_library_scan_progress().unwrap();
+            assert_eq!(progress["scanned_files"], 0);
+            assert_eq!(progress["is_complete"], false);
+
+            backend.resume_library_scan().unwrap();
+            let result = scan.join().unwrap().unwrap();
+            assert_eq!(result["totalFiles"], 3);
+        });
+        let progress = backend.get_library_scan_progress().unwrap();
+        assert_eq!(progress["scanned_files"], 3);
+        assert_eq!(progress["is_complete"], true);
+    }
+
+    #[test]
+    fn cancel_releases_a_paused_scan() {
+        let root = tempfile::tempdir().unwrap();
+        let (backend, folder) = paused_library(root.path());
+
+        thread::scope(|scope| {
+            let scan =
+                scope.spawn(|| backend.scan_library_folder_incremental(&folder, "{}", &|| Ok(())));
+            wait_for_run(&backend);
+            backend.cancel_library_scan().unwrap();
+            assert_eq!(scan.join().unwrap().unwrap_err(), "scan cancelled");
+        });
+        // Cancelling also clears the pause, so the next scan is not held.
+        let result = backend
+            .scan_library_folder_incremental(&folder, "{}", &|| Ok(()))
+            .unwrap();
+        assert_eq!(result["totalFiles"], 3);
     }
 }

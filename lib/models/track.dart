@@ -224,14 +224,10 @@ class Track {
     );
   }
 
-  bool get isFromExtension => source != null && source!.isNotEmpty;
-
   bool get isDolbyAtmos =>
       audioModes != null && audioModes!.contains('DOLBY_ATMOS');
 
   bool get isExplicit => explicit == true;
-
-  bool get hasAudioQuality => audioQuality != null && audioQuality!.isNotEmpty;
 
   bool get hasPreview => previewUrl != null && previewUrl!.isNotEmpty;
 }

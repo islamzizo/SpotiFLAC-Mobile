@@ -7,6 +7,11 @@ String confirmedMissingLyricsSqlPredicate({
   required String lyricsKnownExpr,
 }) => '($lyricsKnownExpr) AND COALESCE($hasLyricsExpr, 0) = 0';
 
+String confirmedMissingReplayGainSqlPredicate({
+  required String hasReplayGainExpr,
+  required String replayGainKnownExpr,
+}) => '($replayGainKnownExpr) AND COALESCE($hasReplayGainExpr, 0) = 0';
+
 class _QueueOrderTerm {
   final String column;
   final bool descending;
@@ -74,6 +79,8 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           NULL AS file_mod_time,
           h.bitrate,
           h.format,
+          h.has_replaygain,
+          h.replaygain_metadata_scan_version,
           h.sort_track,
           h.sort_artist,
           h.sort_album,
@@ -161,6 +168,9 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           l.file_mod_time,
           l.bitrate,
           l.format,
+          l.has_replaygain,
+          CASE WHEN l.audio_metadata_scan_version >= ${LibraryDatabase.audioMetadataScanVersion}
+            THEN 1 ELSE 0 END AS replaygain_metadata_scan_version,
           l.track_name_norm AS sort_track,
           l.artist_name_norm AS sort_artist,
           l.album_name_norm AS sort_album,
@@ -220,6 +230,8 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           NULL AS file_mod_time,
           NULL AS bitrate,
           NULL AS format,
+          NULL AS has_replaygain,
+          NULL AS replaygain_metadata_scan_version,
           NULL AS sort_track,
           NULL AS sort_artist,
           NULL AS sort_album,
@@ -408,6 +420,9 @@ extension _LibraryDbQueueSql on LibraryDatabase {
       labelExpr: 'h.label',
       hasLyricsExpr: 'h.has_lyrics',
       lyricsKnownExpr: 'COALESCE(h.lyrics_metadata_scan_version, 0) >= 1',
+      hasReplayGainExpr: 'h.has_replaygain',
+      replayGainKnownExpr:
+          'COALESCE(h.replaygain_metadata_scan_version, 0) >= 1',
     );
   }
 
@@ -456,6 +471,9 @@ extension _LibraryDbQueueSql on LibraryDatabase {
       labelExpr: 'l.label',
       hasLyricsExpr: 'l.has_lyrics',
       lyricsKnownExpr:
+          'COALESCE(l.audio_metadata_scan_version, 0) >= ${LibraryDatabase.lyricsMetadataScanVersion}',
+      hasReplayGainExpr: 'l.has_replaygain',
+      replayGainKnownExpr:
           'COALESCE(l.audio_metadata_scan_version, 0) >= ${LibraryDatabase.audioMetadataScanVersion}',
     );
   }
@@ -478,6 +496,8 @@ extension _LibraryDbQueueSql on LibraryDatabase {
     required String labelExpr,
     required String hasLyricsExpr,
     required String lyricsKnownExpr,
+    required String hasReplayGainExpr,
+    required String replayGainKnownExpr,
   }) {
     final quality = request.quality?.trim().toLowerCase();
     if (quality != null && quality.isNotEmpty) {
@@ -569,6 +589,15 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           confirmedMissingLyricsSqlPredicate(
             hasLyricsExpr: hasLyricsExpr,
             lyricsKnownExpr: lyricsKnownExpr,
+          ),
+        );
+        break;
+      case 'missing-replaygain':
+        // Only files whose tags were read since ReplayGain was indexed.
+        where.add(
+          confirmedMissingReplayGainSqlPredicate(
+            hasReplayGainExpr: hasReplayGainExpr,
+            replayGainKnownExpr: replayGainKnownExpr,
           ),
         );
         break;
@@ -826,6 +855,8 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           'label': row['label'],
           'copyright': row['copyright'],
           'format': row['format'],
+          'hasReplayGain':
+              row['has_replaygain'] == 1 || row['has_replaygain'] == true,
         },
       };
     }
@@ -860,6 +891,10 @@ extension _LibraryDbQueueSql on LibraryDatabase {
         'sampleRate': row['sample_rate'],
         'bitrate': row['bitrate'],
         'format': row['format'],
+        'hasReplayGain':
+            row['has_replaygain'] == 1 || row['has_replaygain'] == true,
+        'replayGainMetadataScanVersion':
+            row['replaygain_metadata_scan_version'] ?? 0,
         'genre': row['genre'],
         'composer': row['composer'],
         'label': row['label'],

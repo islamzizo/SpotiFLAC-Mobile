@@ -60,6 +60,79 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('settled player keeps the page below offstage until dragged', (
+    tester,
+  ) async {
+    const below = Key('below-player');
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        home: const SizedBox.expand(key: below),
+      ),
+    );
+    final route = _TestPlayerRoute();
+    navigator.currentState!.push(route);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    // Translucent while it slides in.
+    expect(find.byKey(below), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.byKey(below), findsNothing);
+    expect(find.byKey(below, skipOffstage: false), findsOneWidget);
+
+    route.startDrag();
+    route.updateDrag(
+      DragUpdateDetails(
+        globalPosition: const Offset(0, 120),
+        delta: const Offset(0, 120),
+        primaryDelta: 120,
+      ),
+      600,
+    );
+    await tester.pump();
+    expect(find.byKey(below), findsOneWidget);
+    route.cancelDrag();
+    await tester.pumpAndSettle();
+    expect(find.byKey(below), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('rotation while covered discards stale mini-player bounds', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(393, 852);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        theme: MornyeTheme.build(Brightness.dark),
+        home: const SizedBox(),
+      ),
+    );
+    navigator.currentState!.push(
+      _TestPlayerRoute(
+        miniPlayerGeometry: () => (
+          surface: const Rect.fromLTWH(20, 700, 353, 52),
+          artwork: const Rect.fromLTWH(28, 704, 44, 44),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // The page below is not laid out while hidden, so its mini player still
+    // reports portrait bounds after the window turns landscape.
+    tester.view.physicalSize = const Size(852, 393);
+    await tester.pump();
+    navigator.currentState!.pop();
+    await tester.pump();
+    expect(find.byKey(const ValueKey('player-minimize-surface')), findsNothing);
+    await tester.pumpAndSettle();
+    expect(find.byKey(_sheet), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final brightness in Brightness.values) {
     testWidgets(
       'player fills safe areas and reveals the page only when dragged in $brightness',

@@ -114,8 +114,6 @@ class MusicPlayerController {
 
   MusicPlayerHandler? get _handler => musicPlayerHandler;
 
-  bool get isAvailable => _handler != null;
-
   DateTime? get sleepTimerEndsAt => _handler?.sleepTimerEndsAt;
 
   Future<MusicPlayerHandler?> ensureInitialized() async {

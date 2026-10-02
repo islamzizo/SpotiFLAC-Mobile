@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/playback_provider.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 
 /// Plays [track] from download history or the local library when a matching
 /// file already exists on disk.
@@ -71,15 +71,7 @@ Future<bool> playLocalIfAvailable(
       return true;
     }
   } catch (e) {
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-          ),
-        ),
-      );
-    }
+    if (context.mounted) showCannotOpenFileSnackBar(context, e);
     return true;
   }
 

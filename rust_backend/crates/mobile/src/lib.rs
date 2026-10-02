@@ -5,7 +5,7 @@ mod extensions;
 mod ffmpeg;
 mod filename;
 mod hires;
-mod index;
+mod library_metadata;
 mod logging;
 mod lyrics;
 mod manager;

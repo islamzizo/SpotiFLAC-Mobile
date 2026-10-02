@@ -26,7 +26,7 @@ class AppSettings {
   /// Zero preserves the provider's original image.
   final int embeddedCoverMaxDimension;
   final String
-  artistTagMode; // 'joined' or 'split_vorbis' for Vorbis-based formats
+  artistTagMode; // 'joined', 'split_vorbis' (Vorbis formats), or 'primary'
   final bool embedLyrics;
   final bool embedReplayGain;
   // Apply ReplayGain/R128 tags as volume normalization in the built-in player.
@@ -81,6 +81,7 @@ class AppSettings {
   extensionVerificationBrowserMode; // 'external_first' or 'in_app_first'
   final String locale;
   final String lyricsMode;
+  final bool keepScreenOnLyrics;
   final bool autoConvertDownloads;
   // Re-download a Hi-Res request at LOSSLESS when the file measures as fake.
   final bool redownloadFakeHiRes;
@@ -185,6 +186,7 @@ class AppSettings {
     this.extensionVerificationBrowserMode = 'in_app_first',
     this.locale = 'system',
     this.lyricsMode = 'embed',
+    this.keepScreenOnLyrics = true,
     this.autoConvertDownloads = false,
     this.redownloadFakeHiRes = false,
     this.autoConvertFormat = 'mp3',
@@ -281,6 +283,7 @@ class AppSettings {
     String? extensionVerificationBrowserMode,
     String? locale,
     String? lyricsMode,
+    bool? keepScreenOnLyrics,
     bool? autoConvertDownloads,
     bool? redownloadFakeHiRes,
     String? autoConvertFormat,
@@ -382,6 +385,7 @@ class AppSettings {
           this.extensionVerificationBrowserMode,
       locale: locale ?? this.locale,
       lyricsMode: lyricsMode ?? this.lyricsMode,
+      keepScreenOnLyrics: keepScreenOnLyrics ?? this.keepScreenOnLyrics,
       autoConvertDownloads: autoConvertDownloads ?? this.autoConvertDownloads,
       redownloadFakeHiRes: redownloadFakeHiRes ?? this.redownloadFakeHiRes,
       autoConvertFormat: autoConvertFormat ?? this.autoConvertFormat,

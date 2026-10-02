@@ -3,24 +3,9 @@ use spotiflac_core::metadata::{
     AlbumExtendedMetadata, TrackMetadata,
     deezer::{FullAlbum, Track},
 };
-use spotiflac_network::url::UrlParts;
 use std::sync::Arc;
-use std::time::Instant;
 
 impl DeezerClient {
-    pub fn get_track_isrc(&self, id: &str, check: &Check<'_>) -> Result<String, ResolverError> {
-        check().map_err(ResolverError::Cancelled)?;
-        if let Some(value) = self.cache.lock().unwrap().isrc.get(id).cloned() {
-            return Ok(value);
-        }
-        let track: Track =
-            self.get_json(&format!("https://api.deezer.com/2.0/track/{id}"), check)?;
-        let mut cache = self.cache.lock().unwrap();
-        cache.isrc.insert(id.into(), track.isrc.clone());
-        cache.cleanup(Instant::now());
-        Ok(track.isrc)
-    }
-
     pub fn get_track_album_id(&self, id: &str, check: &Check<'_>) -> Result<String, ResolverError> {
         match self.coalesced(&format!("track_album:{id}"), check, || {
             let track: Track =
@@ -105,47 +90,6 @@ impl DeezerClient {
             return self.get_album_extended_metadata(album, check);
         }
         self.get_extended_metadata_by_track_id(id, check)
-    }
-}
-
-pub fn parse_url(input: &str) -> Result<(String, String), ResolverError> {
-    let input = input.trim();
-    if input.is_empty() {
-        return Err(ResolverError::Failed("empty URL".into()));
-    }
-    let parsed =
-        UrlParts::parse(input).ok_or_else(|| ResolverError::Failed("invalid Deezer URL".into()))?;
-    if parsed.port.is_some()
-        || !matches!(
-            parsed.hostname.as_str(),
-            "www.deezer.com" | "deezer.com" | "deezer.page.link"
-        )
-    {
-        return Err(ResolverError::Failed("not a Deezer URL".into()));
-    }
-    let mut path = parsed.path.as_slice();
-    while let Some(rest) = path.strip_prefix(b"/") {
-        path = rest;
-    }
-    while let Some(rest) = path.strip_suffix(b"/") {
-        path = rest;
-    }
-    let mut parts: Vec<_> = path.split(|byte| *byte == b'/').collect();
-    if parts.first().is_some_and(|part| part.len() == 2) {
-        parts.remove(0);
-    }
-    if parts.len() < 2 {
-        return Err(ResolverError::Failed("invalid Deezer URL format".into()));
-    }
-    match parts[0] {
-        b"track" | b"album" | b"artist" | b"playlist" => Ok((
-            String::from_utf8_lossy(parts[0]).into_owned(),
-            String::from_utf8_lossy(parts[1]).into_owned(),
-        )),
-        kind => Err(ResolverError::Failed(format!(
-            "unsupported Deezer resource type: {}",
-            String::from_utf8_lossy(kind)
-        ))),
     }
 }
 

@@ -5,13 +5,6 @@ part of 'download_queue_provider.dart';
 /// the native download call, decrypt/convert/embed finalization, and the
 /// history hand-off. Queue scheduling stays in the main file.
 extension _SingleItemDownload on DownloadQueueNotifier {
-  bool _isStorageWriteFailure(Map<String, dynamic> result) {
-    return isStorageWriteFailure(
-      errorType: result['error_type']?.toString(),
-      errorMessage: (result['error'] ?? result['message'])?.toString(),
-    );
-  }
-
   Future<String?> _runPostProcessingHooks(
     String filePath,
     Track track,
@@ -520,7 +513,11 @@ class _DownloadRun {
       outputDir: effectiveOutputDir,
     );
 
-    if (result['success'] != true && n._isStorageWriteFailure(result)) {
+    if (result['success'] != true &&
+        isStorageWriteFailure(
+          errorType: result['error_type']?.toString(),
+          errorMessage: (result['error'] ?? result['message'])?.toString(),
+        )) {
       if (n._isLocallyCancelled(item.id)) {
         _log.i('Download was cancelled before storage fallback, skipping');
         return false;
@@ -931,7 +928,7 @@ class _DownloadRun {
 
     if (shouldForceDashSafM4aHandling) {
       _log.w(
-        'SAF file is labeled FLAC but backend returned DASH/M4A stream; converting it back to FLAC.',
+        'SAF file is labeled FLAC but backend returned an M4A stream; converting it back to FLAC.',
       );
     }
 
@@ -1268,10 +1265,8 @@ class _DownloadRun {
               : renamedPath;
           await file.rename(finalRenamedPath);
           targetPath = finalRenamedPath;
-          filePath = finalRenamedPath;
-        } else {
-          filePath = targetPath;
         }
+        filePath = targetPath;
 
         if (metadataEmbeddingEnabled) {
           n.updateItemStatus(
@@ -1288,9 +1283,7 @@ class _DownloadRun {
   }
 
   Future<void> _convertLocalM4aToFlac(String currentFilePath) async {
-    _log.d(
-      'M4A file detected (Hi-Res DASH stream), attempting conversion to FLAC...',
-    );
+    _log.d('M4A file detected, attempting conversion to FLAC...');
 
     try {
       final file = File(currentFilePath);
@@ -1348,23 +1341,7 @@ class _DownloadRun {
               _log.d('Converted to FLAC: $flacPath');
 
               _log.d('Embedding metadata and cover to converted FLAC...');
-              try {
-                final backendGenre = result['genre'] as String?;
-                final backendLabel = result['label'] as String?;
-                final backendCopyright = result['copyright'] as String?;
-                if (backendGenre != null ||
-                    backendLabel != null ||
-                    backendCopyright != null) {
-                  _log.d(
-                    'Extended metadata from backend - Genre: $backendGenre, Label: $backendLabel, Copyright: $backendCopyright',
-                  );
-                }
-
-                await _embedFinalMetadata(flacPath, format: 'flac');
-                _log.d('Metadata and cover embedded successfully');
-              } catch (e) {
-                _log.w('Warning: Failed to embed metadata/cover: $e');
-              }
+              await _embedFinalMetadata(flacPath, format: 'flac');
             } else {
               _log.w('FFmpeg conversion returned null, keeping M4A file');
             }
@@ -1384,16 +1361,17 @@ class _DownloadRun {
         resultOutputExt == '.ogg';
     final isMp3File =
         currentFilePath.endsWith('.mp3') || resultOutputExt == '.mp3';
-    final ext = isOpusFile
-        ? (resultOutputExt == '.ogg' ? '.ogg' : '.opus')
+    final (ext, formatName) = isOpusFile
+        ? (resultOutputExt == '.ogg' ? '.ogg' : '.opus', 'Opus')
         : isMp3File
-        ? '.mp3'
-        : '.flac';
-    final formatName = isOpusFile
-        ? 'Opus'
-        : isMp3File
-        ? 'MP3'
-        : 'FLAC';
+        ? ('.mp3', 'MP3')
+        : ('.flac', 'FLAC');
+    // MP3 takes precedence for the embed format when both checks match.
+    final embedFormat = isMp3File
+        ? 'mp3'
+        : isOpusFile
+        ? 'opus'
+        : 'flac';
     _log.d(
       'SAF $formatName detected, embedding metadata and cover via temp file...',
     );
@@ -1416,11 +1394,6 @@ class _DownloadRun {
           // so a sidecar .lrc written next to it would be orphaned;
           // the SAF .lrc is written by _saveExternalLrc after publish,
           // reusing the LRC fetched here via result['lyrics_lrc'].
-          final embedFormat = isMp3File
-              ? 'mp3'
-              : isOpusFile
-              ? 'opus'
-              : 'flac';
           final fetchedLrc = await _embedFinalMetadata(
             tempPath,
             format: embedFormat,
@@ -1700,6 +1673,9 @@ class _DownloadRun {
                   copyright: effectiveCopyright,
                   hasLyrics: lyricsAvailability.hasLyrics,
                   lyricsMetadataScanVersion: lyricsAvailability.scanVersion,
+                  hasReplayGain: lyricsAvailability.hasReplayGain,
+                  replayGainMetadataScanVersion:
+                      lyricsAvailability.replayGainScanVersion,
                 ),
                 preserveTrackVariant: item.preserveQualityVariant,
               );

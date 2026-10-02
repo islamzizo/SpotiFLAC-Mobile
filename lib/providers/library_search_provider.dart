@@ -1,9 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/services/history_database.dart';
 import 'package:spotiflac_android/services/library_search.dart';
 
 typedef LibrarySearchRequest = ({
@@ -12,6 +14,29 @@ typedef LibrarySearchRequest = ({
   int limit,
   int offset,
 });
+
+/// Resolve the selected record by its source and ID, without matching titles
+/// that may also belong to another edition or remix.
+final librarySearchTrackProvider = FutureProvider.autoDispose
+    .family<UnifiedLibraryItem?, ({String source, String id})>((
+      ref,
+      key,
+    ) async {
+      if (key.source == 'local') {
+        final row = await LibraryDatabase.instance.getById(key.id);
+        return row == null
+            ? null
+            : UnifiedLibraryItem.fromLocalLibrary(
+                LocalLibraryItem.fromJson(row),
+              );
+      }
+      final row = await HistoryDatabase.instance.getById(key.id);
+      return row == null
+          ? null
+          : UnifiedLibraryItem.fromDownloadHistory(
+              DownloadHistoryItem.fromJson(row),
+            );
+    });
 
 final librarySearchProvider = FutureProvider.autoDispose
     .family<List<LibrarySearchHit>, LibrarySearchRequest>((ref, request) async {

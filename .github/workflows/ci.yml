@@ -155,7 +155,8 @@ jobs:
     name: Rust iOS libraries & release application
     runs-on: macos-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ios == 'true'
+    # Keep pull-request validation focused on Android; retain iOS builds for main pushes.
+    if: github.event_name != 'pull_request' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ios == 'true')
 
     steps:
       - name: Checkout repository
@@ -193,6 +194,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.android == 'true'
+    env:
+      SPOTIFLAC_KEYSTORE_BASE64: ${{ secrets.SPOTIFLAC_KEYSTORE_BASE64 }}
+      SPOTIFLAC_KEYSTORE_PASSWORD: ${{ secrets.SPOTIFLAC_KEYSTORE_PASSWORD }}
+      SPOTIFLAC_KEY_ALIAS: ${{ secrets.SPOTIFLAC_KEY_ALIAS }}
+      SPOTIFLAC_KEY_PASSWORD: ${{ secrets.SPOTIFLAC_KEY_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -240,6 +246,20 @@ jobs:
       - name: Configure Flutter SDK for Gradle
         run: echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
 
+      - name: Configure persistent Android release signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SPOTIFLAC_KEYSTORE_BASE64 SPOTIFLAC_KEYSTORE_PASSWORD SPOTIFLAC_KEY_ALIAS SPOTIFLAC_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+          printf '%s' "$SPOTIFLAC_KEYSTORE_BASE64" | base64 --decode > android/spotiflac-release.jks
+          chmod 600 android/spotiflac-release.jks
+          echo "SPOTIFLAC_KEYSTORE_FILE=$GITHUB_WORKSPACE/android/spotiflac-release.jks" >> "$GITHUB_ENV"
+
       - name: Install Rust application build and media test prerequisites
         run: |
           cd rust_backend
@@ -253,6 +273,11 @@ jobs:
         run: gradle -p android :app:assembleDebug :app:testDebugUnitTest
 
       - name: Build Rust release application
+        env:
+          SPOTIFLAC_KEYSTORE_FILE: ${{ env.SPOTIFLAC_KEYSTORE_FILE }}
+          SPOTIFLAC_KEYSTORE_PASSWORD: ${{ secrets.SPOTIFLAC_KEYSTORE_PASSWORD }}
+          SPOTIFLAC_KEY_ALIAS: ${{ secrets.SPOTIFLAC_KEY_ALIAS }}
+          SPOTIFLAC_KEY_PASSWORD: ${{ secrets.SPOTIFLAC_KEY_PASSWORD }}
         run: bash scripts/build_android.sh --target lib/main.dart
 
       - name: Verify Rust release APK payloads
@@ -263,8 +288,48 @@ jobs:
           python3 scripts/check_backend_apk.py \
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
             --backend rust --abis armeabi-v7a
-          # PR builds use Gradle's test key; production signing stays in Release.
           for abi in arm64-v8a armeabi-v7a; do
             "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose \
               "build/app/outputs/flutter-apk/app-${abi}-release.apk"
           done
+
+      - name: Verify distributed APKs use the persistent release certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          get_cert_digest() {
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$1" 2>&1 |
+              grep -Eio 'certificate SHA-256 digest:[[:space:]]*[0-9a-f:]+' |
+              head -n1 |
+              sed -E 's/.*digest:[[:space:]]*//I'
+          }
+
+          expected="$(get_cert_digest build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)"
+          if [[ -z "$expected" ]]; then
+            echo "::error::Could not extract the signer certificate SHA-256 digest from the ARM64 APK."
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs               build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            exit 1
+          fi
+          echo "Expected release certificate SHA-256: $expected"
+
+          for apk in \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk; do
+            actual="$(get_cert_digest "$apk")"
+            echo "$(basename "$apk"): $actual"
+            if [[ -z "$actual" || "$actual" != "$expected" ]]; then
+              echo "::error::APK certificate mismatch: $(basename "$apk")"
+              exit 1
+            fi
+          done
+          echo "All distributed release APKs use the same persistent release certificate."
+
+      - name: Upload verified Android APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: spotiflac-android-release-apks
+          path: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          if-no-files-found: error
+          retention-days: 7

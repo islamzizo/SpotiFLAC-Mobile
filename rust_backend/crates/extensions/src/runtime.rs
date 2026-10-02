@@ -478,16 +478,6 @@ impl ExtensionRuntime {
 
     /// Read typed provider fields in the owning VM. Go's provider wrappers do
     /// not await a returned Promise; the provider object itself is parsed.
-    pub fn call_provider(
-        &self,
-        method: &str,
-        arguments: &str,
-        lease: Option<Arc<RequestLease>>,
-        timeout_ms: u64,
-    ) -> Result<String, ExtensionError> {
-        self.call_provider_operation(method, arguments, lease, timeout_ms, String::new())
-    }
-
     pub(crate) fn call_provider_operation(
         &self,
         method: &str,
@@ -593,33 +583,6 @@ impl ExtensionRuntime {
             lease,
             resolution_timeout_ms,
             String::new(),
-        )
-    }
-
-    /// The manager starts progress before resolution and completes it after
-    /// finalization. This call acquires another reference to the same item and
-    /// binds its identity to the queued command, never to mutable runtime state.
-    pub fn call_download_for_item(
-        &self,
-        method: &str,
-        arguments_json: &str,
-        item_id: &str,
-        resolution_timeout_ms: u64,
-    ) -> Result<String, ExtensionError> {
-        if self.control.is_closed() {
-            return Err(ExtensionError::Closed);
-        }
-        let lease = Arc::new(
-            self.downloads
-                .acquire(item_id)
-                .map_err(ExtensionError::Cancelled)?,
-        );
-        self.call_download_operation(
-            method,
-            arguments_json,
-            Some(lease),
-            resolution_timeout_ms,
-            item_id.trim().to_owned(),
         )
     }
 

@@ -60,8 +60,6 @@ class ProgressStreamPoller<T> {
   int _errorCount = 0;
   int _generation = 0;
 
-  bool get usingStream => _usingStream;
-
   /// (Re)starts progress consumption. When [useStream] is true, attaches the
   /// stream (falling back to polling on timeout/error); otherwise starts
   /// polling immediately.

@@ -54,22 +54,6 @@ impl ExtensionRepository {
         self.search_inner(force_refresh, "", "")
     }
 
-    pub fn search(
-        &self,
-        query: String,
-        category: String,
-    ) -> Result<String, ExtensionRepositoryError> {
-        self.search_inner(false, &query, &category)
-    }
-
-    pub fn categories(&self) -> Result<Vec<String>, ExtensionRepositoryError> {
-        self.inner.categories().map_err(Into::into)
-    }
-
-    pub fn clear_cache(&self) -> Result<(), ExtensionRepositoryError> {
-        self.inner.clear_cache().map_err(Into::into)
-    }
-
     pub fn download(
         &self,
         extension_id: String,

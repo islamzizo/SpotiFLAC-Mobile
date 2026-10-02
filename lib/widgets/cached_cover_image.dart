@@ -20,7 +20,6 @@ class CachedCoverImage extends StatelessWidget {
   final Widget Function(BuildContext, String, Object)? errorWidget;
   final Widget Function(BuildContext, String)? placeholder;
   final BorderRadius? borderRadius;
-  final bool resizeDiskCache;
   final Duration fadeInDuration;
   final Duration fadeOutDuration;
 
@@ -36,7 +35,6 @@ class CachedCoverImage extends StatelessWidget {
     this.errorWidget,
     this.placeholder,
     this.borderRadius,
-    this.resizeDiskCache = false,
     this.fadeInDuration = Duration.zero,
     this.fadeOutDuration = Duration.zero,
   });
@@ -75,8 +73,6 @@ class CachedCoverImage extends StatelessWidget {
         );
       }
     }
-    final diskCacheWidth = resizeDiskCache ? autoMemCacheWidth : null;
-    final diskCacheHeight = resizeDiskCache ? autoMemCacheHeight : null;
     final image = CachedNetworkImage(
       imageUrl: imageUrl,
       width: width,
@@ -85,8 +81,6 @@ class CachedCoverImage extends StatelessWidget {
       alignment: alignment,
       memCacheWidth: autoMemCacheWidth,
       memCacheHeight: autoMemCacheHeight,
-      maxWidthDiskCache: diskCacheWidth,
-      maxHeightDiskCache: diskCacheHeight,
       cacheManager: CoverCacheManager.instance,
       fadeInDuration: fadeInDuration,
       fadeOutDuration: fadeOutDuration,

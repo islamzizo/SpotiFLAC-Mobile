@@ -373,6 +373,32 @@ internal object NativeFinalizationPolicy {
             ?: ""
     }
 
+    // Same separator set as the Rust writer and Dart's primaryArtistTagValue.
+    // Android's regex engine rejects Pattern.UNICODE_CHARACTER_CLASS when this
+    // object initializes, so Unicode spaces are listed explicitly instead.
+    private const val PRIMARY_ARTIST_SPACE = "[\\s\\p{Z}]"
+    private val primaryArtistSeparator = Regex(
+        "$PRIMARY_ARTIST_SPACE*[,;&]$PRIMARY_ARTIST_SPACE*" +
+            "|$PRIMARY_ARTIST_SPACE+x$PRIMARY_ARTIST_SPACE+" +
+            "|$PRIMARY_ARTIST_SPACE+(?:feat(?:uring)?|ft|with)\\.?" +
+            "(?:$PRIMARY_ARTIST_SPACE+|$)",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Artist tag value for [mode]. Only "primary" changes the value: the first
+     * credited artist for every format. Joined and split values pass through;
+     * the backend writer owns Vorbis splitting.
+     */
+    fun artistTagValue(value: String, mode: String?): String {
+        if (!mode.orEmpty().trim().equals("primary", ignoreCase = true)) return value
+        val trimmed = value.trim()
+        return trimmed.split(primaryArtistSeparator)
+            .map(String::trim)
+            .firstOrNull(String::isNotEmpty)
+            ?: trimmed
+    }
+
     private fun audioFormatForPath(filePath: String, fileName: String): String? {
         for (candidate in listOf(filePath, fileName)) {
             val lower = candidate.trim().lowercase(Locale.ROOT)

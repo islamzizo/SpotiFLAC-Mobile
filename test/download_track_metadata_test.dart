@@ -78,6 +78,57 @@ void main() {
     expect(enriched.toJson(), original.toJson());
   });
 
+  for (final remix in [false, true]) {
+    test(
+      'supplemental credits cannot rename the selected recording (remix=$remix)',
+      () async {
+        final selected = original.copyWith(
+          name: remix ? 'Song (Club Remix)' : 'Song',
+          isrc: 'USAAA2400001',
+        );
+        final enriched = await enrichIncompleteDownloadTrack(
+          selected,
+          'example',
+          'track',
+          loadMetadata: (_, _, _) async => {
+            'track': {
+              'spotify_id': 'example:other-recording',
+              'name': remix ? 'Song' : 'Song (Club Remix)',
+              'artists': 'Another artist',
+              'composer': 'Composer',
+            },
+          },
+        );
+        expect(enriched.id, selected.id);
+        expect(enriched.name, selected.name);
+        expect(enriched.artistName, selected.artistName);
+        expect(enriched.isrc, selected.isrc);
+        expect(enriched.composer, 'Composer');
+      },
+    );
+  }
+
+  test(
+    'conflicting ISRC rejects all supplemental recording metadata',
+    () async {
+      final selected = original.copyWith(isrc: 'US-AAA-24-00001');
+      final enriched = await enrichIncompleteDownloadTrack(
+        selected,
+        'example',
+        'track',
+        loadMetadata: (_, _, _) async => {
+          'track': {
+            'isrc': 'USAAA2400002',
+            'album_name': 'Another Album',
+            'images': 'https://example.test/another-cover',
+            'composer': 'Another Composer',
+          },
+        },
+      );
+      expect(enriched, same(selected));
+    },
+  );
+
   test(
     'complete tracks avoid an extra lookup and failed lookups keep source metadata',
     () async {

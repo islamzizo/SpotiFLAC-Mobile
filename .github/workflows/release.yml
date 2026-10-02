@@ -145,7 +145,7 @@ jobs:
           bash scripts/build_android.sh --target lib/main.dart
           ls -la build/app/outputs/flutter-apk/
 
-      - name: Sign and verify release APKs (V1/V2/V3)
+      - name: Sign and verify release APKs (V1/V2/V3/V4)
         env:
           VERSION: ${{ needs.get-version.outputs.version }}
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -178,14 +178,22 @@ jobs:
               --v1-signing-enabled true \
               --v2-signing-enabled true \
               --v3-signing-enabled true \
-              --v4-signing-enabled false \
+              --v4-signing-enabled true \
               --out "$apk" "$apk_dir/app-${abi}-release.apk"
+
+            # V4 is written beside the APK as "$apk.idsig" for incremental
+            # ADB installs; normal installers keep using V1-V3 inside the APK.
+            if [ ! -s "$apk.idsig" ]; then
+              echo "ERROR: APK signature V4 file was not created: $apk.idsig" >&2
+              exit 1
+            fi
 
             # Verify the app's supported Android versions, then explicitly
             # exercise V1 too: the manifest's minSdk 24 normally skips it.
             "$apksigner" verify "$apk"
-            report="$("$apksigner" verify --verbose --print-certs --min-sdk-version 21 "$apk")"
-            for scheme in 1 2 3; do
+            report="$("$apksigner" verify --verbose --print-certs --min-sdk-version 21 \
+              --v4-signature-file "$apk.idsig" "$apk")"
+            for scheme in 1 2 3 4; do
               if ! grep -Eq "Verified using v${scheme} scheme.*: true" <<< "$report"; then
                 echo "ERROR: APK signature V${scheme} did not verify: $apk" >&2
                 exit 1
@@ -195,7 +203,7 @@ jobs:
               echo "ERROR: Refusing to publish a debug-signed APK" >&2
               exit 1
             fi
-            printf '%s\n' "$report" | grep -E '^Verifies$|^Verified using v[123] scheme|certificate SHA-256 digest:'
+            printf '%s\n' "$report" | grep -E '^Verifies$|^Verified using v[1234] scheme|certificate SHA-256 digest:'
           done
 
       - name: Audit signed Rust APKs before upload
@@ -216,7 +224,9 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: android-apk
-          path: build/app/outputs/flutter-apk/SpotiFLAC-*.apk
+          path: |
+            build/app/outputs/flutter-apk/SpotiFLAC-*.apk
+            build/app/outputs/flutter-apk/SpotiFLAC-*.apk.idsig
 
   build-ios:
     runs-on: macos-15
@@ -399,6 +409,7 @@ jobs:
           #### Android
           - **arm64**: \`SpotiFLAC-${VERSION}-arm64.apk\` (recommended for modern devices)
           - **arm32**: \`SpotiFLAC-${VERSION}-arm32.apk\` (older devices)
+          - \`*.apk.idsig\`: V4 signatures for \`adb install --incremental\` only; normal installs do not need them
 
           #### iOS
           - **iOS**: \`SpotiFLAC-${VERSION}-ios-unsigned.ipa\` (sideload required)

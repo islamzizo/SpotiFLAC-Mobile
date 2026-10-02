@@ -58,6 +58,7 @@ internal object RustCoreBackend : CoreBackend {
     private var runtimeState: Pair<String, String>? = null
     private val directoryScopes = mutableMapOf<String, AutoCloseable>()
     private var libraryCoverScope: AutoCloseable? = null
+    @Volatile private var libraryCoverDirectory: File? = null
 
     @Synchronized
     fun initialize(context: Context): RustCoreBackend {
@@ -209,6 +210,7 @@ internal object RustCoreBackend : CoreBackend {
         directoryScopes.clear()
         libraryCoverScope?.close()
         libraryCoverScope = null
+        libraryCoverDirectory = null
         identity = null
         runtimeState = null
     }
@@ -221,8 +223,53 @@ internal object RustCoreBackend : CoreBackend {
     override fun checkHiResAuthenticity(path: String, optionsJson: String): String =
         com.spotiflac.backend.checkHiresAuthenticity(path, optionsJson, null)
 
-    override fun readAudioMetadata(path: String, hint: String, cacheKey: String): String =
-        owner().readAudioMetadata(File(path).canonicalPath, hint, cacheKey, null)
+    override fun readAudioMetadata(path: String, hint: String, cacheKey: String): String {
+        val descriptor = path.removePrefix("/proc/self/fd/").toIntOrNull()
+        if (path.startsWith("/proc/self/fd/") && descriptor != null) {
+            val directory = libraryCoverDirectory
+            // Never key artwork by the descriptor number: Android reuses it.
+            val key = cacheKey.trim().takeIf { it.isNotEmpty() }
+            val hash = key?.codePoints()?.reduce(5381) { hash, codePoint -> hash * 33 + codePoint }
+                ?.toUInt()?.toString(16)
+            val cached = if (directory != null && hash != null) {
+                listOf(File(directory, "cover_$hash.jpg"), File(directory, "cover_$hash.png"))
+                    .firstOrNull { it.isFile }
+            } else null
+            val result = com.spotiflac.backend.readLibraryMetadataFromDescriptor(
+                descriptor, hint, java.time.Instant.now().toString(),
+                directory != null && hash != null && cached == null, null,
+            )
+            val metadata = JSONObject(result.metadataJson)
+            var cover = cached
+            if (directory != null && hash != null && result.coverBytes.isNotEmpty()) {
+                try {
+                    val extension = if (result.coverMime.contains("png")) "png" else "jpg"
+                    val output = File(directory, "cover_$hash.$extension")
+                    val staged = File.createTempFile("cover_", ".tmp", directory)
+                    try {
+                        staged.writeBytes(result.coverBytes)
+                        check(staged.renameTo(output)) { "Could not publish library artwork" }
+                        cover = output
+                    } finally { staged.delete() }
+                } catch (error: Exception) {
+                    android.util.Log.w("SpotiFLAC", "Could not cache document artwork", error)
+                }
+            }
+            cover?.let { metadata.put("coverPath", it.path) }
+            return metadata.toString()
+        }
+        return withMediaFiles(listOf(path)) {
+            it.readAudioMetadata(File(path).canonicalPath, hint, cacheKey, null)
+        }
+    }
+
+    // Native callers have already selected/resolved these files through app or
+    // SAF access. Retain only their parent directories for this operation.
+    private fun <T> withMediaFiles(paths: List<String>, block: (ExtensionManager) -> T): T =
+        withLibraryDirectories(paths.filter { it.isNotBlank() }.map { path ->
+            require(File(path).isAbsolute) { "Media paths must be absolute" }
+            File(path).absoluteFile.parent!!
+        }.distinct(), block)
 
     private fun <T> withLibraryDirectories(paths: List<String>, block: (ExtensionManager) -> T): T {
         val (current, scope) = synchronized(this) {
@@ -247,10 +294,7 @@ internal object RustCoreBackend : CoreBackend {
         catch (error: Exception) { next?.close(); throw error }
         libraryCoverScope?.close()
         libraryCoverScope = next
-    }
-
-    override fun scanLibraryFolder(folder: String): String = withLibraryDirectories(listOf(folder)) {
-        it.scanLibraryFolder(File(folder).canonicalPath, null)
+        libraryCoverDirectory = directory
     }
 
     override fun scanLibraryFolderToNdjsonFile(folder: String, output: String): Long =
@@ -291,6 +335,10 @@ internal object RustCoreBackend : CoreBackend {
 
     override fun cancelLibraryScan() { synchronized(this) { manager }?.cancelLibraryScan() }
 
+    override fun pauseLibraryScan() { synchronized(this) { manager }?.pauseLibraryScan() }
+
+    override fun resumeLibraryScan() { synchronized(this) { manager }?.resumeLibraryScan() }
+
     override fun parseCueSheet(path: String, audioDirectory: String): String {
         val cue = File(path).canonicalFile
         val audio = if (audioDirectory.isEmpty()) cue.parentFile!! else File(audioDirectory).canonicalFile
@@ -314,8 +362,12 @@ internal object RustCoreBackend : CoreBackend {
         }
     }
 
-    override fun editFileMetadata(path: String, metadataJson: String): String =
-        owner().editFileMetadata(File(path).canonicalPath, metadataJson, null)
+    override fun editFileMetadata(path: String, metadataJson: String): String {
+        val cover = if (metadataJson.trim() == "null") "" else JSONObject(metadataJson).optString("cover_path", "")
+        return withMediaFiles(listOf(path, cover)) {
+            it.editFileMetadata(File(path).canonicalPath, metadataJson, null)
+        }
+    }
 
     private fun mediaPath(path: String): String = if (path.isEmpty()) "" else File(path).canonicalPath
 
@@ -325,18 +377,22 @@ internal object RustCoreBackend : CoreBackend {
         if (!request.optBoolean("preview_only", false) && path?.startsWith("/") == true) {
             request.put("file_path", mediaPath(path))
         }
-        return owner().reenrichFile(request.toString(), null)
+        return if (!request.optBoolean("preview_only", false) && !path.isNullOrBlank()) {
+            withMediaFiles(listOf(path)) { it.reenrichFile(request.toString(), null) }
+        } else owner().reenrichFile(request.toString(), null)
     }
 
     override fun rewriteSplitArtistTags(path: String, artist: String, albumArtist: String): String =
-        owner().rewriteSplitArtistTags(mediaPath(path), artist, albumArtist, null)
+        withMediaFiles(listOf(path)) { it.rewriteSplitArtistTags(mediaPath(path), artist, albumArtist, null) }
 
     override fun extractCoverToFile(audioPath: String, outputPath: String) {
-        owner().extractCoverToFile(mediaPath(audioPath), mediaPath(outputPath), null)
+        withMediaFiles(listOf(audioPath, outputPath)) {
+            it.extractCoverToFile(mediaPath(audioPath), mediaPath(outputPath), null)
+        }
     }
 
     override fun writeM4aFreeformTags(path: String, metadataJson: String): String =
-        owner().writeM4aFreeformTags(mediaPath(path), metadataJson, null)
+        withMediaFiles(listOf(path)) { it.writeM4aFreeformTags(mediaPath(path), metadataJson, null) }
 
     override fun ensureAc4Config(path: String, reference: String): String =
         owner().ensureAc4Config(mediaPath(path), mediaPath(reference), null)
@@ -566,7 +622,7 @@ internal object RustCoreBackend : CoreBackend {
                 null
             }
             "setLoggingEnabled", "setAllowPrivateNetwork", "setDownloadFallbackExtensionIds",
-            "setNetworkCompatibilityOptions", "setSongLinkNetworkOptions",
+            "setNetworkCompatibilityOptions",
             "setLyricsProviders", "setLyricsFetchOptions" -> synchronized(this) {
                 when (method) {
                     "setLoggingEnabled" -> {
@@ -581,7 +637,7 @@ internal object RustCoreBackend : CoreBackend {
                         manager?.environment()?.use { it.setAllowPrivateNetwork(allowed) }
                         allowPrivateNetwork = allowed
                     }
-                    "setNetworkCompatibilityOptions", "setSongLinkNetworkOptions" -> {
+                    "setNetworkCompatibilityOptions" -> {
                         val allowed = args["allow_http"] as? Boolean ?: false
                         val insecureTls = args["insecure_tls"] as? Boolean ?: false
                         manager?.environment()?.use { it.setNetworkCompatibilityOptions(allowed, insecureTls) }
@@ -622,19 +678,10 @@ internal object RustCoreBackend : CoreBackend {
             "getRepoExtensions" -> return repositoryOwner().extensions(
                 args["force_refresh"] as? Boolean ?: false,
             )
-            "searchRepoExtensions" -> return repositoryOwner().search(
-                string("query"),
-                string("category"),
-            )
-            "getRepoCategories" -> return JSONArray(repositoryOwner().categories()).toString()
             "downloadRepoExtension" -> return repositoryOwner().download(
                 string("extension_id"),
                 string("dest_dir"),
             )
-            "clearRepoCache" -> {
-                repositoryOwner().clearCache()
-                return null
-            }
         }
         val current = owner()
         return when (method) {
@@ -650,10 +697,6 @@ internal object RustCoreBackend : CoreBackend {
             "getInstalledExtensions" -> current.installed()
             "setExtensionEnabled" -> {
                 current.setEnabled(string("extension_id"), args["enabled"] as? Boolean ?: false)
-                null
-            }
-            "unloadExtension" -> {
-                current.unload(string("extension_id"))
                 null
             }
             "removeExtension" -> {
@@ -674,8 +717,6 @@ internal object RustCoreBackend : CoreBackend {
             "getProviderPriority", "getMetadataProviderPriority" -> {
                 JSONObject(current.providerPriorities()).optJSONArray(if (method == "getProviderPriority") "download" else "metadata")?.toString() ?: "[]"
             }
-            "getLyricsProviders" -> current.getLyricsProvidersJson()
-            "getLyricsFetchOptions" -> current.getLyricsFetchOptionsJson()
             "getAvailableLyricsProviders" -> current.getAvailableLyricsProvidersJson()
             "searchTracksWithMetadataProviders" -> current.searchMetadataProviders(
                 string("query"),
@@ -708,14 +749,6 @@ internal object RustCoreBackend : CoreBackend {
             "convertSpotifyToDeezer" -> current.convertSpotifyToDeezer(
                 string("resource_type"),
                 string("spotify_id"),
-                null,
-            )
-            "getSpotifyIDFromDeezerTrack" -> current.getSpotifyIdFromDeezerTrack(
-                string("deezer_track_id"),
-                null,
-            )
-            "getTidalURLFromDeezerTrack" -> current.getTidalUrlFromDeezerTrack(
-                string("deezer_track_id"),
                 null,
             )
             "getTrackPlatformLinks" -> current.getTrackPlatformLinksJson(
@@ -754,36 +787,15 @@ internal object RustCoreBackend : CoreBackend {
             }
             "findURLHandler" -> current.findUrlHandler(string("url")) ?: ""
             "handleURLWithExtension" -> current.handleUrlJson(string("url"))
-            "enrichTrackWithExtension" -> current.enrichTrackJson(string("extension_id"), string("track", "{}"))
             "getExtensionPendingAuth" -> current.getExtensionPendingAuthJson(string("extension_id")).ifEmpty { null }
-            "setExtensionAuthCode" -> current.environment().use { it.setAuthCode(string("extension_id"), string("auth_code")); null }
             "completeExtensionSessionGrant" -> {
                 completeSessionGrant(current, string("extension_id"), string("grant"))
                 true
             }
-            "setExtensionTokens" -> current.environment().use {
-                it.setAuthTokens(string("extension_id"), string("access_token"), string("refresh_token"), (args["expires_in"] as? Int)?.toLong() ?: 0L)
-                null
-            }
-            "clearExtensionPendingAuth" -> current.environment().use { it.clearPendingAuth(string("extension_id")); null }
-            "isExtensionAuthenticated" -> current.environment().use { it.isAuthenticated(string("extension_id")) }
-            "getAllPendingAuthRequests" -> current.environment().use { it.allPendingAuth() }
             "getAllDownloadProgress" -> current.environment().use { environment ->
                 environment.downloadState().use { state -> state.allProgress() }
             }
             "cleanupConnections" -> current.environment().use { it.cleanupConnections(); null }
-            "getPendingFFmpegCommand", "getAllPendingFFmpegCommands", "setFFmpegCommandResult" -> current.environment().use { environment ->
-                environment.ffmpegCommands().use { commands ->
-                    when (method) {
-                        "getPendingFFmpegCommand" -> commands.getCommand(string("command_id"))
-                        "getAllPendingFFmpegCommands" -> commands.pending()
-                        else -> {
-                            commands.complete(string("command_id"), args["success"] as? Boolean ?: false, string("output"), string("error"))
-                            null
-                        }
-                    }
-                }
-            }
             "clearItemProgress", "cancelDownload", "resetDownloadCancel" -> current.environment().use { environment ->
                 environment.downloadState().use { state ->
                     when (method) {

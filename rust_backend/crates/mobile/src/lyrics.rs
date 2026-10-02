@@ -79,12 +79,6 @@ impl ExtensionManager {
             .map_err(ExtensionManagerError::Operation)
     }
 
-    pub fn get_lyrics_providers_json(&self) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_lyrics_providers_json()
-            .map_err(ExtensionManagerError::Operation)
-    }
-
     pub fn set_lyrics_providers_json(
         &self,
         providers_json: String,
@@ -97,12 +91,6 @@ impl ExtensionManager {
     pub fn get_available_lyrics_providers_json(&self) -> Result<String, ExtensionManagerError> {
         self.inner
             .get_available_lyrics_providers_json()
-            .map_err(ExtensionManagerError::Operation)
-    }
-
-    pub fn get_lyrics_fetch_options_json(&self) -> Result<String, ExtensionManagerError> {
-        self.inner
-            .get_lyrics_fetch_options_json()
             .map_err(ExtensionManagerError::Operation)
     }
 

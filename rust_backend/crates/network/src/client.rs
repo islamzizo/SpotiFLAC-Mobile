@@ -74,6 +74,9 @@ impl Pool {
         http.set_connect_timeout(Some(Duration::from_secs(10)));
         http.set_happy_eyeballs_timeout(Some(Duration::from_millis(300)));
         http.set_keepalive(Some(Duration::from_secs(30)));
+        // Go's dialer default: small request/control writes are not held back
+        // by Nagle while waiting for a delayed ACK.
+        http.set_nodelay(true);
         let connector = HttpsConnectorBuilder::new()
             .with_tls_config(tls)
             .https_or_http()
@@ -85,6 +88,10 @@ impl Pool {
             .pool_idle_timeout(Duration::from_secs(60))
             .pool_max_idle_per_host(10)
             .http1_max_buf_size(10 << 20)
+            // Go's 4 MiB per-stream window doubles one stream's ceiling per
+            // RTT. The 5 MiB connection window, and so peak buffering per
+            // connection, stays hyper's default.
+            .http2_initial_stream_window_size(4 << 20)
             .build(Connector(connector));
         Self {
             client,
@@ -184,7 +191,11 @@ impl NetworkService {
                 tokio::pin!(operation);
                 let timeout = tokio::time::sleep(timeout);
                 tokio::pin!(timeout);
-                let mut heartbeat = tokio::time::interval(Duration::from_millis(10));
+                // The first check runs below; an immediate first tick would
+                // only repeat it before the operation is polled.
+                let period = Duration::from_millis(10);
+                let mut heartbeat =
+                    tokio::time::interval_at(tokio::time::Instant::now() + period, period);
                 loop {
                     // Create before checking: notify_waiters also reaches a Notified
                     // future that has not been polled yet, closing the lost-wake gap.
@@ -377,6 +388,7 @@ pub struct HttpResponse {
 
 struct ResponseBody {
     reader: Box<dyn AsyncRead + Unpin + Send>,
+    small_http1: bool,
     _permit: OwnedSemaphorePermit,
 }
 
@@ -459,6 +471,41 @@ impl HttpStream {
             _ => {}
         }
         result
+    }
+
+    /// Release an unwanted body (a range probe or retryable error). A small
+    /// HTTP/1.1 body is finished within 50 ms so its connection can return to
+    /// the pool; HTTP/2, compressed, large or slow bodies are dropped at once.
+    pub fn discard(&mut self, check: impl Fn() -> Result<(), String>) {
+        let Some(mut body) = self.body.take() else {
+            return;
+        };
+        if !body.small_http1 || self.failure.is_some() {
+            return;
+        }
+        let _ = self
+            .service
+            .run(self.generation, Duration::from_millis(50), &check, async {
+                let mut buffer = [0; 2048];
+                let mut received = 0;
+                loop {
+                    let count = body
+                        .reader
+                        .read(&mut buffer)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    received += count;
+                    if count == 0 || received > 2048 {
+                        break;
+                    }
+                }
+                // Drop the response reader before the drain future completes.
+                // hyper only makes the HTTP/1.1 connection eligible for the
+                // pool once the response body is released; doing this explicitly
+                // avoids the retry racing the pool's body-drop bookkeeping.
+                drop(body);
+                Ok(())
+            });
     }
 
     fn stall_message(&self) -> String {
@@ -854,7 +901,7 @@ impl NetworkSession {
                             .is_some_and(|length| length <= 2048)
                     {
                         let mut body = response.into_body();
-                        let _ = tokio::time::timeout(Duration::from_millis(20), async {
+                        let _ = tokio::time::timeout(Duration::from_millis(50), async {
                             let mut received = 0;
                             while let Some(Ok(frame)) = body.frame().await {
                                 received += frame.data_ref().map_or(0, Bytes::len);
@@ -873,6 +920,15 @@ impl NetworkSession {
                 && response_headers
                     .get(header::CONTENT_ENCODING)
                     .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"gzip"));
+            // Same bound as redirect bodies: only an uncompressed HTTP/1.1
+            // body of at most 2 KiB may be finished by `HttpStream::discard`.
+            let small_http1 = !decompress
+                && response.version() == http::Version::HTTP_11
+                && response_headers
+                    .get(header::CONTENT_LENGTH)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .is_some_and(|length| length <= 2048);
             let stream = response
                 .into_body()
                 .into_data_stream()
@@ -908,6 +964,7 @@ impl NetworkSession {
                 },
                 ResponseBody {
                     reader,
+                    small_http1,
                     _permit: permit,
                 },
             ));

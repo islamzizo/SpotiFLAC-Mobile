@@ -168,14 +168,9 @@ Future<String> validateOrFixIosPath(
 /// Detailed result for iOS path validation
 class IosPathValidationResult {
   final bool isValid;
-  final String? correctedPath;
   final String? errorReason;
 
-  const IosPathValidationResult({
-    required this.isValid,
-    this.correctedPath,
-    this.errorReason,
-  });
+  const IosPathValidationResult({required this.isValid, this.errorReason});
 }
 
 /// Validates an iOS path and returns detailed information about the result.

@@ -167,11 +167,6 @@ class UserPlaylistCollection {
     );
   }
 
-  bool containsTrack(Track track) {
-    final key = trackCollectionKey(track);
-    return _trackKeys.contains(key);
-  }
-
   bool containsTrackKey(String trackKey) {
     return _trackKeys.contains(trackKey);
   }
@@ -331,12 +326,6 @@ class LibraryCollectionsState {
 
   UserPlaylistCollection? playlistById(String playlistId) {
     return _playlistsById[playlistId];
-  }
-
-  bool playlistContainsTrack(String playlistId, String trackKey) {
-    final playlist = _playlistsById[playlistId];
-    if (playlist == null) return false;
-    return playlist.containsTrackKey(trackKey);
   }
 
   bool isTrackInAnyPlaylist(String trackKey) {

@@ -362,18 +362,16 @@ impl Backend {
             ));
         }
         let mut cover = read(&input, &format, &check)?;
-        if let Ok(std::borrow::Cow::Owned(resized)) = resize(
-            &cover.data,
-            spotiflac_core::cover::LIBRARY_MAX_DIMENSION,
-            &check,
-        ) {
+        if let Ok(resized) = spotiflac_core::cover::library_thumbnail(&cover.data, &check) {
             cover.mime = if resized.starts_with(b"\x89PNG") {
                 "image/png"
-            } else {
+            } else if resized.starts_with(b"\xff\xd8") {
                 "image/jpeg"
+            } else {
+                &cover.mime
             }
             .into();
-            cover.data = resized;
+            cover.data = resized.to_vec();
         }
         // Library caching may retain unsupported image bytes, but must never
         // swallow cancellation while attempting the optional resize.
@@ -391,12 +389,6 @@ impl Backend {
         publish_cover(&output, permissions, &cover.data, &check)
             .map_err(|error| format!("failed to write cover: {error}"))?;
         Ok(output.display())
-    }
-
-    pub fn clear_cover_memory_cache(&self) -> Result<(), String> {
-        let _operation = self.enter()?;
-        self.cover.clear();
-        Ok(())
     }
 
     pub fn download_cover_to_file_sized(

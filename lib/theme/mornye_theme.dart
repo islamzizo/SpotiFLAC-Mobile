@@ -13,11 +13,17 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
     this.chromeSurface,
     this.accent = MornyeAccent.red,
     this.useSystemFont = false,
+    this.glassClarity = kDefaultMornyeGlassClarity,
   });
 
   final Color? chromeSurface;
   final MornyeAccent accent;
   final bool useSystemFont;
+  final double glassClarity;
+
+  static double glassClarityOf(BuildContext context) =>
+      Theme.of(context).extension<MornyeTheme>()?.glassClarity ??
+      kDefaultMornyeGlassClarity;
 
   /// A single translucent fill for controls inside an existing glass surface.
   static Color controlFill(BuildContext context, {bool enabled = true}) {
@@ -39,15 +45,18 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
     );
   }
 
-  static double chromeOpacity(BuildContext context) =>
-      Theme.of(context).extension<MornyeTheme>()?.chromeSurface != null
-      ? 0.42
-      : 0.70;
+  static double chromeOpacity(BuildContext context) {
+    final theme = Theme.of(context);
+    if (theme.extension<MornyeTheme>()?.chromeSurface != null) return 0.36;
+    // Light glass needs more fill to keep dark subtitles readable over black.
+    return theme.brightness == Brightness.dark ? 0.60 : 0.70;
+  }
 
-  static double navigationOpacity(BuildContext context) =>
-      Theme.of(context).extension<MornyeTheme>()?.chromeSurface != null
-      ? 0.28
-      : 0.54;
+  static double navigationOpacity(BuildContext context) {
+    final theme = Theme.of(context);
+    if (theme.extension<MornyeTheme>()?.chromeSurface != null) return 0.24;
+    return theme.brightness == Brightness.dark ? 0.44 : 0.54;
+  }
 
   static const lightAccent = Color.fromRGBO(204, 46, 51, 1);
   static const darkAccent = Color.fromRGBO(224, 61, 60, 1);
@@ -111,6 +120,7 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
     Color? chromeSurface,
     MornyeAccent accent = MornyeAccent.red,
     bool useSystemFont = false,
+    double glassClarity = kDefaultMornyeGlassClarity,
   }) {
     final key = (
       defaultTargetPlatform,
@@ -122,7 +132,7 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
     final cached = _themeCache.remove(key);
     if (cached != null) {
       _themeCache[key] = cached;
-      return cached;
+      return _withGlassClarity(cached, glassClarity);
     }
     final theme = _build(
       brightness,
@@ -134,7 +144,23 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
       _themeCache.remove(_themeCache.keys.first);
     }
     _themeCache[key] = theme;
-    return theme;
+    return _withGlassClarity(theme, glassClarity);
+  }
+
+  // Moving the clarity slider only changes the material, not typography or
+  // seeded colors. Keep the expensive base theme cached independently.
+  static ThemeData _withGlassClarity(ThemeData theme, double value) {
+    final clarity = normalizeMornyeGlassClarity(value);
+    if (theme.extension<MornyeTheme>()!.glassClarity == clarity) return theme;
+    return theme.copyWith(
+      extensions: [
+        for (final extension in theme.extensions.values)
+          if (extension is MornyeTheme)
+            extension.copyWith(glassClarity: clarity)
+          else
+            extension,
+      ],
+    );
   }
 
   /// Rebuild local surfaces without losing the user's Mornye preferences.
@@ -150,6 +176,7 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
       chromeSurface: chromeSurface,
       accent: preferences?.accent ?? MornyeAccent.red,
       useSystemFont: preferences?.useSystemFont ?? false,
+      glassClarity: preferences?.glassClarity ?? kDefaultMornyeGlassClarity,
     );
   }
 
@@ -366,10 +393,12 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
     Color? chromeSurface,
     MornyeAccent? accent,
     bool? useSystemFont,
+    double? glassClarity,
   }) => MornyeTheme(
     chromeSurface: chromeSurface ?? this.chromeSurface,
     accent: accent ?? this.accent,
     useSystemFont: useSystemFont ?? this.useSystemFont,
+    glassClarity: glassClarity ?? this.glassClarity,
   );
 
   @override
@@ -379,6 +408,9 @@ class MornyeTheme extends ThemeExtension<MornyeTheme> {
     useSystemFont: t < 0.5
         ? useSystemFont
         : other?.useSystemFont ?? useSystemFont,
+    glassClarity:
+        glassClarity +
+        ((other?.glassClarity ?? glassClarity) - glassClarity) * t,
   );
 }
 

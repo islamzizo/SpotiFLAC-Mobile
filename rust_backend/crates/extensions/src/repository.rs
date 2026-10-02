@@ -258,12 +258,6 @@ impl ExtensionRepository {
         Ok(())
     }
 
-    pub fn clear_cache(&self) -> Result<(), RepositoryError> {
-        self.check()?;
-        self.clear_locked(&mut self.state.lock().expect("repository state lock"));
-        Ok(())
-    }
-
     fn clear_locked(&self, state: &mut State) {
         state.generation = state.generation.wrapping_add(1);
         state.cache = None;
@@ -418,13 +412,6 @@ impl ExtensionRepository {
             serde_json::to_string(&self.fetch(force)?.responses(installed, query, category))
                 .expect("registry JSON"),
         )
-    }
-
-    pub fn categories(&self) -> Result<Vec<String>, RepositoryError> {
-        self.check()?;
-        Ok(["metadata", "download", "utility", "lyrics", "integration"]
-            .map(str::to_owned)
-            .to_vec())
     }
 
     pub fn download(&self, id: &str, directory: &Path) -> Result<PathBuf, RepositoryError> {

@@ -69,26 +69,38 @@ class _UpdateDialogState extends State<UpdateDialog> {
 
     final notificationService = NotificationService();
 
-    final filePath = await ApkDownloader.downloadApk(
-      url: apkUrl,
+    // Without a foreground service the download freezes when the screen
+    // turns off; its notification then carries the progress.
+    await notificationService.beginUpdateDownloadWork(
       version: widget.updateInfo.version,
-      expectedSha256: widget.updateInfo.apkSha256,
-      onProgress: (received, total) {
-        if (mounted) {
-          setState(() {
-            _progress = total > 0 ? received / total : 0;
-            final receivedMB = formatMegabytes(received);
-            final totalMB = formatMegabytes(total);
-            _statusText = '$receivedMB / $totalMB MB';
-          });
-        }
-        notificationService.showUpdateDownloadProgress(
-          version: widget.updateInfo.version,
-          received: received,
-          total: total,
-        );
-      },
     );
+    final String? filePath;
+    try {
+      filePath = await ApkDownloader.downloadApk(
+        url: apkUrl,
+        version: widget.updateInfo.version,
+        expectedSha256: widget.updateInfo.apkSha256,
+        onProgress: (received, total) {
+          if (mounted) {
+            setState(() {
+              _progress = total > 0 ? received / total : 0;
+              final receivedMB = formatMegabytes(received);
+              final totalMB = formatMegabytes(total);
+              _statusText = '$receivedMB / $totalMB MB';
+            });
+          }
+          notificationService.showUpdateDownloadProgress(
+            version: widget.updateInfo.version,
+            received: received,
+            total: total,
+          );
+        },
+      );
+    } finally {
+      await notificationService.endBackgroundWork(
+        NotificationService.updateDownloadWorkKind,
+      );
+    }
 
     if (filePath != null) {
       await notificationService.cancelUpdateNotification();

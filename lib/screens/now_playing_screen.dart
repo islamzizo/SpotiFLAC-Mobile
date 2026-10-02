@@ -35,6 +35,7 @@ import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/utils/synced_lyrics_scroll.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/app_loading_indicator.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/expressive_button.dart';
 import 'package:spotiflac_android/widgets/expressive_icon_button.dart';
 import 'package:spotiflac_android/widgets/aligned_lyric_pronunciation.dart';
@@ -42,6 +43,7 @@ import 'package:spotiflac_android/widgets/lyric_supplement_transition.dart';
 import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
 import 'package:spotiflac_android/widgets/audio_output_button.dart';
 import 'package:spotiflac_android/widgets/lyric_gap_indicator.dart';
+import 'package:spotiflac_android/widgets/lyrics_screen_awake.dart';
 import 'package:spotiflac_android/widgets/player_artwork.dart';
 import 'package:spotiflac_android/widgets/player_queue_dismissible.dart';
 import 'package:spotiflac_android/widgets/player_track_swipe.dart';
@@ -99,10 +101,30 @@ class NowPlayingRoute extends PageRoute<void> {
   bool _interactiveTransition = false;
   int _dragGeneration = 0;
 
-  // Keep the previous page painted where a drag exposes it. The player itself
-  // fills the screen, including the status bar and bottom safe area.
+  // The player paints an opaque surface over the whole screen, including the
+  // status bar and bottom safe area. Once settled, the framework therefore
+  // keeps the pages below offstage: their glass, marquees and tickers stop
+  // compositing. Every drag or dismissal moves the animation off `completed`,
+  // which makes this route translucent again before the page is exposed.
   @override
-  bool get opaque => false;
+  bool get opaque => true;
+
+  /// Overlay size when the pages below were last laid out, recorded while this
+  /// route hides them. A rotation while hidden leaves their geometry stale.
+  Size? _coveredOverlaySize;
+
+  Size? get _overlaySize {
+    final box = navigator?.overlay?.context.findRenderObject();
+    return box is RenderBox && box.hasSize ? box.size : null;
+  }
+
+  @override
+  void install() {
+    super.install();
+    animation!.addStatusListener((status) {
+      _coveredOverlaySize = status.isCompleted ? _overlaySize : null;
+    });
+  }
 
   @override
   Color? get barrierColor => null;
@@ -173,7 +195,10 @@ class NowPlayingRoute extends PageRoute<void> {
         context.isMornye &&
         !MediaQuery.disableAnimationsOf(context) &&
         (controller?.value ?? 0) > 0) {
-      final target = miniPlayerGeometry?.call();
+      final coveredSize = _coveredOverlaySize;
+      final target = coveredSize == null || coveredSize == _overlaySize
+          ? miniPlayerGeometry?.call()
+          : null;
       if (target != null && !target.surface.isEmpty) {
         final size = MediaQuery.sizeOf(context);
         _dismissStartValue = controller!.value;
@@ -549,6 +574,15 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    return LyricsScreenAwake(
+      visible:
+          _currentPage == 1 &&
+          ref.watch(currentMediaItemProvider).value != null,
+      child: _buildPlayer(context),
+    );
+  }
+
+  Widget _buildPlayer(BuildContext context) {
     final mornye = context.isMornye;
     final colorScheme = mornye
         ? MornyeTheme.fromContext(
@@ -2011,13 +2045,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
       await openFile(source);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.snackbarCannotOpenFile(context.friendlyError(e)),
-          ),
-        ),
-      );
+      showCannotOpenFileSnackBar(context, e);
     }
   }
 
@@ -3468,8 +3496,8 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
     final blurLyrics =
         mornye &&
         !highContrast &&
-        (!ref.watch(lowEndDeviceProvider) ||
-            ref.watch(backdropBlurEnabledProvider));
+        // Every defocused line is filtered again on each playback frame.
+        ref.watch(mornyeLiquidGlassProvider);
     final motion = MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : const Duration(milliseconds: 280);
@@ -4385,25 +4413,18 @@ class _SweepingTimedLyricTextState extends State<_SweepingTimedLyricText> {
         var segmentOffset = 0;
         for (final segment in widget.segments) {
           final segmentEnd = segmentOffset + segment.length;
-          final boxes = <Rect>[];
-          // Keep paragraph shaping/wrapping intact. Select whole graphemes so
-          // accents, surrogate pairs and joined emoji never lift in pieces.
-          final fragments = widget.liftEnabled ? segment.characters : [segment];
-          var offset = segmentOffset;
-          for (final fragment in fragments) {
-            boxes.addAll(
-              highlightedPainter
-                  .getBoxesForSelection(
-                    TextSelection(
-                      baseOffset: offset,
-                      extentOffset: offset + fragment.length,
-                    ),
-                    boxHeightStyle: BoxHeightStyle.max,
-                  )
-                  .map((box) => box.toRect()),
-            );
-            offset += fragment.length;
-          }
+          // Select the whole timed word, keeping paragraph shaping and wrapping
+          // intact. All of its text runs share the same vertical movement.
+          final boxes = highlightedPainter
+              .getBoxesForSelection(
+                TextSelection(
+                  baseOffset: segmentOffset,
+                  extentOffset: segmentEnd,
+                ),
+                boxHeightStyle: BoxHeightStyle.max,
+              )
+              .map((box) => box.toRect())
+              .toList();
           boxes.sort((a, b) {
             final row = a.top.compareTo(b.top);
             return row == 0 ? a.left.compareTo(b.left) : row;
@@ -4473,23 +4494,22 @@ class _TimedLyricSweepPainter extends CustomPainter {
           : 0.0;
       final boxes = segmentBoxes[index];
       final width = boxes.fold<double>(0, (sum, box) => sum + box.width);
+      final lift = highlightLift > 0 && timed
+          ? highlightLift *
+                syncedLyricSegmentLift(
+                  position: position,
+                  start: starts[index],
+                  end: ends[index],
+                )
+          : 0.0;
       var consumed = 0.0;
       for (final box in boxes) {
         if (box.width <= 0) continue;
-        final lift = highlightLift > 0 && timed
-            ? highlightLift *
-                  syncedLyricSegmentLift(
-                    position: position,
-                    start: starts[index],
-                    end: ends[index],
-                    progressOffset: consumed / width,
-                  )
-            : 0.0;
         if (highlightLift > 0) {
           pendingPaths.putIfAbsent(lift, Path.new).addRect(box);
         }
-        // Consume the same word progress across graphemes, wrapping and font
-        // fallback. The sweep timing never restarts at a glyph boundary.
+        // Keep the color sweep continuous across wrapping and font fallback,
+        // independently of the movement shared by the whole word.
         final revealWidth = width * value - consumed;
         final feather = ((highlightLift > 0 ? width : box.width) * 0.18).clamp(
           3.0,
@@ -4518,8 +4538,8 @@ class _TimedLyricSweepPainter extends CustomPainter {
     }
 
     for (final (box, value, lift, feather) in partialBoxes) {
-      // The feather can cross into the following grapheme before its solid
-      // fill arrives, avoiding a hard flash at each letter boundary.
+      // Feather the leading edge so the highlight flows through each letter
+      // while the word rises as a single unit.
       final boundary = box.left + box.width * value;
       final revealRight = (boundary + feather).clamp(box.left, box.right);
       final revealRect = Rect.fromLTRB(

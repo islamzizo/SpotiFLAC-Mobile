@@ -12,6 +12,7 @@ pub(super) use id3::cover as embedded_cover;
 use super::{CheckedReader, bytes, exact, pair, seek};
 use crate::matching::{lowercase, uppercase};
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use std::sync::LazyLock;
@@ -50,6 +51,7 @@ pub fn rewrite_audio_tags(
 ) -> Result<(), String> {
     check()?;
     validate_fields(fields)?;
+    let fields = &*artist_mode_fields(fields);
     let mut source = BufReader::new(CheckedReader {
         reader: source,
         check,
@@ -99,6 +101,7 @@ pub fn rewrite_flac_tags_if_changed(
 ) -> Result<bool, String> {
     check()?;
     validate_fields(fields)?;
+    let fields = &*artist_mode_fields(fields);
     // Read only metadata and the frame sync needed for validation. A buffered
     // reader here would also pull audio into memory on the no-op path.
     let mut source = CheckedReader {
@@ -368,6 +371,8 @@ fn flac_header(
             if matches!(key.as_str(), "ARTIST" | "ALBUMARTIST") {
                 let values = if mode.trim().eq_ignore_ascii_case("split_vorbis") {
                     split_artists(value)
+                } else if primary_artist_mode(mode) {
+                    vec![primary_artist(value)]
                 } else {
                     vec![value.clone()]
                 };
@@ -644,6 +649,46 @@ fn metadata_fields(metadata: &super::AudioMetadata, fields: &Fields) -> Fields {
     result
 }
 
+fn primary_artist_mode(mode: &str) -> bool {
+    mode.trim().eq_ignore_ascii_case("primary")
+}
+
+/// The first credited artist, or the trimmed value when nothing separates it.
+/// Dart and Kotlin share this exact separator set so every writer agrees;
+/// Go-parity split mode keeps its own `split_artists` pattern.
+fn primary_artist(value: &str) -> String {
+    static SEPARATOR: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)\s*[,;&]\s*|\s+x\s+|\s+(?:feat(?:uring)?|ft|with)\.?(?:\s+|$)").unwrap()
+    });
+    let value = value.trim();
+    SEPARATOR
+        .split(value)
+        .map(str::trim)
+        .find(|part| !part.is_empty())
+        .unwrap_or(value)
+        .to_owned()
+}
+
+/// Applies the "primary" artist tag mode to editor fields before any format
+/// writer runs, so ID3, MP4, APE, RIFF and Vorbis all store the same name.
+fn artist_mode_fields(fields: &Fields) -> Cow<'_, Fields> {
+    if !fields
+        .get("artist_tag_mode")
+        .is_some_and(|mode| primary_artist_mode(mode))
+    {
+        return Cow::Borrowed(fields);
+    }
+    let mut fields = fields.clone();
+    for key in ["artist", "album_artist"] {
+        if let Some(value) = fields.get_mut(key)
+            && !value.trim().is_empty()
+        {
+            *value = primary_artist(value);
+        }
+    }
+    Cow::Owned(fields)
+}
+
 fn split_artists(value: &str) -> Vec<String> {
     static SPLIT: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"(?-u:\s*(?:,|&|\bx\b)\s*|\s+\b(?:feat(?:uring)?|ft|with)\.?\s*)").unwrap()
@@ -780,6 +825,32 @@ mod tests {
     impl Seek for CountingReader {
         fn seek(&mut self, offset: SeekFrom) -> io::Result<u64> {
             self.data.seek(offset)
+        }
+    }
+
+    /// Shared with the Dart and Kotlin primary-artist tests; keep in sync.
+    #[test]
+    fn primary_artist_uses_the_shared_separator_set() {
+        for (input, expected) in [
+            ("Calle 24, Chino Pacas", "Calle 24"),
+            ("Calle 24 & Chino Pacas", "Calle 24"),
+            ("Artist A; Artist B", "Artist A"),
+            ("Artist A feat. Artist B", "Artist A"),
+            ("Artist A Feat Artist B", "Artist A"),
+            ("Artist A ft. Artist B", "Artist A"),
+            ("Artist A featuring Artist B", "Artist A"),
+            ("Artist A with Artist B", "Artist A"),
+            ("Artist A x Artist B", "Artist A"),
+            ("Artist A X Artist B", "Artist A"),
+            (" , Artist A, Artist B", "Artist A"),
+            ("Malcolm X", "Malcolm X"),
+            ("Artist Without Fear", "Artist Without Fear"),
+            ("Maxx", "Maxx"),
+            ("AC/DC", "AC/DC"),
+            ("  Various Artists  ", "Various Artists"),
+            ("", ""),
+        ] {
+            assert_eq!(primary_artist(input), expected, "{input:?}");
         }
     }
 
