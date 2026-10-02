@@ -129,10 +129,14 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   void _openQueueFromSpotify() {
     if (!mounted) return;
     context.go('/');
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        ShellNavigationService.requestTab(ShellTab.library);
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      // Wait for GoRouter to finish replacing the Spotify route before
+      // selecting the library tab. Otherwise the tab request can target the
+      // old route tree and only become visible after another back/navigation.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      ShellNavigationService.requestTab(ShellTab.library);
     });
   }
 
