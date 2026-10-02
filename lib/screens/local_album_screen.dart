@@ -23,6 +23,7 @@ import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/player_motion_artwork_provider.dart';
 import 'package:spotiflac_android/screens/collapsing_header_scroll_mixin.dart';
 import 'package:spotiflac_android/screens/selection_mode_mixin.dart';
+import 'package:spotiflac_android/screens/track_metadata_screen.dart';
 import 'package:spotiflac_android/widgets/collection_scaffold.dart';
 import 'package:spotiflac_android/widgets/album_track_tile.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
@@ -157,6 +158,19 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
     } catch (e) {
       if (mounted) showCannotOpenFileSnackBar(context, e);
     }
+  }
+
+  Future<void> _openMetadata(LocalLibraryItem track) async {
+    final tracks = _sortedTracksCache;
+    await Navigator.of(context).push(
+      slidePageRoute<void>(
+        page: TrackMetadataScreen(
+          localItem: track,
+          localNavigationItems: tracks,
+          navigationIndex: tracks.indexWhere((item) => item.id == track.id),
+        ),
+      ),
+    );
   }
 
   @override
@@ -442,7 +456,7 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
       isSelected: selectedIds.contains(track.id),
       colorScheme: colorScheme,
       onToggleSelection: () => toggleSelection(track.id),
-      onOpen: () => _openFile(track),
+      onOpen: () => _openMetadata(track),
       onEnterSelectionMode: () => enterSelectionMode(track.id),
       onPlay: () => _openFile(track),
     );
