@@ -1065,10 +1065,10 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
         );
         await _checkEmbeddedLyrics();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(reEnrichCompletionMessage(context.l10n, result)),
-            ),
+          messenger.hideCurrentSnackBar();
+          await showReEnrichResultDialog(
+            context,
+            message: reEnrichCompletionMessage(context.l10n, result),
           );
         }
       } else if (method == 'ffmpeg') {
@@ -1138,13 +1138,11 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
               safUri,
             );
             if (!ok && mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    context.l10n.trackSaveFailed(
-                      context.l10n.snackbarFailedToWriteStorage,
-                    ),
-                  ),
+              messenger.hideCurrentSnackBar();
+              await showReEnrichResultDialog(
+                context,
+                message: context.l10n.trackSaveFailed(
+                  context.l10n.snackbarFailedToWriteStorage,
                 ),
               );
               return;
@@ -1171,17 +1169,17 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
             );
             await _checkEmbeddedLyrics();
             if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    reEnrichCompletionMessage(context.l10n, result),
-                  ),
-                ),
+              messenger.hideCurrentSnackBar();
+              await showReEnrichResultDialog(
+                context,
+                message: reEnrichCompletionMessage(context.l10n, result),
               );
             }
           } else if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(context.l10n.trackReEnrichFfmpegFailed)),
+            messenger.hideCurrentSnackBar();
+            await showReEnrichResultDialog(
+              context,
+              message: context.l10n.trackReEnrichFfmpegFailed,
             );
           }
         } finally {
@@ -1201,19 +1199,19 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
             result['error'],
             fallback: context.l10n.metadataSaveFailedFfmpeg,
           );
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(context.l10n.trackSaveFailed(error))),
+          messenger.hideCurrentSnackBar();
+          await showReEnrichResultDialog(
+            context,
+            message: context.l10n.trackSaveFailed(error),
           );
         }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              context.l10n.trackSaveFailed(context.friendlyError(e)),
-            ),
-          ),
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        await showReEnrichResultDialog(
+          context,
+          message: context.l10n.trackSaveFailed(context.friendlyError(e)),
         );
       }
     }

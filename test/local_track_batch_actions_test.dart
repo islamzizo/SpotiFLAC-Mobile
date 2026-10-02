@@ -309,6 +309,10 @@ void main() {
         active = !leaveDuringRefresh;
         library.refreshed.complete();
         await tester.pumpAndSettle();
+        if (!leaveDuringRefresh) {
+          await tester.tap(find.text('OK'));
+          await tester.pumpAndSettle();
+        }
         await action;
         expect(events, leaveDuringRefresh ? ['hide'] : ['hide', 'complete']);
         expect(tester.takeException(), isNull);

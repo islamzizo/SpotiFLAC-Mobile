@@ -303,10 +303,13 @@ Future<void> reEnrichLocalTracks(
   }
 
   if (previews.isEmpty) {
-    onSelectionRestore();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.l10n.trackReEnrichNoChanges)),
+    await showReEnrichResultDialog(
+      context,
+      message: context.l10n.trackReEnrichNoChanges,
     );
+    // Restore after the result closes so root-overlay fallback bars cannot
+    // cover this dialog either. Selected IDs remain intact throughout.
+    if (context.mounted && isActive()) onSelectionRestore();
     return;
   }
 
@@ -354,7 +357,7 @@ Future<void> reEnrichLocalTracks(
 
   ScaffoldMessenger.of(context).clearSnackBars();
   final summary = lyricsSummary.message(context.l10n, successCount, total);
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(summary)));
+  await showReEnrichResultDialog(context, message: summary);
 }
 
 /// Runs a batch against one settings snapshot per phase. Dependencies are
