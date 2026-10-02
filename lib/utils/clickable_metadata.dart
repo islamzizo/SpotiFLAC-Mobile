@@ -439,7 +439,10 @@ void pushViaPreferredNavigator(BuildContext context, WidgetBuilder builder) {
   // stack so they are visible immediately instead of being pushed underneath
   // the Spotify screen.
   if (spotifyNavigation != null) {
-    currentNavigator.push(MaterialPageRoute<void>(builder: builder));
+    // Spotify is a top-level GoRouter route. Always push detail pages onto
+    // the app root navigator so they are above the visible Spotify route,
+    // rather than onto a navigator that may belong to an underlying shell.
+    rootNavigator.push(MaterialPageRoute<void>(builder: builder));
     return;
   }
   final activeTabNavigator = ShellNavigationService.activeTabNavigator();
