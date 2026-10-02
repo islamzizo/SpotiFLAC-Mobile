@@ -272,7 +272,8 @@ private fun MainActivity.readMetadataFromUri(
     uri: Uri,
     displayNameHint: String? = null,
     fallbackExt: String? = null,
-    acceptDirect: (JSONObject) -> Boolean = { true },
+    acceptRead: (JSONObject) -> Boolean = { true },
+    retryDirectOnFailure: Boolean = false,
     read: (String, String) -> JSONObject?,
 ): JSONObject? {
     val displayName = buildUriDisplayName(uri, displayNameHint, fallbackExt)
@@ -280,17 +281,19 @@ private fun MainActivity.readMetadataFromUri(
         directRead = {
             contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
                 if (!isSeekableSafDescriptor(descriptor)) return@use null
-                read("/proc/self/fd/${descriptor.fd}", displayName)?.takeIf(acceptDirect)
+                read("/proc/self/fd/${descriptor.fd}", displayName)
             }
         },
         fallbackRead = {
-            val tempPath = copyUriToTemp(uri, fallbackExt)
+            val tempPath = copyUriToTemp(uri, fallbackExt, displayName = displayName)
             if (tempPath == null) null else try {
                 read(tempPath, displayName)
             } finally {
                 try { File(tempPath).delete() } catch (_: Exception) {}
             }
         },
+        accept = acceptRead,
+        retryDirectOnFailure = retryDirectOnFailure,
     )
 }
 
@@ -301,7 +304,17 @@ internal fun MainActivity.readAudioMetadataFromUri(
     coverCacheKey: String = "",
 ): JSONObject? = readMetadataFromUri(
     uri, displayNameHint, fallbackExt,
-    acceptDirect = { !it.optBoolean("metadataFromFilename", false) },
+    acceptRead = {
+        val fromFilename = it.optBoolean("metadataFromFilename", false)
+        if (fromFilename) {
+            android.util.Log.w(
+                "SpotiFLAC",
+                "SAF metadata tags unreadable; ignoring filename-derived metadata",
+            )
+        }
+        !fromFilename
+    },
+    retryDirectOnFailure = true,
 ) { path, name ->
     if (name.endsWith(".dsf", true) || name.endsWith(".dff", true) || name.endsWith(".wv", true)) {
         DsdSource.open(path)?.use { source ->

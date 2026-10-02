@@ -7,10 +7,20 @@ import java.io.File
 internal fun <T> readSafMetadataWithFallback(
     directRead: () -> T?,
     fallbackRead: () -> T?,
+    accept: (T) -> Boolean = { true },
+    retryDirectOnFailure: Boolean = false,
 ): T? {
-    val direct = try { directRead() } catch (_: Exception) { null }
+    fun attempt(read: () -> T?): T? = try {
+        read()?.takeIf(accept)
+    } catch (_: Exception) { null }
+
+    val direct = attempt(directRead)
     if (direct != null) return direct
-    return try { fallbackRead() } catch (_: Exception) { null }
+    val copied = attempt(fallbackRead)
+    if (copied != null) return copied
+    // A remote provider may have completed its download/cache by now. Reopen
+    // once; never repeatedly copy whole songs or publish filename guesses.
+    return if (retryDirectOnFailure) attempt(directRead) else null
 }
 
 internal fun <T> readLyricsWithSafCopy(
