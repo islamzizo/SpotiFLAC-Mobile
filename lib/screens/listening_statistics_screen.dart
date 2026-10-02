@@ -8,6 +8,7 @@ import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
 import 'package:spotiflac_android/widgets/app_loading_indicator.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
+import 'package:spotiflac_android/widgets/player_artwork.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 
 final listeningSummaryProvider = FutureProvider.autoDispose
@@ -293,9 +294,33 @@ class _ListeningStatisticsScreenState
         children: [
           for (final total in data.tracks.take(20))
             ListTile(
-              leading: const Icon(Icons.music_note_outlined),
-              title: Text(total.track.title),
-              subtitle: Text(total.track.artist),
+              leading: ExcludeSemantics(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: SizedBox.square(
+                    dimension: 48,
+                    child: PlayerArtwork(
+                      artUri: total.track.artwork,
+                      colorScheme: Theme.of(context).colorScheme,
+                      cacheWidth: (48 * MediaQuery.devicePixelRatioOf(context))
+                          .ceil(),
+                      iconSize: 24,
+                    ),
+                  ),
+                ),
+              ),
+              title: Text(
+                total.track.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                total.track.artist.trim().isEmpty
+                    ? context.l10n.unknownArtist
+                    : total.track.artist,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
               trailing: Text(
                 context.l10n.listeningStatsMinutes(
                   (total.milliseconds / 60000).round(),
