@@ -7064,6 +7064,8 @@
   "weeklyReleasesUnavailable": "Some artists could not be checked. Their saved results are kept. Providers may not supply artist catalogs or exact release dates.",
   "weeklyReleasesLoadError": "Could not check new releases. Pull to refresh.",
   "motionArtworkDescription": "Loop video covers supplied by metadata providers. Turn off to use still artwork and reduce battery use.",
+  "libraryLoading": "Loading Library…",
+  "libraryLoadFailed": "Library could not be loaded. Retry to load the saved folders and track index.",
   "optionsEmbeddedCoverSizeOriginal": "Original resolution",
   "@optionsEmbeddedCoverSizeOriginal": {
     "description": "Option that preserves the provider artwork at its original resolution"

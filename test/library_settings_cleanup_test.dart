@@ -48,6 +48,32 @@ class _History extends DownloadHistoryNotifier {
   Future<int> cleanupOrphanedDownloads() => _cleanup();
 }
 
+class _RetryLibrary extends _Library {
+  _RetryLibrary()
+    : super(
+        LocalLibraryState(
+          loadFailed: true,
+          sources: const [
+            LocalLibrarySource(
+              id: 'sd-card',
+              path: 'content://storage/tree/sd-card',
+              displayName: 'Saved music',
+              available: false,
+            ),
+          ],
+        ),
+        () async => 0,
+      );
+
+  int _reloadCalls = 0;
+
+  @override
+  Future<void> reloadFromStorage() async {
+    _reloadCalls++;
+    state = state.copyWith(loadFailed: false, totalCount: 5);
+  }
+}
+
 Finder get _cleanupRow => find.byWidgetPredicate(
   (widget) => widget is SettingsItem && widget.title == 'Cleanup Missing Files',
 );
@@ -84,6 +110,31 @@ Future<void> _mount(
 
 void main() {
   for (final mornye in [false, true]) {
+    testWidgets('failed load shows saved folder and offers retry ($mornye)', (
+      tester,
+    ) async {
+      final library = _RetryLibrary();
+      await _mount(
+        tester,
+        mornye: mornye,
+        library: library,
+        history: _History(0, () async => 0),
+      );
+      await tester.scrollUntilVisible(find.text('Retry'), -300);
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Library could not be loaded'),
+        findsOneWidget,
+      );
+      expect(find.text('Saved music'), findsOneWidget);
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(library._reloadCalls, 1);
+      expect(find.textContaining('Library could not be loaded'), findsNothing);
+      expect(find.text('Saved music'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('cleanup works for download-only Library ($mornye)', (
       tester,
     ) async {

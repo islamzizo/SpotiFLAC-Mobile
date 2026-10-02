@@ -6979,5 +6979,7 @@
   "weeklyReleasesEmpty": "Tidak ditemukan rilis dengan tanggal dalam periode ini. Tambahkan artis favorit atau coba periode lebih panjang.",
   "weeklyReleasesUnavailable": "Beberapa artis tidak dapat diperiksa. Hasil tersimpan tetap dipertahankan. Penyedia mungkin tidak memberikan katalog artis atau tanggal rilis lengkap.",
   "weeklyReleasesLoadError": "Rilis baru tidak dapat diperiksa. Tarik untuk memuat ulang.",
-  "motionArtworkDescription": "Putar berulang cover video dari penyedia metadata. Matikan untuk memakai cover diam dan menghemat baterai."
+  "motionArtworkDescription": "Putar berulang cover video dari penyedia metadata. Matikan untuk memakai cover diam dan menghemat baterai.",
+  "libraryLoading": "Memuat Library…",
+  "libraryLoadFailed": "Library tidak dapat dimuat. Coba lagi untuk memuat folder tersimpan dan indeks lagu."
 }

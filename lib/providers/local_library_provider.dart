@@ -19,6 +19,8 @@ const _excludedDownloadedCountKey = 'local_library_excluded_downloaded_count';
 final _prefs = SharedPreferences.getInstance();
 
 class LocalLibraryState {
+  final bool isLoading;
+  final bool loadFailed;
   final bool isScanning;
   final bool scanIsFinalizing;
   final bool scanIsPaused;
@@ -38,6 +40,8 @@ class LocalLibraryState {
   final Set<String> _isrcSet;
 
   LocalLibraryState({
+    this.isLoading = false,
+    this.loadFailed = false,
     this.isScanning = false,
     this.scanIsFinalizing = false,
     this.scanIsPaused = false,
@@ -76,6 +80,8 @@ class LocalLibraryState {
   }
 
   LocalLibraryState copyWith({
+    bool? isLoading,
+    bool? loadFailed,
     bool? isScanning,
     bool? scanIsFinalizing,
     bool? scanIsPaused,
@@ -97,6 +103,8 @@ class LocalLibraryState {
     Set<String>? isrcSet,
   }) {
     return LocalLibraryState(
+      isLoading: isLoading ?? this.isLoading,
+      loadFailed: loadFailed ?? this.loadFailed,
       isScanning: isScanning ?? this.isScanning,
       scanIsFinalizing: scanIsFinalizing ?? this.scanIsFinalizing,
       scanIsPaused: scanIsPaused ?? this.scanIsPaused,
@@ -124,7 +132,10 @@ class LocalLibraryState {
 }
 
 class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
-  final LibraryDatabase _db = LibraryDatabase.instance;
+  LocalLibraryNotifier({LibraryDatabase? database})
+    : _db = database ?? LibraryDatabase.instance;
+
+  final LibraryDatabase _db;
   final NotificationService _notificationService = NotificationService();
   static const _progressPollingInterval = Duration(milliseconds: 350);
   static const _progressStreamBootstrapTimeout = Duration(milliseconds: 900);
@@ -184,7 +195,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     }
 
     Future.microtask(_ensureLoadedFromDatabase);
-    return LocalLibraryState();
+    return LocalLibraryState(isLoading: true);
   }
 
   Future<void> _ensureLoadedFromDatabase() {
@@ -200,17 +211,27 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       return _loadFuture ?? Future<void>.value();
     }
     _isLoaded = true;
+    state = state.copyWith(isLoading: true, loadFailed: false);
 
     try {
+      // Folder configuration is independent of the potentially expensive
+      // track index and storage probes. Publish it before either can fail.
+      final configuredSources = await _db.getSources();
+      if (!ref.mounted) return;
+      state = state.copyWith(sources: configuredSources);
+      await ref.read(settingsProvider.notifier).ensureLoaded();
       await _migrateLegacySource();
       final reconnectedSources = await _refreshSourceAvailabilityInDatabase();
-      final countFuture = _db.getCount();
-      final indexFuture = _db.getLookupIndex();
-      final sourcesFuture = _db.getSources();
+      final sources = await _db.getSources();
+      if (!ref.mounted) return;
+      state = state.copyWith(sources: sources);
+      final summary = await Future.wait<Object>([
+        _db.getCount(),
+        _db.getLookupIndex(),
+      ]);
       final prefsFuture = _prefs;
-      final count = await countFuture;
-      final lookupIndex = await indexFuture;
-      final sources = await sourcesFuture;
+      final count = summary[0] as int;
+      final lookupIndex = summary[1] as LocalLibraryLookupIndex;
 
       DateTime? lastScannedAt;
       var excludedDownloadedCount = 0;
@@ -223,6 +244,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         _log.w('Failed to load lastScannedAt: $e');
       }
 
+      if (!ref.mounted) return;
       state = state.copyWith(
         totalCount: count,
         loadedIndexVersion: state.loadedIndexVersion + 1,
@@ -246,13 +268,20 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       }
     } catch (e, stack) {
       _isLoaded = false;
+      if (ref.mounted) state = state.copyWith(loadFailed: true);
       _log.e('Failed to load library from database: $e', e, stack);
     } finally {
       _loadFuture = null;
+      if (ref.mounted) state = state.copyWith(isLoading: false);
     }
   }
 
   Future<void> reloadFromStorage() async {
+    final loading = _loadFuture;
+    if (loading != null) {
+      await loading;
+      return;
+    }
     _isLoaded = false;
     _hasLoadedFromDatabase = false;
     _loadFuture = null;
@@ -388,12 +417,16 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     DateTime? lastScannedAt,
     int? excludedDownloadedCount,
   }) async {
-    final countFuture = _db.getCount();
-    final indexFuture = _db.getLookupIndex();
-    final sourcesFuture = _db.getSources();
-    final count = await countFuture;
-    final index = await indexFuture;
-    final sources = await sourcesFuture;
+    final sources = await _db.getSources();
+    if (!ref.mounted) return;
+    state = state.copyWith(sources: sources);
+    final summary = await Future.wait<Object>([
+      _db.getCount(),
+      _db.getLookupIndex(),
+    ]);
+    final count = summary[0] as int;
+    final index = summary[1] as LocalLibraryLookupIndex;
+    if (!ref.mounted) return;
     final latestSourceScan = sources
         .map((source) => source.lastScannedAt)
         .whereType<DateTime>()
@@ -403,6 +436,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
               latest == null || value.isAfter(latest) ? value : latest,
         );
     state = state.copyWith(
+      loadFailed: false,
       totalCount: count,
       loadedIndexVersion: state.loadedIndexVersion + 1,
       lastScannedAt: lastScannedAt ?? latestSourceScan,
@@ -478,19 +512,25 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   }
 
   Future<bool?> _probePathAvailability(String path, {String? bookmark}) async {
-    if (Platform.isAndroid && path.startsWith('content://')) {
-      return PlatformBridge.probeSafTreeReadAccess(path);
-    }
-    if (Platform.isIOS && bookmark != null && bookmark.trim().isNotEmpty) {
-      final access = await PlatformBridge.startAccessingIosBookmark(bookmark);
-      if (access == null) return false;
-      try {
-        return await Directory(access.path).exists();
-      } finally {
-        await PlatformBridge.stopAccessingIosBookmark(access);
+    try {
+      if (Platform.isAndroid && path.startsWith('content://')) {
+        return await PlatformBridge.probeSafTreeReadAccess(path);
       }
+      if (Platform.isIOS && bookmark != null && bookmark.trim().isNotEmpty) {
+        final access = await PlatformBridge.startAccessingIosBookmark(bookmark);
+        if (access == null) return false;
+        try {
+          return await Directory(access.path).exists();
+        } finally {
+          await PlatformBridge.stopAccessingIosBookmark(access);
+        }
+      }
+      return await Directory(path).exists();
+    } catch (error) {
+      // A busy provider or a filesystem exception cannot prove detachment.
+      _log.w('Library source access probe failed: $error');
+      return null;
     }
-    return await Directory(path).exists();
   }
 
   Future<List<String>> _refreshSourceAvailabilityInDatabase() =>

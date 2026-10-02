@@ -1282,20 +1282,19 @@ class LibraryDatabase {
   }) async {
     if (path.trim().isEmpty) return;
     final db = await database;
-    await db.update(
-      'library_sources',
-      {
-        'path': path,
-        'display_name': displayName,
-        'bookmark': bookmark,
-        'volume_id': volumeId,
-        'is_removable': isRemovable ? 1 : 0,
-        'available': available ? 1 : 0,
-        'last_scanned_at': lastScannedAt?.toIso8601String(),
-        'last_seen_at': available ? DateTime.now().toIso8601String() : null,
-      },
-      where: 'id = ?',
-      whereArgs: [legacySourceId],
+    await persistLegacyLibrarySource(
+      db,
+      LocalLibrarySource(
+        id: legacySourceId,
+        path: path,
+        displayName: displayName,
+        bookmark: bookmark,
+        volumeId: volumeId,
+        isRemovable: isRemovable,
+        available: available,
+        lastScannedAt: lastScannedAt,
+        lastSeenAt: available ? DateTime.now() : null,
+      ),
     );
   }
 
@@ -2276,4 +2275,37 @@ class LibraryDatabase {
     }
     return hash;
   }
+}
+
+/// Migrates the pre-multiple-folder setting even when its placeholder row is
+/// absent. Do not REPLACE an existing source or change the IDs of its tracks.
+Future<void> persistLegacyLibrarySource(
+  Database db,
+  LocalLibrarySource source,
+) async {
+  final values = <String, Object?>{
+    'path': source.path,
+    'display_name': source.displayName,
+    'bookmark': source.bookmark,
+    'volume_id': source.volumeId,
+    'is_removable': source.isRemovable ? 1 : 0,
+    'available': source.available ? 1 : 0,
+    'last_scanned_at': source.lastScannedAt?.toIso8601String(),
+    'last_seen_at': source.lastSeenAt?.toIso8601String(),
+  };
+  await db.transaction((txn) async {
+    final updated = await txn.update(
+      'library_sources',
+      values,
+      where: 'id = ?',
+      whereArgs: [source.id],
+    );
+    if (updated == 0) {
+      await txn.insert('library_sources', {
+        'id': source.id,
+        'enabled': source.enabled ? 1 : 0,
+        ...values,
+      });
+    }
+  });
 }

@@ -637,6 +637,43 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
             ),
           ),
           SliverToBoxAdapter(
+            child: Consumer(
+              builder: (context, ref, _) {
+                final status = ref.watch(
+                  localLibraryProvider.select(
+                    (state) =>
+                        (loading: state.isLoading, failed: state.loadFailed),
+                  ),
+                );
+                if (!status.loading && !status.failed) {
+                  return const SizedBox.shrink();
+                }
+                return ListTile(
+                  leading: status.loading
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(Icons.error_outline, color: colorScheme.error),
+                  title: Text(
+                    status.loading
+                        ? context.l10n.libraryLoading
+                        : context.l10n.libraryLoadFailed,
+                  ),
+                  trailing: status.loading
+                      ? null
+                      : TextButton(
+                          onPressed: () => ref
+                              .read(localLibraryProvider.notifier)
+                              .reloadFromStorage(),
+                          child: Text(context.l10n.dialogRetry),
+                        ),
+                );
+              },
+            ),
+          ),
+          SliverToBoxAdapter(
             child: SettingsGroup(
               children: [
                 SettingsSwitchItem(
