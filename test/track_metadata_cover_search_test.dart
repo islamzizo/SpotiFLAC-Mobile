@@ -165,6 +165,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.more_vert));
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Edit audio file'));
+      await tester.tap(find.text('Edit audio file'));
+      await tester.pumpAndSettle();
       await tester.ensureVisible(find.text('Edit Metadata'));
       await tester.tap(find.text('Edit Metadata'));
       await _settleFileIo(tester);

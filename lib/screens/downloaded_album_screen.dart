@@ -34,6 +34,7 @@ import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/destructive_selection_button.dart';
 import 'package:spotiflac_android/widgets/selection_action_button.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
+import 'package:spotiflac_android/widgets/library_selection_playback_actions.dart';
 import 'package:spotiflac_android/widgets/disc_separator_chip.dart';
 import 'package:spotiflac_android/widgets/album_detail_header.dart';
 import 'package:spotiflac_android/widgets/mornye_artist_header.dart';
@@ -706,6 +707,14 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
       },
       bottomPadding: bottomPadding,
       children: [
+        LibrarySelectionPlaybackActions(
+          items: _selectedUnifiedItems(tracks),
+          onClose: exitSelectionMode,
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(context.l10n.trackEditMetadata),
+        ),
         LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 8.0;

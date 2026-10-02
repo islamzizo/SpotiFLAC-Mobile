@@ -199,6 +199,20 @@ class MusicPlayerController {
   Future<void> addToQueue(PlayableMedia item) async =>
       (await ensureInitialized())?.enqueue(item);
 
+  Future<void> enqueueLibraryItems(
+    List<UnifiedLibraryItem> items, {
+    bool playNext = false,
+  }) async {
+    final media = [
+      for (final item in items)
+        if (item.localItem != null)
+          playableFromLocal(item.localItem!)
+        else if (item.historyItem != null)
+          playableFromHistory(item.historyItem!),
+    ];
+    await (await ensureInitialized())?.enqueueAll(media, playNext: playNext);
+  }
+
   Future<void> playNextHistory(DownloadHistoryItem item) async =>
       playNext(playableFromHistory(item));
 

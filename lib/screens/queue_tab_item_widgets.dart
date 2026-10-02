@@ -13,6 +13,10 @@ extension _QueueTabItemWidgets on _QueueTabState {
     final localOnlySelection = _isLocalOnlySelection(unifiedItems);
 
     return LibraryTrackSelectionBar(
+      playbackActions: LibrarySelectionPlaybackActions(
+        items: _selectedItemsFromAll(unifiedItems),
+        onClose: _exitSelectionMode,
+      ),
       selectedCount: selectedCount,
       allSelected: allSelected,
       onClose: _exitSelectionMode,

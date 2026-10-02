@@ -801,6 +801,22 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
         SizedBox(
           width: double.infinity,
           child: SelectionActionButton(
+            icon: Icons.playlist_add,
+            label: barContext.l10n.collectionAddToPlaylist,
+            colorScheme: colorScheme,
+            onPressed: selectedCount == 0
+                ? null
+                : () {
+                    final selected = _selectedTracks(tracks);
+                    exitSelectionMode();
+                    showAddTracksToPlaylistSheet(context, ref, selected);
+                  },
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          width: double.infinity,
+          child: SelectionActionButton(
             icon: Icons.download_rounded,
             label: '${barContext.l10n.dialogDownload} ($selectedCount)',
             onPressed: selectedCount == 0

@@ -6951,5 +6951,10 @@
   "hiResCheckSampledExplanation": "Berdasarkan {seconds} detik audio. Analisis ini tidak dapat memastikan keaslian master sumber.",
   "hiResCheckImagingEvidence": "Spektrum memiliki pola pita tercermin yang konsisten dengan upsampling.",
   "hiResCheckRateEvidence": "Penurunan tajam di sekitar {cutoff} dan noise floor yang terukur mengindikasikan sumber dengan sample rate lebih rendah.",
-  "hiResCheckSteadyEnergy": "Energi di atas {cutoff} relatif konstan pada bagian yang dianalisis dan mungkin berupa noise."
+  "hiResCheckSteadyEnergy": "Energi di atas {cutoff} relatif konstan pada bagian yang dianalisis dan mungkin berupa noise.",
+  "trackEditAudioFile": "Ubah file audio",
+  "relatedLibraryTracks": "Lagu serupa di Library",
+  "relatedLibraryDescription": "Lagu yang sudah Anda miliki dengan tag artis, album, atau genre terkait. Tidak mencari musik online.",
+  "relatedLibraryEmpty": "Tidak ada lagu terkait di Library Anda.",
+  "relatedLibraryLoadError": "Tidak dapat mencari lagu terkait. Coba lagi."
 }

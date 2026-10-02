@@ -76,8 +76,8 @@ import 'package:spotiflac_android/widgets/metadata_barcode.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/constants/music_services.dart';
 import 'package:spotiflac_android/screens/collapsing_header_scroll_mixin.dart';
-import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
-import 'package:spotiflac_android/screens/local_album_screen.dart';
+import 'package:spotiflac_android/screens/related_library_tracks_screen.dart';
+import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/utils/clickable_metadata.dart';
 
 part 'track_metadata_screen_cover.dart';

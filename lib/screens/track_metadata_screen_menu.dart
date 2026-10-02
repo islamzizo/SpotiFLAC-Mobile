@@ -8,114 +8,154 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
     WidgetRef ref,
     ColorScheme colorScheme, {
     Rect? anchor,
+    bool fileActionsOnly = false,
   }) {
     Widget buildMenu(BuildContext sheetContext) {
       final l10n = sheetContext.l10n;
 
       final options = <_MetadataOption>[
-        if (_fileExists)
+        if (!fileActionsOnly) ...[
+          if (_fileExists)
+            _MetadataOption(
+              icon: Icons.playlist_play,
+              label: l10n.trackPlayNext,
+              onTap: () => _enqueueThis(ref, playNext: true),
+            ),
+          if (_fileExists)
+            _MetadataOption(
+              icon: Icons.queue_music,
+              label: l10n.trackAddToQueue,
+              onTap: () => _enqueueThis(ref, playNext: false),
+            ),
+          if (albumName.trim().isNotEmpty)
+            _MetadataOption(
+              icon: Icons.album_outlined,
+              label: l10n.homeGoToAlbum,
+              onTap: () => navigateToAlbum(
+                screenContext,
+                albumName: albumName,
+                artistName: albumArtist ?? artistName,
+                coverUrl: _coverUrl,
+              ),
+            ),
           _MetadataOption(
-            icon: Icons.playlist_play,
-            label: l10n.trackPlayNext,
-            onTap: () => _enqueueThis(ref, playNext: true),
-          ),
-        if (_fileExists)
-          _MetadataOption(
-            icon: Icons.queue_music,
-            label: l10n.trackAddToQueue,
-            onTap: () => _enqueueThis(ref, playNext: false),
-          ),
-        if (albumName.trim().isNotEmpty)
-          _MetadataOption(
-            icon: Icons.album_outlined,
-            label: l10n.homeGoToAlbum,
-            onTap: () => _goToStoredAlbum(screenContext),
-          ),
-        _MetadataOption(
-          icon: Icons.copy_outlined,
-          label: l10n.trackCopyFilePath,
-          dividerAbove: _fileExists,
-          onTap: () => _copyToClipboard(screenContext, cleanFilePath),
-        ),
-        if (_fileExists)
-          _MetadataOption(
-            icon: Icons.edit_outlined,
-            label: l10n.trackEditMetadata,
+            icon: Icons.person_outline,
+            label: l10n.mornyeGoToArtist,
             onTap: () =>
-                _showEditMetadataSheet(screenContext, ref, colorScheme),
+                navigateToArtistCredits(screenContext, artistNames: artistName),
           ),
-        if (!_isLocalItem && (_coverUrl != null || _fileExists))
           _MetadataOption(
-            icon: Icons.image_outlined,
-            label: l10n.trackSaveCoverArt,
-            onTap: _saveCoverArt,
-          ),
-        if (!_isLocalItem)
-          _MetadataOption(
-            icon: Icons.lyrics_outlined,
-            label: l10n.trackSaveLyrics,
-            onTap: _saveLyrics,
-          ),
-        if (_fileExists)
-          _MetadataOption(
-            icon: Icons.travel_explore,
-            label: l10n.trackReEnrich,
-            onTap: _reEnrichMetadata,
-          ),
-        if (_fileExists && _isConvertibleFormat)
-          _MetadataOption(
-            icon: Icons.swap_horiz,
-            label: l10n.trackConvertFormat,
-            onTap: () => _showConvertSheet(screenContext),
-          ),
-        if (_fileExists && !_isCueFile)
-          _MetadataOption(
-            icon: Icons.graphic_eq,
-            label: l10n.trackReplayGain,
-            onTap: () => _updateReplayGain(),
-          ),
-        if (_fileExists && !_isCueFile)
-          _MetadataOption(
-            icon: Icons.remove_circle_outline,
-            label: l10n.trackRemoveReplayGain,
-            onTap: () => _removeReplayGain(),
-          ),
-        if (_fileExists && _isCueFile)
-          _MetadataOption(
-            icon: Icons.call_split,
-            label: l10n.cueSplitTitle,
-            onTap: () => _showCueSplitSheet(screenContext),
-          ),
-        if (_spotifyId != null || (isrc?.isNotEmpty ?? false))
-          _MetadataOption(
-            icon: Icons.open_in_new,
-            label: l10n.trackOpenOn,
-            dividerAbove: true,
-            onTap: () => OpenOnPlatformSheet.show(
+            icon: Icons.tune,
+            label: l10n.trackEditAudioFile,
+            onTap: () => _showOptionsMenu(
               screenContext,
-              spotifyId: _spotifyId ?? '',
-              isrc: isrc ?? '',
+              ref,
+              colorScheme,
+              fileActionsOnly: true,
             ),
           ),
-        _MetadataOption(
-          icon: Icons.share_outlined,
-          label: l10n.trackMetadataShare,
-          dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
-          onTap: () => _shareFile(screenContext),
-        ),
-        _MetadataOption(
-          icon: Icons.delete_outline,
-          label: l10n.trackRemoveFromDevice,
-          destructive: true,
-          onTap: () => _confirmDelete(screenContext, ref, colorScheme),
-        ),
+          _MetadataOption(
+            icon: Icons.library_music_outlined,
+            label: l10n.relatedLibraryTracks,
+            onTap: () => Navigator.of(screenContext).push(
+              MaterialPageRoute<void>(
+                builder: (_) => RelatedLibraryTracksScreen(
+                  seed: widget.localItem != null
+                      ? UnifiedLibraryItem.fromLocalLibrary(widget.localItem!)
+                      : UnifiedLibraryItem.fromDownloadHistory(widget.item!),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (fileActionsOnly) ...[
+          _MetadataOption(
+            icon: Icons.copy_outlined,
+            label: l10n.trackCopyFilePath,
+            dividerAbove: _fileExists,
+            onTap: () => _copyToClipboard(screenContext, cleanFilePath),
+          ),
+          if (_fileExists)
+            _MetadataOption(
+              icon: Icons.edit_outlined,
+              label: l10n.trackEditMetadata,
+              onTap: () =>
+                  _showEditMetadataSheet(screenContext, ref, colorScheme),
+            ),
+          if (!_isLocalItem && (_coverUrl != null || _fileExists))
+            _MetadataOption(
+              icon: Icons.image_outlined,
+              label: l10n.trackSaveCoverArt,
+              onTap: _saveCoverArt,
+            ),
+          if (!_isLocalItem)
+            _MetadataOption(
+              icon: Icons.lyrics_outlined,
+              label: l10n.trackSaveLyrics,
+              onTap: _saveLyrics,
+            ),
+          if (_fileExists)
+            _MetadataOption(
+              icon: Icons.travel_explore,
+              label: l10n.trackReEnrich,
+              onTap: _reEnrichMetadata,
+            ),
+          if (_fileExists && _isConvertibleFormat)
+            _MetadataOption(
+              icon: Icons.swap_horiz,
+              label: l10n.trackConvertFormat,
+              onTap: () => _showConvertSheet(screenContext),
+            ),
+          if (_fileExists && !_isCueFile)
+            _MetadataOption(
+              icon: Icons.graphic_eq,
+              label: l10n.trackReplayGain,
+              onTap: () => _updateReplayGain(),
+            ),
+          if (_fileExists && !_isCueFile)
+            _MetadataOption(
+              icon: Icons.remove_circle_outline,
+              label: l10n.trackRemoveReplayGain,
+              onTap: () => _removeReplayGain(),
+            ),
+          if (_fileExists && _isCueFile)
+            _MetadataOption(
+              icon: Icons.call_split,
+              label: l10n.cueSplitTitle,
+              onTap: () => _showCueSplitSheet(screenContext),
+            ),
+        ],
+        if (!fileActionsOnly) ...[
+          if (_spotifyId != null || (isrc?.isNotEmpty ?? false))
+            _MetadataOption(
+              icon: Icons.open_in_new,
+              label: l10n.trackOpenOn,
+              dividerAbove: true,
+              onTap: () => OpenOnPlatformSheet.show(
+                screenContext,
+                spotifyId: _spotifyId ?? '',
+                isrc: isrc ?? '',
+              ),
+            ),
+          _MetadataOption(
+            icon: Icons.share_outlined,
+            label: l10n.trackMetadataShare,
+            dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
+            onTap: () => _shareFile(screenContext),
+          ),
+          _MetadataOption(
+            icon: Icons.delete_outline,
+            label: l10n.trackRemoveFromDevice,
+            destructive: true,
+            onTap: () => _confirmDelete(screenContext, ref, colorScheme),
+          ),
+        ],
       ];
 
       if (sheetContext.isMornye) {
         final groups = <List<MornyeMenuAction>>[];
         for (final option in options) {
-          if (option.icon == Icons.share_outlined ||
-              option.icon == Icons.edit_outlined) {
+          if (option.icon == Icons.share_outlined) {
             continue;
           }
           if (groups.isEmpty || option.dividerAbove || option.destructive) {
@@ -133,32 +173,26 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
         }
         return MornyeContextMenu(
           quickActions: [
-            if (_fileExists) ...[
-              MornyeMenuAction(
-                icon: CupertinoIcons.play_fill,
-                label: l10n.trackMetadataPlay,
-                onPressed: () => _closeOptionsMenuAndRun(
-                  sheetContext,
-                  () => _openFile(screenContext, rawFilePath),
+            if (!fileActionsOnly) ...[
+              if (_fileExists) ...[
+                MornyeMenuAction(
+                  icon: CupertinoIcons.play_fill,
+                  label: l10n.trackMetadataPlay,
+                  onPressed: () => _closeOptionsMenuAndRun(
+                    sheetContext,
+                    () => _openFile(screenContext, rawFilePath),
+                  ),
                 ),
-              ),
+              ],
               MornyeMenuAction(
-                icon: CupertinoIcons.pencil,
-                label: l10n.trackEditMetadata,
+                icon: CupertinoIcons.share_solid,
+                label: l10n.trackMetadataShare,
                 onPressed: () => _closeOptionsMenuAndRun(
                   sheetContext,
-                  () => _showEditMetadataSheet(screenContext, ref, colorScheme),
+                  () => _shareFile(screenContext),
                 ),
               ),
             ],
-            MornyeMenuAction(
-              icon: CupertinoIcons.share_solid,
-              label: l10n.trackMetadataShare,
-              onPressed: () => _closeOptionsMenuAndRun(
-                sheetContext,
-                () => _shareFile(screenContext),
-              ),
-            ),
           ],
           groups: groups,
         );
@@ -302,56 +336,5 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
     }
 
     return placeholder();
-  }
-
-  Future<void> _goToStoredAlbum(BuildContext screenContext) async {
-    final resolvedAlbumArtist = (albumArtist ?? '').trim();
-    final artist = resolvedAlbumArtist.isNotEmpty
-        ? resolvedAlbumArtist
-        : artistName;
-
-    if (!_isLocalItem) {
-      pushViaPreferredNavigator(
-        screenContext,
-        (_) => DownloadedAlbumScreen(
-          albumName: albumName,
-          artistName: artist,
-          coverUrl: _coverUrl,
-        ),
-      );
-      return;
-    }
-
-    try {
-      final rows = await LibraryDatabase.instance.getQueueLocalAlbumTracksByKey(
-        _localLibraryItem!.albumKey,
-      );
-      if (!mounted || !screenContext.mounted) return;
-      final tracks = rows
-          .map(LocalLibraryItem.fromJson)
-          .toList(growable: false);
-      if (tracks.isNotEmpty) {
-        pushViaPreferredNavigator(
-          screenContext,
-          (_) => LocalAlbumScreen(
-            albumName: albumName,
-            artistName: artist,
-            coverPath: _localCoverPath,
-            tracks: tracks,
-          ),
-        );
-        return;
-      }
-    } catch (e) {
-      _log.w('Failed to resolve local album: $e');
-    }
-
-    if (!mounted || !screenContext.mounted) return;
-    await navigateToAlbum(
-      screenContext,
-      albumName: albumName,
-      artistName: artist,
-      coverUrl: _coverUrl,
-    );
   }
 }

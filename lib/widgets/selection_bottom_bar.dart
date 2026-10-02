@@ -347,8 +347,14 @@ class SelectionBottomBar extends StatelessWidget {
         ),
       ),
     );
+    final boundedContent = ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.72,
+      ),
+      child: SingleChildScrollView(child: content),
+    );
     if (context.isMornye) {
-      return MornyeGlassPanel.overlay(child: content);
+      return MornyeGlassPanel.overlay(child: boundedContent);
     }
     return Container(
       decoration: BoxDecoration(
@@ -364,7 +370,7 @@ class SelectionBottomBar extends StatelessWidget {
           ),
         ],
       ),
-      child: content,
+      child: boundedContent,
     );
   }
 }

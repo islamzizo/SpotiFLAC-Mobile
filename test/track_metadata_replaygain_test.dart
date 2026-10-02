@@ -142,6 +142,10 @@ void main() {
       Future<void> openRemoval() async {
         await tester.tap(find.byIcon(Icons.more_vert));
         await tester.pumpAndSettle();
+        expect(find.text('Remove ReplayGain'), findsNothing);
+        await tester.ensureVisible(find.text('Edit audio file'));
+        await tester.tap(find.text('Edit audio file'));
+        await tester.pumpAndSettle();
         await tester.ensureVisible(find.text('Remove ReplayGain'));
         await tester.tap(find.text('Remove ReplayGain'));
         await tester.pumpAndSettle();

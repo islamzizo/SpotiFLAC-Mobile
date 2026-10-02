@@ -4,9 +4,8 @@ import 'package:spotiflac_android/widgets/app_action_button.dart';
 import 'package:spotiflac_android/widgets/selection_action_button.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
 
-/// Multi-select toolbar for Library tracks: FLAC upgrade (local selections
-/// only), re-enrich, convert, ReplayGain add/remove and delete. Shared by the
-/// Library list and Library search results so both expose the same actions.
+/// Shared Library toolbar for playlist/queue actions and audio file operations.
+/// FLAC upgrade applies only to eligible local selections.
 class LibraryTrackSelectionBar extends StatelessWidget {
   const LibraryTrackSelectionBar({
     super.key,
@@ -21,6 +20,7 @@ class LibraryTrackSelectionBar extends StatelessWidget {
     required this.onDelete,
     this.flacEligibleCount = 0,
     this.onQueueFlac,
+    this.playbackActions,
   });
 
   final int selectedCount;
@@ -36,6 +36,7 @@ class LibraryTrackSelectionBar extends StatelessWidget {
   /// FLAC upgrade is offered when this is positive and [onQueueFlac] is set.
   final int flacEligibleCount;
   final VoidCallback? onQueueFlac;
+  final Widget? playbackActions;
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +49,12 @@ class LibraryTrackSelectionBar extends StatelessWidget {
       onToggleSelectAll: onToggleSelectAll,
       bottomPadding: bottomPadding,
       children: [
+        ?playbackActions,
+        if (playbackActions != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(context.l10n.trackEditMetadata),
+          ),
         LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 8.0;

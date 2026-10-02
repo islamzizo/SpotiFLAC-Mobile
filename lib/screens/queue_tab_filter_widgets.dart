@@ -235,6 +235,20 @@ extension _QueueTabFilterWidgets on _QueueTabState {
           playlistIndexes.add(i);
         }
       }
+      playlistIndexes.sort((a, b) {
+        final first = collectionState.playlists[a];
+        final second = collectionState.playlists[b];
+        return switch (_sortMode) {
+          'a-z' => first.name.toLowerCase().compareTo(
+            second.name.toLowerCase(),
+          ),
+          'z-a' => second.name.toLowerCase().compareTo(
+            first.name.toLowerCase(),
+          ),
+          'oldest' => first.createdAt.compareTo(second.createdAt),
+          _ => second.updatedAt.compareTo(first.updatedAt),
+        };
+      });
     }
 
     Widget leadGridCell(int index) {
