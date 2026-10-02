@@ -149,6 +149,7 @@ void main() {
                         UnifiedLibraryItem.fromDownloadHistory(
                           DownloadHistoryItem(
                             id: 'download',
+                            spotifyId: 'provider-a:track-1',
                             trackName: 'Downloaded',
                             artistName: 'Artist',
                             albumName: 'Album',
@@ -186,6 +187,7 @@ void main() {
         await tester.tap(find.text('Review changes'));
         await tester.pumpAndSettle();
         expect(requests.map((request) => request['file_path']), paths);
+        expect(requests.first['spotify_id'], 'provider-a:track-1');
         await tester.tap(find.text('Apply changes'));
         for (var attempt = 0; attempt < 50 && !completed; attempt++) {
           await tester.pump(const Duration(milliseconds: 100));
@@ -198,6 +200,7 @@ void main() {
           ...paths,
           ...paths,
         ]);
+        expect(requests[paths.length]['spotify_id'], 'provider-a:track-1');
         expect(history._updates, {'download': 'USABC2600001'});
         expect(library._refreshes, includeLocal ? 1 : 0);
         expect(completed, isTrue);

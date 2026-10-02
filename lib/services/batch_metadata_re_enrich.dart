@@ -107,6 +107,7 @@ Map<String, dynamic> buildBatchReEnrichRequest({
   required List<String> updateFields,
   bool previewOnly = false,
   Map<String, dynamic>? resolvedMetadata,
+  String? sourceTrackId,
 }) {
   final request = <String, dynamic>{
     'file_path': item.filePath,
@@ -115,7 +116,7 @@ Map<String, dynamic> buildBatchReEnrichRequest({
     'embed_lyrics': settings.embedLyrics,
     'lyrics_mode': settings.lyricsMode,
     'artist_tag_mode': settings.artistTagMode,
-    'spotify_id': '',
+    'spotify_id': sourceTrackId ?? '',
     'track_name': item.trackName,
     'artist_name': item.artistName,
     'album_name': item.albumName,
@@ -131,13 +132,22 @@ Map<String, dynamic> buildBatchReEnrichRequest({
     'label': item.label ?? '',
     'copyright': item.copyright ?? '',
     'duration_ms': (item.duration ?? 0) * 1000,
-    'search_online': resolvedMetadata == null,
+    // Lyrics-only previews do not need a second metadata-provider search.
+    // Preserve the file's title/artist and fetch lyrics during apply.
+    'search_online':
+        resolvedMetadata == null &&
+        !(updateFields.length == 1 &&
+            updateFields.single == ReEnrichFields.lyrics),
     'replace_release_metadata': false,
     'update_fields': updateFields,
     if (previewOnly) 'preview_only': true,
   };
   if (resolvedMetadata != null) {
     request.addAll(resolvedMetadata);
+  }
+  if ((request['spotify_id']?.toString().trim().isEmpty ?? true) &&
+      sourceTrackId != null) {
+    request['spotify_id'] = sourceTrackId;
   }
   return request;
 }

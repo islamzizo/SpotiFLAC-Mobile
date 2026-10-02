@@ -112,6 +112,7 @@ void main() {
       item: _item(),
       settings: const AppSettings(embeddedCoverMaxDimension: 1000),
       updateFields: const ['isrc'],
+      sourceTrackId: 'original-id',
       resolvedMetadata: const {
         'isrc': 'USRC17607839',
         'spotify_id': 'resolved-id',
@@ -123,6 +124,19 @@ void main() {
     expect(request['isrc'], 'USRC17607839');
     expect(request['spotify_id'], 'resolved-id');
     expect(request['cover_max_dimension'], 1000);
+  });
+
+  test('empty preview identity cannot discard the original track ID', () {
+    final request = buildBatchReEnrichRequest(
+      item: _item(),
+      settings: const AppSettings(),
+      updateFields: const [ReEnrichFields.lyrics],
+      sourceTrackId: 'original-id',
+      resolvedMetadata: const {'spotify_id': ''},
+    );
+
+    expect(request['spotify_id'], 'original-id');
+    expect(request['search_online'], isFalse);
   });
 
   test('review only includes values that would actually change', () {
