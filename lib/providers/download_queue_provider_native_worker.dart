@@ -1132,6 +1132,12 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
           final errorMsg = (error == null || error.isEmpty)
               ? (resultMap?['error']?.toString() ?? 'Download failed')
               : error;
+          _log.e(
+            'Native worker item $itemId failed '
+            '(service: ${context.item.service}, '
+            'storage: ${context.storageMode}, '
+            'stage: ${resultMap?['failure_stage'] ?? 'unknown'}): $errorMsg',
+          );
           final backendErrorType = resultMap == null
               ? null
               : downloadErrorTypeFromBackend(

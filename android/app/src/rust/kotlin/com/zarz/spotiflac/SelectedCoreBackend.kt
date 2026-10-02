@@ -46,7 +46,7 @@ internal suspend fun MainActivity.dispatchBackendApplication(call: MethodCall, r
 internal object RustCoreBackend : CoreBackend {
     override val implementation = "rust"
     override val routesApplication = true
-    private lateinit var root: File
+    private lateinit var workspace: NativeMediaWorkspace
     private var manager: ExtensionManager? = null
     private var repository: ExtensionRepository? = null
     private var requests: CancellationRegistry? = null
@@ -62,7 +62,9 @@ internal object RustCoreBackend : CoreBackend {
 
     @Synchronized
     fun initialize(context: Context): RustCoreBackend {
-        if (!::root.isInitialized) root = File(context.applicationContext.cacheDir, "rust-core-pilot")
+        if (!::workspace.isInitialized) {
+            workspace = NativeMediaWorkspace(context.applicationContext.noBackupFilesDir)
+        }
         return this
     }
 
@@ -103,7 +105,7 @@ internal object RustCoreBackend : CoreBackend {
     private fun setDownloadDirectory(path: String) {
         val current = owner()
         val storage = checkNotNull(identity)
-        val files = File(root, "files")
+        val files = workspace.ensureDirectory()
         val allowed = listOf(files.canonicalPath, files.absolutePath) +
             if (path.isEmpty()) emptyList() else directoryAliases(path, storage.first, storage.second)
         current.environment().use { it.setAllowedDownloadDirectories(allowed.distinct()) }
@@ -144,8 +146,7 @@ internal object RustCoreBackend : CoreBackend {
             data,
             MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).toList(),
         )
-        val files = File(root, "files")
-        check(files.mkdirs() || files.isDirectory)
+        val files = workspace.ensureDirectory()
         val rawDirectories = arguments["allowed_directories"]
         require(rawDirectories == null || rawDirectories is List<*>) { "Invalid output directories" }
         val allowedDirectories = listOf(files.canonicalPath, files.absolutePath) +
@@ -305,7 +306,7 @@ internal object RustCoreBackend : CoreBackend {
             // The support directory also contains extension storage. Keep the
             // Rust write inside its existing private staging root, then publish
             // the completed result through the native app's file access.
-            val staged = File.createTempFile("library_scan_", ".ndjson", File(root, "files"))
+            val staged = workspace.createTemporaryFile("library_scan_", ".ndjson")
             try {
                 val count = current.scanLibraryFolderToNdjsonFile(File(folder).canonicalPath, staged.canonicalPath, null)
                 check(staged.renameTo(File(output))) { "Failed to publish library scan output" }
@@ -322,7 +323,7 @@ internal object RustCoreBackend : CoreBackend {
         withLibraryDirectories(listOf(folder)) { current ->
             if (snapshot.isEmpty()) current.scanLibraryFolderIncremental(File(folder).canonicalPath, "{}", null)
             else {
-                val staged = File.createTempFile("library_snapshot_", ".ndjson", File(root, "files"))
+                val staged = workspace.createTemporaryFile("library_snapshot_", ".ndjson")
                 try {
                     File(snapshot).copyTo(staged, overwrite = true)
                     current.scanLibraryFolderIncrementalFromSnapshot(File(folder).canonicalPath, staged.canonicalPath, null)
@@ -436,7 +437,7 @@ internal object RustCoreBackend : CoreBackend {
         suffix: String,
     ): File {
         owner()
-        return File.createTempFile(prefix, suffix, File(root, "files"))
+        return workspace.createTemporaryFile(prefix, suffix)
     }
 
     override fun openExtensionExecution(): CoreExtensionExecution {
