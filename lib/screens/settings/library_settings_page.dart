@@ -9,6 +9,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
+import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
@@ -30,6 +31,7 @@ class LibrarySettingsPage extends ConsumerStatefulWidget {
 class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
   int _androidSdkVersion = 0;
   bool _hasStoragePermission = false;
+  bool _isCleaningMissingFiles = false;
 
   String _getDisplayPath(String path) {
     if (!path.startsWith('content://')) return path;
@@ -248,15 +250,36 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
   }
 
   Future<void> _cleanupMissingFiles() async {
-    final removed = await ref
-        .read(localLibraryProvider.notifier)
-        .cleanupMissingFiles();
-    if (mounted) {
+    if (_isCleaningMissingFiles || ref.read(localLibraryProvider).isScanning) {
+      return;
+    }
+    final library = ref.read(localLibraryProvider.notifier);
+    final downloads = ref.read(downloadHistoryProvider.notifier);
+    setState(() => _isCleaningMissingFiles = true);
+    try {
+      final missingLibraryEntries = await library.cleanupMissingFiles();
+      final orphanedDownloads = await downloads.cleanupOrphanedDownloads();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(context.l10n.libraryRemovedMissingFiles(removed)),
+          content: Text(
+            context.l10n.libraryRemovedMissingFiles(
+              missingLibraryEntries + orphanedDownloads,
+            ),
+          ),
         ),
       );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.snackbarError(context.friendlyError(error)),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isCleaningMissingFiles = false);
     }
   }
 
@@ -780,6 +803,17 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
               child: Consumer(
                 builder: (context, ref, _) {
                   final libraryState = ref.watch(localLibraryProvider);
+                  final hasDownloads = ref.watch(
+                    downloadHistoryProvider.select(
+                      (state) => state.totalCount > 0,
+                    ),
+                  );
+                  final canCleanup =
+                      !_isCleaningMissingFiles &&
+                      !libraryState.isScanning &&
+                      (libraryState.totalCount > 0 ||
+                          hasDownloads ||
+                          librarySources.isNotEmpty);
                   return SettingsGroup(
                     children: [
                       if (libraryState.isScanning)
@@ -821,15 +855,23 @@ class _LibrarySettingsPageState extends ConsumerState<LibrarySettingsPage> {
                         ),
                       ],
                       Opacity(
-                        opacity: libraryState.totalCount > 0 ? 1.0 : 0.5,
+                        opacity: canCleanup || _isCleaningMissingFiles
+                            ? 1.0
+                            : 0.5,
                         child: SettingsItem(
                           icon: Icons.cleaning_services_outlined,
                           title: context.l10n.libraryCleanupMissingFiles,
                           subtitle:
                               context.l10n.libraryCleanupMissingFilesSubtitle,
-                          onTap: libraryState.totalCount > 0
-                              ? _cleanupMissingFiles
+                          trailing: _isCleaningMissingFiles
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
                               : null,
+                          onTap: canCleanup ? _cleanupMissingFiles : null,
                         ),
                       ),
                       Opacity(
