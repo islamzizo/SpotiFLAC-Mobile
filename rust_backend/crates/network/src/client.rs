@@ -496,9 +496,15 @@ impl HttpStream {
                         .map_err(|error| error.to_string())?;
                     received += count;
                     if count == 0 || received > 2048 {
-                        return Ok(());
+                        break;
                     }
                 }
+                // Drop the response reader before the drain future completes.
+                // hyper only makes the HTTP/1.1 connection eligible for the
+                // pool once the response body is released; doing this explicitly
+                // avoids the retry racing the pool's body-drop bookkeeping.
+                drop(body);
+                Ok(())
             });
     }
 
