@@ -16,6 +16,7 @@ import 'package:spotiflac_android/widgets/app_search_field.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/library_search_results.dart';
 import 'package:spotiflac_android/widgets/library_track_selection_bar.dart';
+import 'package:spotiflac_android/widgets/library_playlist_drag_source.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -238,6 +239,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   final ValueNotifier<int> _embeddedCoverVersion = ValueNotifier<int>(0);
 
   bool _isSelectionMode = false;
+  bool _isDraggingLibraryTrack = false;
   final Set<String> _selectedIds = {};
   String? _selectionAnchorId;
   final SelectionOverlayController _selectionOverlay =

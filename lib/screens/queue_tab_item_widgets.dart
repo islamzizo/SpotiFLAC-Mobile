@@ -742,6 +742,7 @@ extension _QueueTabItemWidgets on _QueueTabState {
     required List<LocalLibraryItem> localNavigationItems,
     required int? localNavigationIndex,
     required List<UnifiedLibraryItem> libraryItems,
+    bool playlistDragEnabled = false,
   }) {
     final fileExistsListenable = _fileExistsListenable(item.filePath);
     final isSelected = _selectedIds.contains(item.id);
@@ -788,7 +789,9 @@ extension _QueueTabItemWidgets on _QueueTabState {
                 album: item.albumName,
                 coverUrl: item.coverUrl ?? item.localCoverPath ?? '',
               ),
-        onLongPress: _isSelectionMode
+        onLongPress: playlistDragEnabled
+            ? null
+            : _isSelectionMode
             ? () => _selectRangeTo(item.id, libraryItems)
             : () => _enterSelectionMode(item.id),
         leading: Hero(
@@ -892,6 +895,7 @@ extension _QueueTabItemWidgets on _QueueTabState {
     required List<LocalLibraryItem> localNavigationItems,
     required int? localNavigationIndex,
     required List<UnifiedLibraryItem> libraryItems,
+    bool playlistDragEnabled = false,
   }) {
     final fileExistsListenable = _fileExistsListenable(item.filePath);
     final isSelected = _selectedIds.contains(item.id);
@@ -925,7 +929,9 @@ extension _QueueTabItemWidgets on _QueueTabState {
               album: item.albumName,
               coverUrl: item.coverUrl ?? item.localCoverPath ?? '',
             ),
-      onLongPress: _isSelectionMode
+      onLongPress: playlistDragEnabled
+          ? null
+          : _isSelectionMode
           ? () => _selectRangeTo(item.id, libraryItems)
           : () => _enterSelectionMode(item.id),
       cover: Hero(

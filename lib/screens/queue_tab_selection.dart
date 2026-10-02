@@ -1,6 +1,30 @@
 part of 'queue_tab.dart';
 
 extension _QueueTabSelectionActions on _QueueTabState {
+  void _selectDraggedTrack(
+    UnifiedLibraryItem item,
+    List<UnifiedLibraryItem> visibleItems,
+  ) {
+    // Holding an already-selected track drags the existing batch without
+    // extending the range back to the selection anchor.
+    if (_isSelectionMode && _selectedIds.contains(item.id)) return;
+    if (_isSelectionMode) {
+      _selectRangeTo(item.id, visibleItems);
+    } else {
+      _enterSelectionMode(item.id);
+    }
+  }
+
+  void _startLibraryTrackDrag() {
+    _setState(() => _isDraggingLibraryTrack = true);
+    _hideSelectionOverlay();
+  }
+
+  void _endLibraryTrackDrag() {
+    if (!mounted) return;
+    _setState(() => _isDraggingLibraryTrack = false);
+  }
+
   void _enterSelectionMode(String itemId) {
     HapticFeedback.mediumImpact();
     _setState(() {
@@ -71,6 +95,7 @@ extension _QueueTabSelectionActions on _QueueTabState {
   }) {
     if (!mounted) return;
     if (_suppressSelectionOverlay ||
+        _isDraggingLibraryTrack ||
         !_isSelectionMode ||
         _isPlaylistSelectionMode) {
       _hideSelectionOverlay();

@@ -509,29 +509,14 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                       final item = filteredUnifiedItems[trackIndex];
                       return KeyedSubtree(
                         key: ValueKey(item.id),
-                        child: LongPressDraggable<UnifiedLibraryItem>(
+                        child: LibraryPlaylistDragSource<UnifiedLibraryItem>(
                           data: item,
-                          feedback: _buildDragFeedback(
-                            context,
-                            item,
-                            colorScheme,
-                          ),
-                          childWhenDragging: Opacity(
-                            opacity: 0.4,
-                            child: _buildUnifiedGridItem(
-                              context,
-                              item,
-                              colorScheme,
-                              downloadedNavigationItems:
-                                  downloadedNavigationItems,
-                              downloadedNavigationIndex:
-                                  downloadedNavigationIndexByUnifiedId[item.id],
-                              localNavigationItems: localNavigationItems,
-                              localNavigationIndex:
-                                  localNavigationIndexByUnifiedId[item.id],
-                              libraryItems: filteredUnifiedItems,
-                            ),
-                          ),
+                          onSelect: () =>
+                              _selectDraggedTrack(item, filteredUnifiedItems),
+                          onDragStarted: _startLibraryTrackDrag,
+                          onDragEnd: _endLibraryTrackDrag,
+                          feedbackBuilder: (context) =>
+                              _buildDragFeedback(context, item, colorScheme),
                           child: _buildUnifiedGridItem(
                             context,
                             item,
@@ -544,6 +529,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                             localNavigationIndex:
                                 localNavigationIndexByUnifiedId[item.id],
                             libraryItems: filteredUnifiedItems,
+                            playlistDragEnabled: true,
                           ),
                         ),
                       );
@@ -579,29 +565,14 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                       final item = filteredUnifiedItems[trackIndex];
                       return KeyedSubtree(
                         key: ValueKey(item.id),
-                        child: LongPressDraggable<UnifiedLibraryItem>(
+                        child: LibraryPlaylistDragSource<UnifiedLibraryItem>(
                           data: item,
-                          feedback: _buildDragFeedback(
-                            context,
-                            item,
-                            colorScheme,
-                          ),
-                          childWhenDragging: Opacity(
-                            opacity: 0.4,
-                            child: _buildUnifiedLibraryItem(
-                              context,
-                              item,
-                              colorScheme,
-                              downloadedNavigationItems:
-                                  downloadedNavigationItems,
-                              downloadedNavigationIndex:
-                                  downloadedNavigationIndexByUnifiedId[item.id],
-                              localNavigationItems: localNavigationItems,
-                              localNavigationIndex:
-                                  localNavigationIndexByUnifiedId[item.id],
-                              libraryItems: filteredUnifiedItems,
-                            ),
-                          ),
+                          onSelect: () =>
+                              _selectDraggedTrack(item, filteredUnifiedItems),
+                          onDragStarted: _startLibraryTrackDrag,
+                          onDragEnd: _endLibraryTrackDrag,
+                          feedbackBuilder: (context) =>
+                              _buildDragFeedback(context, item, colorScheme),
                           child: _buildUnifiedLibraryItem(
                             context,
                             item,
@@ -614,6 +585,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                             localNavigationIndex:
                                 localNavigationIndexByUnifiedId[item.id],
                             libraryItems: filteredUnifiedItems,
+                            playlistDragEnabled: true,
                           ),
                         ),
                       );
