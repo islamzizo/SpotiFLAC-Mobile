@@ -14,6 +14,19 @@ if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
+// CI release signing is supplied through environment variables so every
+// release APK uses the same persistent keystore without committing secrets.
+val ciKeystoreFile = providers.environmentVariable("SPOTIFLAC_KEYSTORE_FILE").orNull
+val ciKeystorePassword = providers.environmentVariable("SPOTIFLAC_KEYSTORE_PASSWORD").orNull
+val ciKeyAlias = providers.environmentVariable("SPOTIFLAC_KEY_ALIAS").orNull
+val ciKeyPassword = providers.environmentVariable("SPOTIFLAC_KEY_PASSWORD").orNull
+val hasCiSigning = listOf(
+    ciKeystoreFile,
+    ciKeystorePassword,
+    ciKeyAlias,
+    ciKeyPassword,
+).all { !it.isNullOrBlank() }
+
 val rustBackendDir = rootProject.file("../rust_backend")
 val rustAndroidAbis = providers.environmentVariable("SPOTIFLAC_RUST_ANDROID_ABIS")
     .orElse("arm64-v8a,armeabi-v7a")
@@ -62,17 +75,16 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (keystorePropertiesFile.exists() || hasCiSigning) {
             create("release") {
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
-                storeFile = file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = ciKeyAlias ?: keystoreProperties.getProperty("keyAlias")
+                keyPassword = ciKeyPassword ?: keystoreProperties.getProperty("keyPassword")
+                storeFile = if (ciKeystoreFile != null) file(ciKeystoreFile)
+                    else file(keystoreProperties.getProperty("storeFile"))
+                storePassword = ciKeystorePassword ?: keystoreProperties.getProperty("storePassword")
                 enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
-                // V4 lives in a separate .apk.idsig file used for
-                // `adb install --incremental`; the APK itself is unchanged.
                 enableV4Signing = true
             }
         }
@@ -112,13 +124,12 @@ android {
         }
 
         release {
-            // For local builds: use release signing if key.properties exists
-            // For CI builds: APK is signed by GitHub Action after build
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // Release builds must use the persistent release key. CI provides
+            // it through secrets; local builds use android/key.properties.
+            require(keystorePropertiesFile.exists() || hasCiSigning) {
+                "Release signing is not configured. Provide android/key.properties locally or the CI signing environment."
             }
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
