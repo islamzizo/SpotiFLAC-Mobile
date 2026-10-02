@@ -41,6 +41,17 @@ void main() {
     );
   });
 
+  testWidgets('network protocols are discoverable from Settings', (
+    tester,
+  ) async {
+    await pumpSettings(tester);
+    for (final query in ['SMB', 'WebDAV', 'NAS']) {
+      await tester.enterText(find.byType(TextField), query);
+      await tester.pump();
+      expect(find.text('Network storage'), findsOneWidget);
+    }
+  });
+
   testWidgets(
     'returning from a search result does not restore keyboard focus',
     (tester) async {

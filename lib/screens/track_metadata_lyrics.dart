@@ -125,7 +125,7 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
                       ),
                     ),
                   ),
-                  if (!_lyricsEmbedded && _fileExists) ...[
+                  if (!_lyricsEmbedded && _fileExists && !_isNetworkItem) ...[
                     const SizedBox(height: 16),
                     Center(
                       child: FilledButton.tonalIcon(
@@ -203,6 +203,10 @@ extension _TrackMetadataLyricsAndSaving on _TrackMetadataScreenState {
   /// Fall back to the same local tag reader used by Now Playing before
   /// reporting that a file has no lyrics. Neither call fetches online lyrics.
   Future<Map<String, dynamic>> _readLocalLyrics(String sourcePath) async {
+    if (sourcePath.startsWith('network://')) {
+      final metadata = await readPlaybackFileMetadataWithRetry(sourcePath);
+      return {'lyrics': metadata['lyrics']?.toString() ?? '', 'source': ''};
+    }
     try {
       final result = await PlatformBridge.getLyricsLRCWithSource(
         '',

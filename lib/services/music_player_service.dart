@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:spotiflac_android/services/network_storage_service.dart';
+import 'package:spotiflac_android/services/network_metadata_service.dart';
 import 'package:flutter/services.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
 import 'package:spotiflac_android/services/player_widget_service.dart';
@@ -180,6 +182,7 @@ class PlayableMedia {
   final String artist;
   final String album;
   final String? artUri;
+  final String? networkArtworkSource;
   final Duration? duration;
   final int? bitDepth;
   final int? sampleRate;
@@ -196,6 +199,7 @@ class PlayableMedia {
     required this.artist,
     this.album = '',
     this.artUri,
+    this.networkArtworkSource,
     this.duration,
     this.bitDepth,
     this.sampleRate,
@@ -207,6 +211,8 @@ class PlayableMedia {
   });
 
   bool get isContentUri => source.startsWith('content://');
+  bool get isNetwork =>
+      const {'network', 'http', 'https'}.contains(Uri.tryParse(source)?.scheme);
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -214,7 +220,10 @@ class PlayableMedia {
     'title': title,
     'artist': artist,
     'album': album,
-    if (artUri != null && artUri!.isNotEmpty) 'artUri': artUri,
+    if (artUri != null && artUri!.isNotEmpty && networkArtworkSource == null)
+      'artUri': artUri,
+    if (networkArtworkSource != null)
+      'networkArtworkSource': networkArtworkSource,
     if (duration != null) 'durationMs': duration!.inMilliseconds,
     if (bitDepth != null && bitDepth! > 0) 'bitDepth': bitDepth,
     if (sampleRate != null && sampleRate! > 0) 'sampleRate': sampleRate,
@@ -255,6 +264,7 @@ class PlayableMedia {
       artist: json['artist'] as String? ?? '',
       album: json['album'] as String? ?? '',
       artUri: artwork,
+      networkArtworkSource: json['networkArtworkSource'] as String?,
       duration: (durationMs != null && durationMs > 0)
           ? Duration(milliseconds: durationMs)
           : null,
@@ -268,15 +278,16 @@ class PlayableMedia {
     );
   }
 
-  MediaItem toMediaItem({String? resolvedSource}) {
+  MediaItem toMediaItem({String? resolvedSource, String? resolvedArtwork}) {
+    final artwork = resolvedArtwork ?? artUri;
     return MediaItem(
       id: id,
       title: title.isEmpty ? _playbackUnknownTitle : title,
       artist: artist.isEmpty ? _playbackUnknownArtist : artist,
       album: album.isEmpty ? null : album,
       duration: duration,
-      artUri: (artUri != null && artUri!.isNotEmpty)
-          ? Uri.tryParse(artUri!)
+      artUri: (artwork != null && artwork.isNotEmpty)
+          ? Uri.tryParse(artwork)
           : null,
       extras: {
         'source': source,
@@ -356,6 +367,9 @@ Future<Map<String, dynamic>> readPlaybackFileMetadataWithRetry(
     Duration(milliseconds: 750),
   ],
 }) async {
+  if (reader == null && path.startsWith('network://')) {
+    return NetworkMetadataService.instance.read(path);
+  }
   final read = reader ?? PlatformBridge.readFileMetadata;
   final delays = retryDelays.isEmpty ? const [Duration.zero] : retryDelays;
   Object? lastError;
@@ -874,7 +888,12 @@ class MusicPlayerHandler extends BaseAudioHandler
     String? cacheKey,
     String? displayName,
   }) async {
-    if (!_playbackNormalizationEnabled ||
+    if (const {
+          'network',
+          'http',
+          'https',
+        }.contains(Uri.tryParse(path)?.scheme) ||
+        !_playbackNormalizationEnabled ||
         _usbBitPerfectEnabled ||
         _player.isDirect) {
       return 1.0;
@@ -938,6 +957,14 @@ class MusicPlayerHandler extends BaseAudioHandler
   }
 
   Future<String?> _resolveSource(PlayableMedia media) async {
+    if (media.source.startsWith('network://')) {
+      try {
+        return await NetworkStorageService.instance.resolve(media.source);
+      } catch (_) {
+        _log.w('Network source is unavailable');
+        return null;
+      }
+    }
     if (!media.isContentUri) return media.source;
 
     final cached = _resolvedPathCache[media.source];
@@ -1462,19 +1489,23 @@ class MusicPlayerHandler extends BaseAudioHandler
     // AudioPlayer.play combines prepare/seek/resume without a cancellation
     // boundary. A late prepare from an old request could resume the wrong
     // source. Serialize preparation and recheck before making it audible.
-    await _player.setSource(
-      DeviceFileSource(path),
-      preferBitPerfect: _usbBitPerfectEnabled,
-      directUsb: _usbDirectEnabled,
-      allowFixedVolume: _usbAllowFixedVolume,
-      dapExclusive: _dapExclusiveEnabled,
-      allowDop: _usbDopEnabled,
-      requiresDsd:
-          media.bitDepth == 1 ||
-          const ['dsf', 'dff'].contains(media.format?.toLowerCase()) ||
-          media.source.toLowerCase().endsWith('.dsf') ||
-          media.source.toLowerCase().endsWith('.dff'),
-    );
+    if (media.isNetwork) {
+      await _player.setNetworkSource(path);
+    } else {
+      await _player.setSource(
+        DeviceFileSource(path),
+        preferBitPerfect: _usbBitPerfectEnabled,
+        directUsb: _usbDirectEnabled,
+        allowFixedVolume: _usbAllowFixedVolume,
+        dapExclusive: _dapExclusiveEnabled,
+        allowDop: _usbDopEnabled,
+        requiresDsd:
+            media.bitDepth == 1 ||
+            const ['dsf', 'dff'].contains(media.format?.toLowerCase()) ||
+            media.source.toLowerCase().endsWith('.dsf') ||
+            media.source.toLowerCase().endsWith('.dff'),
+      );
+    }
     if (!_isCurrentPlayRequest(generation, media)) return;
     if (position != null) {
       await _player.seek(position);
@@ -1512,6 +1543,17 @@ class MusicPlayerHandler extends BaseAudioHandler
     if (!_isCurrentPlayRequest(generation, media)) return;
     if (media.isContentUri) {
       unawaited(_recoverDocumentArtwork(media, generation));
+    }
+    if (media.networkArtworkSource != null) {
+      try {
+        final artwork = await NetworkStorageService.instance.resolve(
+          media.networkArtworkSource!,
+        );
+        if (!_isCurrentPlayRequest(generation, media)) return;
+        mediaItem.add(media.toMediaItem(resolvedArtwork: artwork));
+      } catch (_) {
+        // Cover failure must not prevent audio playback.
+      }
     }
 
     // Android opens SAF files through a short-lived file-descriptor lease.
@@ -1613,6 +1655,9 @@ class MusicPlayerHandler extends BaseAudioHandler
       }
       if (!_isCurrentPlayRequest(generation, media)) return;
       _sourceReady = true;
+      if (media.source.startsWith('network://')) {
+        unawaited(_loadNetworkMetadata(media, generation));
+      }
       _pendingRestorePosition = null;
       _activeResolvedPath = usingLocalSafCopy ? resolved : null;
       await _cleanupPendingResolvedPaths();
@@ -1674,6 +1719,56 @@ class MusicPlayerHandler extends BaseAudioHandler
     }
     queue.add(List<MediaItem>.unmodifiable(_queueItems));
     unawaited(_persistSession(position: playbackState.value.position));
+  }
+
+  Future<void> _loadNetworkMetadata(PlayableMedia media, int generation) async {
+    try {
+      final metadata = await NetworkMetadataService.instance.read(media.source);
+      if (!_isCurrentPlayRequest(generation, media)) return;
+      final current = mediaItem.value;
+      if (current == null) return;
+      String text(String key, String fallback) {
+        final value = metadata[key]?.toString().trim() ?? '';
+        return value.isEmpty ? fallback : value;
+      }
+
+      final cover = metadata['cover_path'] as String?;
+      final updated = current.copyWith(
+        title: text('title', current.title),
+        artist: text('artist', current.artist ?? ''),
+        album: text('album', current.album ?? ''),
+        artUri: cover == null ? current.artUri : Uri.file(cover),
+        extras: {
+          ...?current.extras,
+          for (final key in ['bit_depth', 'sample_rate', 'bitrate', 'format'])
+            if (metadata[key] != null) key: metadata[key],
+        },
+      );
+      mediaItem.add(updated);
+      _media[_index] = PlayableMedia.fromJson({
+        ...media.toJson(),
+        'title': updated.title,
+        'artist': updated.artist,
+        'album': updated.album,
+        'artUri': updated.artUri?.toString(),
+        'bitDepth': metadata['bit_depth'] ?? media.bitDepth,
+        'sampleRate': metadata['sample_rate'] ?? media.sampleRate,
+        'bitrate': metadata['bitrate'] ?? media.bitrate,
+        'format': metadata['format'] ?? media.format,
+      })!;
+      // Keep the saved shuffle order paired with the updated queue entry.
+      final old = _queueItems[_index];
+      _queueItems[_index] = updated;
+      final original = _originalQueueOrder;
+      if (original != null) {
+        final i = original.indexWhere((item) => identical(item, old));
+        if (i >= 0) original[i] = updated;
+      }
+      queue.add(List<MediaItem>.unmodifiable(_queueItems));
+      unawaited(_persistSession(position: playbackState.value.position));
+    } catch (_) {
+      _log.w('Network tags unavailable; keeping playback metadata');
+    }
   }
 
   /// Resolves the real track duration when the initial metadata had none and
@@ -2170,7 +2265,9 @@ Future<void> _restorePersistedPlaybackSession() async {
         iosDocumentsPath: iosDocumentsPath,
       );
       if (media == null) continue;
-      if (!media.isContentUri && !await File(media.source).exists()) {
+      if (!media.isContentUri &&
+          !media.isNetwork &&
+          !await File(media.source).exists()) {
         continue;
       }
       final artwork = await resolveRestoredArtworkUri(

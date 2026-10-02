@@ -367,7 +367,11 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
       albumArtist: normalizeOptionalString(trackToDownload.albumArtist),
       coverUrl: normalizeCoverReference(trackToDownload.coverUrl),
       filePath: filePath,
-      storageMode: useSaf ? 'saf' : 'app',
+      storageMode: filePath.startsWith('network://')
+          ? 'network'
+          : useSaf
+          ? 'saf'
+          : 'app',
       downloadTreeUri: useSaf ? downloadTreeUri : null,
       safRelativeDir: useSaf ? safRelativeDir : null,
       safFileName: useSaf ? safFileName : null,

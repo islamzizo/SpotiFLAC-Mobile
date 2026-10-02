@@ -98,6 +98,7 @@ class _MusicAutoMix {
       if (nextIndex < 0 || nextIndex == index || index < 0) return;
       final current = handler._media[index];
       final next = handler._media[nextIndex];
+      if (current.isNetwork || next.isNetwork) return;
       final currentPath = await handler._resolveSource(current);
       if (currentPath == null || !_current(generation)) return;
       pins.add(currentPath);

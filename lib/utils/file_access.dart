@@ -285,6 +285,8 @@ String stripCueTrackSuffix(String path) {
 
 Future<bool> fileExists(String? path) async {
   if (path == null || path.isEmpty) return false;
+  // Network identities are resolved by the built-in player, not File.exists.
+  if (path.startsWith('network://')) return true;
   final realPath = isCueVirtualPath(path) ? stripCueTrackSuffix(path) : path;
   if (isContentUri(realPath)) {
     return PlatformBridge.safExists(realPath);
@@ -309,7 +311,10 @@ Future<Map<String, bool?>> fileExistenceByPath(List<String> paths) async {
       // Missing native method on an older build is also inconclusive.
     }
   }
-  final local = unique.where((path) => !isContentUri(path)).toList();
+  // Offline network paths remain inconclusive during destructive cleanup.
+  final local = unique
+      .where((path) => !isContentUri(path) && !path.startsWith('network://'))
+      .toList();
   const concurrency = 16;
   for (var start = 0; start < local.length; start += concurrency) {
     final end = start + concurrency < local.length
@@ -349,6 +354,7 @@ Future<Map<String, bool?>> fileExistenceByPath(List<String> paths) async {
 /// `true`, otherwise the app would hide a file that still exists on storage.
 Future<bool> deleteFile(String? path) async {
   if (path == null || path.isEmpty) return false;
+  if (path.startsWith('network://')) return false;
   // CUE virtual paths should NOT be deleted through this function —
   // deleting album.cue would remove ALL tracks. Callers should handle
   // CUE deletion specially (e.g. only delete when all tracks are removed).
@@ -383,6 +389,7 @@ Future<bool> deleteFile(String? path) async {
 
 Future<FileAccessStat?> fileStat(String? path) async {
   if (path == null || path.isEmpty) return null;
+  if (path.startsWith('network://')) return const FileAccessStat();
   final realPath = isCueVirtualPath(path) ? stripCueTrackSuffix(path) : path;
   if (isContentUri(realPath)) {
     final stat = await PlatformBridge.safStat(realPath);

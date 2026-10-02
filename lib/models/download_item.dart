@@ -43,6 +43,7 @@ class DownloadItem {
   final int? playlistPosition; // 1-based position in the source playlist
   final bool fromBatch;
   final bool preserveQualityVariant;
+  final String networkDownloadFolder;
 
   const DownloadItem({
     required this.id,
@@ -63,6 +64,7 @@ class DownloadItem {
     this.playlistPosition,
     this.fromBatch = false,
     this.preserveQualityVariant = false,
+    this.networkDownloadFolder = '',
   });
 
   DownloadItem copyWith({
@@ -84,6 +86,7 @@ class DownloadItem {
     int? playlistPosition,
     bool? fromBatch,
     bool? preserveQualityVariant,
+    String? networkDownloadFolder,
   }) {
     return DownloadItem(
       id: id ?? this.id,
@@ -111,6 +114,8 @@ class DownloadItem {
       fromBatch: fromBatch ?? this.fromBatch,
       preserveQualityVariant:
           preserveQualityVariant ?? this.preserveQualityVariant,
+      networkDownloadFolder:
+          networkDownloadFolder ?? this.networkDownloadFolder,
     );
   }
 

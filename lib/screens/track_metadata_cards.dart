@@ -82,7 +82,7 @@ extension _TrackMetadataCards on _TrackMetadataScreenState {
 
             _buildLyricsCard(context, colorScheme),
 
-            if (_fileExists) ...[
+            if (_fileExists && !_isNetworkItem) ...[
               const SizedBox(height: 16),
               AudioAnalysisCard(
                 filePath: _filePath,

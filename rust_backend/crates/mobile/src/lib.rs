@@ -10,6 +10,7 @@ mod logging;
 mod lyrics;
 mod manager;
 mod metadata;
+mod network_tags;
 mod progress;
 mod repository;
 mod tags;

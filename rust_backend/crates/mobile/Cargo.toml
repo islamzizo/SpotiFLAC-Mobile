@@ -11,6 +11,8 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
 spotiflac-core.workspace = true
+spotiflac-network.workspace = true
+base64.workspace = true
 spotiflac-extensions.workspace = true
 thiserror.workspace = true
 uniffi.workspace = true

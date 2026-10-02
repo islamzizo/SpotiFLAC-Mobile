@@ -77,6 +77,9 @@ DerivedData/
 *.pem
 # Public ISRG roots embedded by the Rust network library.
 !/rust_backend/crates/network/src/roots.pem
+# Public self-signed HTTPS fixtures used only by network tests.
+!/test/fixtures/network_tls/cert.pem
+!/test/fixtures/network_tls/key.pem
 
 # Local research and design material
 /design/

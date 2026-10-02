@@ -473,8 +473,22 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
     bool inspectUnresolvedContentUri = false,
   }) async {
     final effectiveResolvedSource = resolvedSource?.trim();
+    if (const {'http', 'https'}.contains(Uri.tryParse(source)?.scheme)) {
+      if (!mounted) return;
+      setState(() {
+        _loadedSource = source;
+        _loadedResolvedSource = effectiveResolvedSource;
+        _loadedMetadataPath = source;
+        _loadingMeta = false;
+        _metadata = fallbackMetadata.isEmpty ? null : fallbackMetadata;
+        _lyrics = ParsedLyrics.empty;
+      });
+      return;
+    }
     final path =
-        (effectiveResolvedSource != null && effectiveResolvedSource.isNotEmpty)
+        !source.startsWith('network://') &&
+            effectiveResolvedSource != null &&
+            effectiveResolvedSource.isNotEmpty
         ? effectiveResolvedSource
         : source;
     final unresolvedContentUri =

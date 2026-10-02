@@ -19,9 +19,11 @@ class PlaybackController extends Notifier<PlaybackState> {
   @override
   PlaybackState build() => const PlaybackState();
 
-  Future<bool> _useInternalPlayer() async {
+  Future<bool> _useInternalPlayer({String? source}) async {
     final mode = ref.read(settingsProvider).playerMode;
-    if (mode != 'internal') return false;
+    if (mode != 'internal' && source?.startsWith('network://') != true) {
+      return false;
+    }
     return await ref.read(musicPlayerControllerProvider).ensureInitialized() !=
         null;
   }
@@ -50,7 +52,7 @@ class PlaybackController extends Notifier<PlaybackState> {
       throw Exception(cueVirtualTrackRequiresSplitMessage);
     }
 
-    if (await _useInternalPlayer()) {
+    if (await _useInternalPlayer(source: path)) {
       _log.d('Playing "$title" in the internal player: $path');
       await ref
           .read(musicPlayerControllerProvider)
@@ -90,7 +92,7 @@ class PlaybackController extends Notifier<PlaybackState> {
     var startIndex = playable.indexWhere((i) => i.id == startItem.id);
     if (startIndex < 0) startIndex = 0;
 
-    if (await _useInternalPlayer()) {
+    if (await _useInternalPlayer(source: playable[startIndex].filePath)) {
       await ref
           .read(musicPlayerControllerProvider)
           .playLocal(playable, initialIndex: startIndex);
@@ -114,7 +116,7 @@ class PlaybackController extends Notifier<PlaybackState> {
     var startIndex = playable.indexWhere((i) => i.id == startItem.id);
     if (startIndex < 0) startIndex = 0;
 
-    if (await _useInternalPlayer()) {
+    if (await _useInternalPlayer(source: playable[startIndex].filePath)) {
       await ref
           .read(musicPlayerControllerProvider)
           .playHistory(playable, initialIndex: startIndex);
@@ -130,7 +132,7 @@ class PlaybackController extends Notifier<PlaybackState> {
     required int startIndex,
     required String externalPath,
   }) async {
-    if (await _useInternalPlayer()) {
+    if (await _useInternalPlayer(source: externalPath)) {
       final items = queue.toList(growable: false);
       if (items.isEmpty) return;
       final i = startIndex.clamp(0, items.length - 1);
@@ -148,7 +150,7 @@ class PlaybackController extends Notifier<PlaybackState> {
     final safeStart = startIndex.clamp(0, tracks.length - 1);
     final resolvedPaths = await resolveTrackFilePaths(tracks);
 
-    if (await _useInternalPlayer()) {
+    if (await _useInternalPlayer(source: resolvedPaths[safeStart])) {
       final queue = <PlayableMedia>[];
       int? initialIndex;
       var skippedCueVirtualTrack = false;

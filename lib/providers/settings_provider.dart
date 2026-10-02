@@ -56,6 +56,8 @@ AppSettings loadBootstrapSettings(SharedPreferences prefs) {
 AppSettings resetInstallationBoundSettings(AppSettings settings) {
   return settings.copyWith(
     downloadDirectory: '',
+    networkDownloadFolder: '',
+    networkDownloadLabel: '',
     downloadDirectoryBookmark: '',
     storageMode: 'app',
     downloadTreeUri: '',
@@ -345,6 +347,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       // Preserve this device's storage location; the backup's values point at
       // the original device and would not resolve here.
       downloadDirectory: current.downloadDirectory,
+      networkDownloadFolder: current.networkDownloadFolder,
+      networkDownloadLabel: current.networkDownloadLabel,
       downloadDirectoryBookmark: current.downloadDirectoryBookmark,
       storageMode: current.storageMode,
       downloadTreeUri: current.downloadTreeUri,
@@ -491,6 +495,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   void setDownloadDirectory(String directory, {String? iosBookmark}) {
     state = state.copyWith(
+      networkDownloadFolder: '',
+      networkDownloadLabel: '',
       downloadDirectory: directory,
       downloadDirectoryBookmark: iosBookmark ?? '',
     );
@@ -501,6 +507,14 @@ class SettingsNotifier extends Notifier<AppSettings> {
     final normalized = mode == 'saf' ? 'saf' : 'app';
     state = state.copyWith(storageMode: normalized);
     _saveSettings();
+  }
+
+  Future<void> setNetworkDownloadFolder(String source, String label) async {
+    state = state.copyWith(
+      networkDownloadFolder: source,
+      networkDownloadLabel: label,
+    );
+    await _saveSettings();
   }
 
   /// Atomically leaves SAF and persists a writable app-managed destination.
@@ -521,6 +535,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
   void setDownloadTreeUri(String uri, {String? displayName}) {
     final nextDisplay = displayName ?? state.downloadDirectory;
     state = state.copyWith(
+      networkDownloadFolder: '',
+      networkDownloadLabel: '',
       downloadTreeUri: uri,
       storageMode: uri.isNotEmpty ? 'saf' : state.storageMode,
       downloadDirectory: nextDisplay,

@@ -2431,12 +2431,14 @@ dependencies = [
 name = "spotiflac-mobile"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "libc",
  "libusb1-sys",
  "rustix",
  "serde_json",
  "spotiflac-core",
  "spotiflac-extensions",
+ "spotiflac-network",
  "thiserror",
  "uniffi",
  "zeroize",

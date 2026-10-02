@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/library_cleanup.dart';
 import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/services/network_library_scanner.dart';
 import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/logger.dart';
@@ -512,6 +513,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   }
 
   Future<bool?> _probePathAvailability(String path, {String? bookmark}) async {
+    // Network outages are transient. Keep the indexed collection visible;
+    // opening/scanning a source reports connectivity errors without dropping it.
+    if (path.startsWith('network://')) return true;
     try {
       if (Platform.isAndroid && path.startsWith('content://')) {
         return await PlatformBridge.probeSafTreeReadAccess(path);
@@ -587,7 +591,43 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     required bool forceFullScan,
   }) async {
     if (_scanCancelRequested) return null;
-    final scanFile = isSaf
+    final scanFile = folderPath.startsWith('network://')
+        ? await NetworkLibraryScanner().scan(
+            folderPath,
+            checkpoint: () async {
+              while (_scanPauseRequested &&
+                  !_scanCancelRequested &&
+                  ref.mounted) {
+                await Future<void>.delayed(const Duration(milliseconds: 100));
+              }
+              if (_scanCancelRequested || !ref.mounted) {
+                throw StateError('Network library scan cancelled');
+              }
+            },
+            onProgress: (processed, errors, name) {
+              if (!ref.mounted) return;
+              state = state.copyWith(
+                scannedFiles: processed,
+                scanErrorCount: errors,
+                scanCurrentFile: name,
+              );
+              if (_shouldShowScanProgressNotification(
+                progress: 0,
+                totalFiles: 0,
+                isComplete: false,
+              )) {
+                unawaited(
+                  _showScanProgressNotification(
+                    progress: 0,
+                    scannedFiles: processed,
+                    totalFiles: 0,
+                    currentFile: name,
+                  ),
+                );
+              }
+            },
+          )
+        : isSaf
         ? await PlatformBridge.scanSafTreeToNDJSONFile(
             folderPath,
             forceFullScan: forceFullScan,
@@ -638,7 +678,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       ingested = true;
       return result;
     } finally {
-      if (ingested) await scanFile.delete();
+      if (ingested || folderPath.startsWith('network://')) {
+        await scanFile.delete();
+      }
     }
   }
 
@@ -727,7 +769,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       _log.w('Failed to set cover cache directory: $e');
     }
 
-    _startProgressPolling();
+    if (!folderPath.startsWith('network://')) _startProgressPolling();
 
     String? resolvedPath;
     IosSecurityScopedAccess? securityAccess;
@@ -751,7 +793,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       final isSaf = effectiveFolderPath.startsWith('content://');
 
       final useStreamingFullScan =
-          forceFullScan || await _db.getSourceCount(activeSourceId) == 0;
+          effectiveFolderPath.startsWith('network://') ||
+          forceFullScan ||
+          await _db.getSourceCount(activeSourceId) == 0;
       if (useStreamingFullScan) {
         final scanResult = await _replaceFromFullScanStream(
           sourceId: activeSourceId,
@@ -1144,6 +1188,12 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     return true;
   }
 
+  bool get _isScanningNetwork => state.sources.any(
+    (source) =>
+        source.id == state.scanningSourceId &&
+        source.path.startsWith('network://'),
+  );
+
   Future<void> cancelScan() async {
     if (!state.isScanning) return;
 
@@ -1151,7 +1201,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     _scanCancelRequested = true;
     // Native cancel also releases a paused scan.
     _scanPauseRequested = false;
-    await PlatformBridge.cancelLibraryScan();
+    if (!_isScanningNetwork) await PlatformBridge.cancelLibraryScan();
     state = state.copyWith(
       scanIsFinalizing: false,
       scanIsPaused: false,
@@ -1174,7 +1224,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     _scanPauseRequested = true;
     state = state.copyWith(scanIsPaused: true);
     try {
-      await PlatformBridge.pauseLibraryScan();
+      if (!_isScanningNetwork) await PlatformBridge.pauseLibraryScan();
     } catch (e) {
       _log.w('Failed to pause library scan: $e');
       _scanPauseRequested = false;

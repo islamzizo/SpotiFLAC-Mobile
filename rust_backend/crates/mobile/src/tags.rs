@@ -286,6 +286,11 @@ pub fn read_file_metadata(
     let check = || check_lease(lease.as_deref());
     check()?;
     tags::file_metadata_extension(&path, &hint)?;
+    if path.starts_with("http://") {
+        return crate::network_tags::read(&path, &hint, &check)
+            .and_then(|metadata| serde_json::to_string(&metadata).map_err(|e| e.to_string()))
+            .map_err(Into::into);
+    }
     let mut file = open_audio_file(&path)?;
     let metadata = tags::read_file_metadata(&mut file, &path, &hint, &check)?;
     serde_json::to_string(&metadata).map_err(|error| error.to_string().into())

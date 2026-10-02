@@ -1302,6 +1302,32 @@ void main() {
     expect(native.playing, isEmpty);
   });
 
+  test(
+    'network playback uses URL transport and does not analyze remote files',
+    () async {
+      setAutoMixEnabled(true);
+      const remote = PlayableMedia(
+        id: 'remote',
+        source: 'https://music.test/song.mp3',
+        title: 'Remote',
+        artist: 'Server',
+      );
+      await handler.setQueueAndPlay([remote, _tracks.first]);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(
+        native.calls.lastWhere((c) => c.$2 == 'setSourceUrl').$3['isLocal'],
+        false,
+      );
+      expect(native.playing, {'music-player'});
+      expect(analyzer.calls, isEmpty);
+      await handler.skipToNext();
+      expect(
+        native.calls.lastWhere((c) => c.$2 == 'setSourceUrl').$3['isLocal'],
+        true,
+      );
+    },
+  );
+
   test('repeat one never prepares another deck', () async {
     setAutoMixEnabled(true);
     await handler.setRepeatMode(AudioServiceRepeatMode.one);

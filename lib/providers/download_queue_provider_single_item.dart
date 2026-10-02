@@ -126,6 +126,8 @@ class _DownloadRun {
   bool externalLrcWritten = false;
   final Map<String, String> _directoryScopes = {};
   bool fakeHiResChecked = false;
+  bool get isNetworkDownload => item.networkDownloadFolder.isNotEmpty;
+  String networkRelativeDir = '';
   String? fakeHiResOriginalPath;
 
   Future<void> _run() async {
@@ -144,7 +146,7 @@ class _DownloadRun {
       n._saveQueueToStorage();
     }
 
-    if (!n._hasActiveDownloadProvider(item.service)) {
+    if (!isNetworkDownload && !n._hasActiveDownloadProvider(item.service)) {
       n.updateItemStatus(
         item.id,
         DownloadStatus.failed,
@@ -177,6 +179,25 @@ class _DownloadRun {
       settings = n.ref.read(settingsProvider);
       metadataEmbeddingEnabled = settings.embedMetadata;
       trackToDownload = item.track;
+
+      if (isNetworkDownload) {
+        final prepared = await NetworkDownloadStaging.instance.read(item.id);
+        if (prepared != null) {
+          trackToDownload = Track.fromJson(
+            Map<String, dynamic>.from(prepared['track'] as Map),
+          );
+          result = Map<String, dynamic>.from(prepared['result'] as Map);
+          filePath = prepared['localPath'] as String;
+          actualQuality = prepared['quality'] as String;
+          externalLrcWritten = prepared['externalLrcWritten'] == true;
+          networkRelativeDir = prepared['relativeDir'] as String;
+          await _persistCompletionAndNotify();
+          return;
+        }
+        if (!n._hasActiveDownloadProvider(item.service)) {
+          throw StateError('Download provider is no longer available');
+        }
+      }
 
       if (!await _enrichDeezerTrackIfNeeded()) return;
 
@@ -258,6 +279,13 @@ class _DownloadRun {
     } catch (e, stackTrace) {
       await _handleRunException(e, stackTrace);
     } finally {
+      if (isNetworkDownload && n._findItemById(item.id) == null) {
+        try {
+          await NetworkDownloadStaging.instance.discard(item.id);
+        } catch (e) {
+          _log.w('Could not remove dismissed network staging: $e');
+        }
+      }
       for (final token in _directoryScopes.values) {
         try {
           await PlatformBridge.releaseDownloadDirectory(token);
@@ -307,8 +335,8 @@ class _DownloadRun {
   Future<void> _resolveOutputTarget() async {
     quality = item.qualityOverride ?? n.state.audioQuality;
     if (quality == 'DEFAULT') quality = n.state.audioQuality;
-    final isSafMode = n._isSafMode(settings);
-    final relativeOutputDir = isSafMode
+    final isSafMode = !isNetworkDownload && n._isSafMode(settings);
+    final relativeOutputDir = isSafMode || isNetworkDownload
         ? n._buildRelativeOutputDir(
             trackToDownload,
             settings.folderOrganization,
@@ -322,7 +350,10 @@ class _DownloadRun {
             playlistName: item.playlistName,
           )
         : '';
-    final initialOutputDir = isSafMode
+    networkRelativeDir = relativeOutputDir;
+    final initialOutputDir = isNetworkDownload
+        ? (await NetworkDownloadStaging.instance.workDirectory(item.id)).path
+        : isSafMode
         ? relativeOutputDir
         : await n._buildOutputDir(
             trackToDownload,
@@ -513,7 +544,8 @@ class _DownloadRun {
       outputDir: effectiveOutputDir,
     );
 
-    if (result['success'] != true &&
+    if (!isNetworkDownload &&
+        result['success'] != true &&
         isStorageWriteFailure(
           errorType: result['error_type']?.toString(),
           errorMessage: (result['error'] ?? result['message'])?.toString(),
@@ -826,13 +858,15 @@ class _DownloadRun {
     // copy, so the stored path still points there.  Replace it with the
     // actual output path (SAF content URI or local path) so the later
     // album-gain writer targets the correct file.
-    if (rgPath != null) {
+    if (rgPath != null && !isNetworkDownload) {
       n._updateAlbumRgFilePath(trackToDownload, rgPath);
     }
     // Album ReplayGain: check if all album tracks are now complete and,
     // if so, compute and write album gain/peak to every track file.
     try {
-      await n._checkAndWriteAlbumReplayGain(trackToDownload);
+      if (!isNetworkDownload) {
+        await n._checkAndWriteAlbumReplayGain(trackToDownload);
+      }
     } catch (e) {
       _log.w('Album ReplayGain check failed: $e');
     }
@@ -1533,7 +1567,7 @@ class _DownloadRun {
     }
 
     if (path != null) {
-      final historyFilePath = path;
+      var historyFilePath = path;
       final backendBitDepth = result['actual_bit_depth'] as int?;
       final backendSampleRate = result['actual_sample_rate'] as int?;
       final backendFormat =
@@ -1642,6 +1676,83 @@ class _DownloadRun {
         externalLrcWritten: externalLrcWritten,
       );
 
+      if (isNetworkDownload) {
+        final staging = NetworkDownloadStaging.instance;
+        if (await staging.read(item.id) == null) {
+          await staging.save(item.id, {
+            'localPath': path,
+            'folder': item.networkDownloadFolder,
+            'relativeDir': networkRelativeDir,
+            'quality': actualQuality,
+            'track': trackToDownload.toJson(),
+            'externalLrcWritten': externalLrcWritten,
+            // Persist only metadata, never provider URLs/authorization tokens.
+            'result': {
+              for (final key in [
+                'service',
+                'quality',
+                'actual_bit_depth',
+                'actual_sample_rate',
+                'bitrate',
+                'actual_bitrate',
+                'audio_codec',
+                'format',
+                'genre',
+                'label',
+                'copyright',
+                'title',
+                'artist',
+                'album',
+                'release_date',
+                'track_number',
+                'disc_number',
+                'total_tracks',
+                'total_discs',
+                'isrc',
+                'composer',
+                'explicit',
+              ])
+                if (result[key] != null) key: result[key],
+            },
+          });
+        }
+        void checkpoint() {
+          if (n._findItemById(item.id) == null ||
+              n._isLocallyCancelled(item.id) ||
+              n._isPausePending(item.id)) {
+            throw StateError('Network upload interrupted');
+          }
+        }
+
+        n.updateItemStatus(
+          item.id,
+          DownloadStatus.finalizing,
+          progress: 0.99,
+          preparationStage: 'network_upload',
+        );
+        var lastProgress = DateTime.fromMillisecondsSinceEpoch(0);
+        historyFilePath = await staging.publish(
+          item.id,
+          checkpoint: checkpoint,
+          progress: (sent, total) {
+            final now = DateTime.now();
+            if (sent != total &&
+                now.difference(lastProgress).inMilliseconds < 250) {
+              return;
+            }
+            lastProgress = now;
+            n.updateItemStatus(
+              item.id,
+              DownloadStatus.finalizing,
+              progress: 0.99,
+              preparationStage: 'network_upload',
+              bytesReceived: sent,
+              bytesTotal: total,
+            );
+          },
+        );
+      }
+
       await n._saveDownloadedMotionArtwork(
         n.ref,
         item,
@@ -1686,7 +1797,7 @@ class _DownloadRun {
             item.id,
             DownloadStatus.completed,
             progress: 1.0,
-            filePath: path,
+            filePath: historyFilePath,
           );
         },
       );
@@ -1702,6 +1813,14 @@ class _DownloadRun {
         // Audio and history are already committed. A notification failure
         // must not roll back a valid replacement or its persisted history.
         _log.w('Download completed but notification failed: $e');
+      }
+      if (isNetworkDownload) {
+        n._purgeAlbumRgEntry(trackToDownload);
+        try {
+          await NetworkDownloadStaging.instance.discard(item.id);
+        } catch (e) {
+          _log.w('Could not clean uploaded network staging: $e');
+        }
       }
       n.removeItem(item.id);
     }
@@ -1770,6 +1889,17 @@ class _DownloadRun {
     }
 
     _log.e('Exception: $e', e, stackTrace);
+
+    if (isNetworkDownload) {
+      n.updateItemStatus(
+        item.id,
+        DownloadStatus.failed,
+        error: 'Network download failed. Retry keeps prepared audio: $e',
+        errorType: DownloadErrorType.unknown,
+      );
+      n._failedInSession++;
+      return;
+    }
 
     String errorMsg = e.toString();
     DownloadErrorType errorType = DownloadErrorType.unknown;

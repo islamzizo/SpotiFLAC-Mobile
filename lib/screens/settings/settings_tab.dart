@@ -16,6 +16,7 @@ import 'package:spotiflac_android/screens/settings/download_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/extensions_page.dart';
 import 'package:spotiflac_android/screens/settings/files_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/library_settings_page.dart';
+import 'package:spotiflac_android/screens/network_storage_screen.dart';
 import 'package:spotiflac_android/screens/settings/log_screen.dart';
 import 'package:spotiflac_android/screens/settings/lyrics_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/metadata_settings_page.dart';
@@ -151,6 +152,21 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             keywords: const ['scan', 'local', 'duplicate'],
             searchEntries: searchCatalog.library,
             pageBuilder: () => const LibrarySettingsPage(),
+          ),
+          _Destination(
+            icon: Icons.dns_outlined,
+            iconColor: Colors.blueGrey,
+            title: l10n.networkStorage,
+            subtitle: 'SMB · WebDAV · HTTP / HTTPS',
+            keywords: const [
+              'nas',
+              'server',
+              'network',
+              'smb',
+              'webdav',
+              'http',
+            ],
+            pageBuilder: () => const NetworkStorageScreen(),
           ),
           _Destination(
             icon: Icons.sell_outlined,

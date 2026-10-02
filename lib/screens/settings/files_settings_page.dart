@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
+import 'package:spotiflac_android/screens/network_storage_screen.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
@@ -150,6 +151,28 @@ class _FilesSettingsPageState extends ConsumerState<FilesSettingsPage> {
                     onTap: () => _pickDirectory(context, ref),
                     showDivider: false,
                   ),
+                  SettingsItem(
+                    icon: Icons.dns_outlined,
+                    title: context.l10n.networkDownloadDestination,
+                    subtitle: settings.networkDownloadFolder.isEmpty
+                        ? context.l10n.networkUseForDownloads
+                        : settings.networkDownloadLabel,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const NetworkStorageScreen(),
+                      ),
+                    ),
+                    showDivider: settings.networkDownloadFolder.isNotEmpty,
+                  ),
+                  if (settings.networkDownloadFolder.isNotEmpty)
+                    SettingsItem(
+                      icon: Icons.phone_android_outlined,
+                      title: context.l10n.networkUseLocalDownloads,
+                      onTap: () => ref
+                          .read(settingsProvider.notifier)
+                          .setNetworkDownloadFolder('', ''),
+                      showDivider: false,
+                    ),
                 ],
               ),
             ),

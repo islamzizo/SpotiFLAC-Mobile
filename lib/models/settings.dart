@@ -16,6 +16,8 @@ class AppSettings {
   final String audioQuality;
   final String filenameFormat;
   final String downloadDirectory;
+  final String networkDownloadFolder;
+  final String networkDownloadLabel;
   final String downloadDirectoryBookmark;
   final String storageMode; // 'app' or 'saf'
   final String downloadTreeUri; // SAF persistable tree URI
@@ -143,6 +145,8 @@ class AppSettings {
     this.audioQuality = 'LOSSLESS',
     this.filenameFormat = '{title} - {artist}',
     this.downloadDirectory = '',
+    this.networkDownloadFolder = '',
+    this.networkDownloadLabel = '',
     this.downloadDirectoryBookmark = '',
     this.storageMode = 'app',
     this.downloadTreeUri = '',
@@ -240,6 +244,8 @@ class AppSettings {
     String? audioQuality,
     String? filenameFormat,
     String? downloadDirectory,
+    String? networkDownloadFolder,
+    String? networkDownloadLabel,
     String? downloadDirectoryBookmark,
     String? storageMode,
     String? downloadTreeUri,
@@ -330,6 +336,9 @@ class AppSettings {
       audioQuality: audioQuality ?? this.audioQuality,
       filenameFormat: filenameFormat ?? this.filenameFormat,
       downloadDirectory: downloadDirectory ?? this.downloadDirectory,
+      networkDownloadFolder:
+          networkDownloadFolder ?? this.networkDownloadFolder,
+      networkDownloadLabel: networkDownloadLabel ?? this.networkDownloadLabel,
       downloadDirectoryBookmark:
           downloadDirectoryBookmark ?? this.downloadDirectoryBookmark,
       storageMode: storageMode ?? this.storageMode,

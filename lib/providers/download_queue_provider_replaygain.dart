@@ -47,6 +47,9 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     String filePath,
     ReplayGainResult rg,
   ) {
+    // Network staging is released per published track. Track ReplayGain is
+    // embedded normally; do not schedule later writes to deleted staging files.
+    if (filePath.contains('/network_downloads/')) return;
     final key = _albumRgKey(track);
     _albumRgData.putIfAbsent(key, () => _AlbumRgAccumulator());
     // Remove any stale entry for this track (e.g. from a previous failed

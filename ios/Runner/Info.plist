@@ -85,10 +85,14 @@
 	<true/>
 	
 	<!-- Network Access -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to your music servers and network storage to browse and play your music.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
 	
 	<!-- File Sharing - Allow access via Files app -->

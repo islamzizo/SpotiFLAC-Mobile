@@ -8,6 +8,7 @@ import 'package:flutter/material.dart'
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:spotiflac_android/services/network_download_staging.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
@@ -1019,6 +1020,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       playlistName: playlistName,
       playlistPosition: playlistPosition,
       preserveQualityVariant: settings.allowQualityVariants,
+      networkDownloadFolder: settings.networkDownloadFolder,
     );
 
     state = state.copyWith(items: [...state.items, item]);
@@ -1069,6 +1071,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
             (shouldAssignPlaylistPositions ? index + 1 : null),
         fromBatch: fromBatch,
         preserveQualityVariant: settings.allowQualityVariants,
+        networkDownloadFolder: settings.networkDownloadFolder,
       );
     }).toList();
 
@@ -1088,6 +1091,9 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     String? filePath,
     String? error,
     DownloadErrorType? errorType,
+    String? preparationStage,
+    int? bytesReceived,
+    int? bytesTotal,
   }) {
     final items = state.items;
     final index = state.lookup.indexByItemId[id] ?? -1;
@@ -1101,6 +1107,9 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       filePath: filePath,
       error: error,
       errorType: errorType,
+      preparationStage: preparationStage,
+      bytesReceived: bytesReceived,
+      bytesTotal: bytesTotal,
     );
 
     if (current.status == next.status &&
@@ -1108,7 +1117,10 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         current.speedMBps == next.speedMBps &&
         current.filePath == next.filePath &&
         current.error == next.error &&
-        current.errorType == next.errorType) {
+        current.errorType == next.errorType &&
+        current.preparationStage == next.preparationStage &&
+        current.bytesReceived == next.bytesReceived &&
+        current.bytesTotal == next.bytesTotal) {
       return;
     }
 
@@ -1248,9 +1260,31 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     if (wasFailed) {
       _retriggerAlbumRgChecks();
     }
+    if (item.status != DownloadStatus.downloading &&
+        item.status != DownloadStatus.finalizing &&
+        item.networkDownloadFolder.isNotEmpty) {
+      unawaited(
+        NetworkDownloadStaging.instance.discard(id).catchError((Object e) {
+          _log.w('Could not remove network staging: $e');
+        }),
+      );
+    }
   }
 
   void clearAll() {
+    for (final item in state.items) {
+      if (item.networkDownloadFolder.isNotEmpty &&
+          item.status != DownloadStatus.downloading &&
+          item.status != DownloadStatus.finalizing) {
+        unawaited(
+          NetworkDownloadStaging.instance.discard(item.id).catchError((
+            Object e,
+          ) {
+            _log.w('Could not clear network staging: $e');
+          }),
+        );
+      }
+    }
     final wasProcessing = state.isProcessing;
     final activeIds = state.items
         .where(
@@ -1667,12 +1701,17 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     var settings = ref.read(settingsProvider);
     updateSettings(settings);
     var isSafMode = _isSafMode(settings);
+    final networkOnlyQueue = state.items
+        .where((item) => item.status == DownloadStatus.queued)
+        .every((item) => item.networkDownloadFolder.isNotEmpty);
     IosSecurityScopedAccess? iosDownloadBookmarkAccess;
 
     // Validate SAF before handing the batch to either queue implementation.
     // Never silently redirect a user-selected SAF destination into private app
     // storage: keep the selection intact so the UI can request access again.
-    if (Platform.isAndroid && settings.storageMode == 'saf') {
+    if (!networkOnlyQueue &&
+        Platform.isAndroid &&
+        settings.storageMode == 'saf') {
       var safAccessible = settings.downloadTreeUri.isNotEmpty;
       if (safAccessible) {
         try {
@@ -1702,6 +1741,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       }
     }
     if (Platform.isAndroid &&
+        !networkOnlyQueue &&
         !isSafMode &&
         state.outputDir.isNotEmpty &&
         !await _isDirectoryWritable(Directory(state.outputDir))) {
@@ -1799,12 +1839,13 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     // iOS: Validate that outputDir is writable (not iCloud Drive which native code
     // can't access), unless a bookmark makes this app-Documents path-shape
     // check irrelevant (see shouldValidateIosOutputDir).
-    if (shouldValidateIosOutputDir(
-      isIOS: Platform.isIOS,
-      isSafMode: isSafMode,
-      outputDir: state.outputDir,
-      downloadDirectoryBookmark: settings.downloadDirectoryBookmark,
-    )) {
+    if (!networkOnlyQueue &&
+        shouldValidateIosOutputDir(
+          isIOS: Platform.isIOS,
+          isSafMode: isSafMode,
+          outputDir: state.outputDir,
+          downloadDirectoryBookmark: settings.downloadDirectoryBookmark,
+        )) {
       final isICloudPath =
           state.outputDir.contains('Mobile Documents') ||
           state.outputDir.contains('CloudDocs') ||
@@ -1838,6 +1879,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     _log.d('Download storage mode: ${isSafMode ? 'SAF' : 'filesystem'}');
 
     if (!isSafMode &&
+        !networkOnlyQueue &&
         Platform.isIOS &&
         settings.downloadDirectoryBookmark.isNotEmpty) {
       iosDownloadBookmarkAccess =

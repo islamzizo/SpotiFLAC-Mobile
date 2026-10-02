@@ -186,6 +186,18 @@ extension _QueueTabItemWidgets on _QueueTabState {
                     ],
                   ),
                 ],
+                if (item.status == DownloadStatus.finalizing &&
+                    item.preparationStage == 'network_upload') ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${context.l10n.networkUploading}${item.bytesTotal > 0 ? ' • ${(100 * item.bytesReceived / item.bytesTotal).round()}%' : ''}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: colorScheme.primary,
+                    ),
+                  ),
+                ],
                 if (item.status == DownloadStatus.failed) ...[
                   const SizedBox(height: 4),
                   _buildDownloadFailureMessage(context, item, colorScheme),

@@ -11,6 +11,7 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
   }) {
     Widget buildMenu(BuildContext sheetContext) {
       final l10n = sheetContext.l10n;
+      final canEditFile = _fileExists && !_isNetworkItem;
 
       final options = <_MetadataOption>[
         if (_fileExists)
@@ -48,7 +49,7 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
           dividerAbove: _fileExists,
           onTap: () => _copyToClipboard(screenContext, cleanFilePath),
         ),
-        if (_fileExists)
+        if (canEditFile)
           _MetadataOption(
             icon: Icons.edit_outlined,
             label: l10n.trackEditMetadata,
@@ -67,31 +68,31 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
             label: l10n.trackSaveLyrics,
             onTap: _saveLyrics,
           ),
-        if (_fileExists)
+        if (canEditFile)
           _MetadataOption(
             icon: Icons.travel_explore,
             label: l10n.trackReEnrich,
             onTap: _reEnrichMetadata,
           ),
-        if (_fileExists && _isConvertibleFormat)
+        if (canEditFile && _isConvertibleFormat)
           _MetadataOption(
             icon: Icons.swap_horiz,
             label: l10n.trackConvertFormat,
             onTap: () => _showConvertSheet(screenContext),
           ),
-        if (_fileExists && !_isCueFile)
+        if (canEditFile && !_isCueFile)
           _MetadataOption(
             icon: Icons.graphic_eq,
             label: l10n.trackReplayGain,
             onTap: () => _updateReplayGain(),
           ),
-        if (_fileExists && !_isCueFile)
+        if (canEditFile && !_isCueFile)
           _MetadataOption(
             icon: Icons.remove_circle_outline,
             label: l10n.trackRemoveReplayGain,
             onTap: () => _removeReplayGain(),
           ),
-        if (_fileExists && _isCueFile)
+        if (canEditFile && _isCueFile)
           _MetadataOption(
             icon: Icons.call_split,
             label: l10n.cueSplitTitle,
@@ -108,18 +109,20 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
               isrc: isrc ?? '',
             ),
           ),
-        _MetadataOption(
-          icon: Icons.share_outlined,
-          label: l10n.trackMetadataShare,
-          dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
-          onTap: () => _shareFile(screenContext),
-        ),
-        _MetadataOption(
-          icon: Icons.delete_outline,
-          label: l10n.trackRemoveFromDevice,
-          destructive: true,
-          onTap: () => _confirmDelete(screenContext, ref, colorScheme),
-        ),
+        if (!_isNetworkItem)
+          _MetadataOption(
+            icon: Icons.share_outlined,
+            label: l10n.trackMetadataShare,
+            dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
+            onTap: () => _shareFile(screenContext),
+          ),
+        if (!_isNetworkItem)
+          _MetadataOption(
+            icon: Icons.delete_outline,
+            label: l10n.trackRemoveFromDevice,
+            destructive: true,
+            onTap: () => _confirmDelete(screenContext, ref, colorScheme),
+          ),
       ];
 
       if (sheetContext.isMornye) {
@@ -153,14 +156,15 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
                 ),
               ),
             ],
-            MornyeMenuAction(
-              icon: CupertinoIcons.share_solid,
-              label: l10n.trackMetadataShare,
-              onPressed: () => _closeOptionsMenuAndRun(
-                sheetContext,
-                () => _shareFile(screenContext),
+            if (!_isNetworkItem)
+              MornyeMenuAction(
+                icon: CupertinoIcons.share_solid,
+                label: l10n.trackMetadataShare,
+                onPressed: () => _closeOptionsMenuAndRun(
+                  sheetContext,
+                  () => _shareFile(screenContext),
+                ),
               ),
-            ),
           ],
           groups: groups,
         );

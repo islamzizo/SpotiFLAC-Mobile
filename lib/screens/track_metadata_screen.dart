@@ -156,6 +156,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
   _embeddedCoverPreviewCache = {};
 
   bool _fileExists = false;
+  bool get _isNetworkItem => cleanFilePath.startsWith('network://');
   bool _hasCheckedFile = false;
   int? _fileSize;
   String? _lyrics;
@@ -255,6 +256,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
         generation == _metadataLoadGeneration &&
         filePath == cleanFilePath &&
         exists &&
+        !_isNetworkItem &&
         !_hasPath(_embeddedCoverPreviewPath)) {
       // The information card reports artwork embedded in the audio file, not
       // a resized Library thumbnail or remote cover. The shared resolver owns
@@ -299,9 +301,9 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
     _hasLoadedResolvedAudioMetadata = true;
 
     try {
-      final metadata = await PlatformBridge.readDisplayAudioMetadata(
-        sourcePath,
-      );
+      final metadata = _isNetworkItem
+          ? await readPlaybackFileMetadataWithRetry(sourcePath)
+          : await PlatformBridge.readDisplayAudioMetadata(sourcePath);
       if (!mounted ||
           generation != _metadataLoadGeneration ||
           sourcePath != cleanFilePath) {
@@ -843,14 +845,16 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
                   : null,
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: HeaderFilledButton(
-              icon: CupertinoIcons.trash,
-              label: context.l10n.trackMetadataDelete,
-              onPressed: () => _confirmDelete(context, ref, colorScheme),
+          if (!_isNetworkItem) ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: HeaderFilledButton(
+                icon: CupertinoIcons.trash,
+                label: context.l10n.trackMetadataDelete,
+                onPressed: () => _confirmDelete(context, ref, colorScheme),
+              ),
             ),
-          ),
+          ],
         ],
       );
     }
@@ -872,25 +876,28 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
             ),
           ),
         ),
-        const SizedBox(width: 12),
-
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _confirmDelete(context, ref, colorScheme),
-            icon: Icon(Icons.delete_outline, color: colorScheme.error),
-            label: Text(
-              context.l10n.trackMetadataDelete,
-              style: TextStyle(color: colorScheme.error),
-            ),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+        if (!_isNetworkItem) ...[
+          const SizedBox(width: 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => _confirmDelete(context, ref, colorScheme),
+              icon: Icon(Icons.delete_outline, color: colorScheme.error),
+              label: Text(
+                context.l10n.trackMetadataDelete,
+                style: TextStyle(color: colorScheme.error),
               ),
-              side: BorderSide(color: colorScheme.error.withValues(alpha: 0.5)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                side: BorderSide(
+                  color: colorScheme.error.withValues(alpha: 0.5),
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }

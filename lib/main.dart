@@ -48,6 +48,9 @@ void main() {
         yield LicenseEntryWithLineBreaks(const [
           'Inter',
         ], await rootBundle.loadString('assets/fonts/Inter-LICENSE.txt'));
+        yield LicenseEntryWithLineBreaks(const [
+          'libsmb2',
+        ], await rootBundle.loadString('assets/licenses/libsmb2.txt'));
         if (Platform.isAndroid) {
           yield LicenseEntryWithLineBreaks(const [
             'libusb',
