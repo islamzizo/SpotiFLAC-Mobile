@@ -8,148 +8,118 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
     WidgetRef ref,
     ColorScheme colorScheme, {
     Rect? anchor,
-    bool fileActionsOnly = false,
   }) {
     Widget buildMenu(BuildContext sheetContext) {
       final l10n = sheetContext.l10n;
 
       final options = <_MetadataOption>[
-        if (!fileActionsOnly) ...[
-          if (_fileExists)
-            _MetadataOption(
-              icon: Icons.playlist_play,
-              label: l10n.trackPlayNext,
-              onTap: () => _enqueueThis(ref, playNext: true),
-            ),
-          if (_fileExists)
-            _MetadataOption(
-              icon: Icons.queue_music,
-              label: l10n.trackAddToQueue,
-              onTap: () => _enqueueThis(ref, playNext: false),
-            ),
-          if (albumName.trim().isNotEmpty)
-            _MetadataOption(
-              icon: Icons.album_outlined,
-              label: l10n.homeGoToAlbum,
-              onTap: () => navigateToAlbum(
-                screenContext,
-                albumName: albumName,
-                artistName: albumArtist ?? artistName,
-                coverUrl: _coverUrl,
-              ),
-            ),
+        if (_fileExists)
           _MetadataOption(
-            icon: Icons.person_outline,
-            label: l10n.mornyeGoToArtist,
-            onTap: () =>
-                navigateToArtistCredits(screenContext, artistNames: artistName),
+            icon: Icons.playlist_play,
+            label: l10n.trackPlayNext,
+            onTap: () => _enqueueThis(ref, playNext: true),
           ),
+        if (_fileExists)
           _MetadataOption(
-            icon: Icons.tune,
-            label: l10n.trackEditAudioFile,
-            onTap: () => _showOptionsMenu(
+            icon: Icons.queue_music,
+            label: l10n.trackAddToQueue,
+            onTap: () => _enqueueThis(ref, playNext: false),
+          ),
+        if (albumName.trim().isNotEmpty)
+          _MetadataOption(
+            icon: Icons.album_outlined,
+            label: l10n.homeGoToAlbum,
+            onTap: () => navigateToAlbum(
               screenContext,
-              ref,
-              colorScheme,
-              fileActionsOnly: true,
+              albumName: albumName,
+              artistName: albumArtist ?? artistName,
+              coverUrl: _coverUrl,
             ),
           ),
+        _MetadataOption(
+          icon: Icons.person_outline,
+          label: l10n.mornyeGoToArtist,
+          onTap: () =>
+              navigateToArtistCredits(screenContext, artistNames: artistName),
+        ),
+        _MetadataOption(
+          icon: Icons.copy_outlined,
+          label: l10n.trackCopyFilePath,
+          dividerAbove: _fileExists,
+          onTap: () => _copyToClipboard(screenContext, cleanFilePath),
+        ),
+        if (_fileExists)
           _MetadataOption(
-            icon: Icons.library_music_outlined,
-            label: l10n.relatedLibraryTracks,
-            onTap: () => Navigator.of(screenContext).push(
-              MaterialPageRoute<void>(
-                builder: (_) => RelatedLibraryTracksScreen(
-                  seed: widget.localItem != null
-                      ? UnifiedLibraryItem.fromLocalLibrary(widget.localItem!)
-                      : UnifiedLibraryItem.fromDownloadHistory(widget.item!),
-                ),
-              ),
-            ),
+            icon: Icons.edit_outlined,
+            label: l10n.trackEditMetadata,
+            onTap: () =>
+                _showEditMetadataSheet(screenContext, ref, colorScheme),
           ),
-        ],
-        if (fileActionsOnly) ...[
+        if (!_isLocalItem && (_coverUrl != null || _fileExists))
           _MetadataOption(
-            icon: Icons.copy_outlined,
-            label: l10n.trackCopyFilePath,
-            dividerAbove: _fileExists,
-            onTap: () => _copyToClipboard(screenContext, cleanFilePath),
+            icon: Icons.image_outlined,
+            label: l10n.trackSaveCoverArt,
+            onTap: _saveCoverArt,
           ),
-          if (_fileExists)
-            _MetadataOption(
-              icon: Icons.edit_outlined,
-              label: l10n.trackEditMetadata,
-              onTap: () =>
-                  _showEditMetadataSheet(screenContext, ref, colorScheme),
-            ),
-          if (!_isLocalItem && (_coverUrl != null || _fileExists))
-            _MetadataOption(
-              icon: Icons.image_outlined,
-              label: l10n.trackSaveCoverArt,
-              onTap: _saveCoverArt,
-            ),
-          if (!_isLocalItem)
-            _MetadataOption(
-              icon: Icons.lyrics_outlined,
-              label: l10n.trackSaveLyrics,
-              onTap: _saveLyrics,
-            ),
-          if (_fileExists)
-            _MetadataOption(
-              icon: Icons.travel_explore,
-              label: l10n.trackReEnrich,
-              onTap: _reEnrichMetadata,
-            ),
-          if (_fileExists && _isConvertibleFormat)
-            _MetadataOption(
-              icon: Icons.swap_horiz,
-              label: l10n.trackConvertFormat,
-              onTap: () => _showConvertSheet(screenContext),
-            ),
-          if (_fileExists && !_isCueFile)
-            _MetadataOption(
-              icon: Icons.graphic_eq,
-              label: l10n.trackReplayGain,
-              onTap: () => _updateReplayGain(),
-            ),
-          if (_fileExists && !_isCueFile)
-            _MetadataOption(
-              icon: Icons.remove_circle_outline,
-              label: l10n.trackRemoveReplayGain,
-              onTap: () => _removeReplayGain(),
-            ),
-          if (_fileExists && _isCueFile)
-            _MetadataOption(
-              icon: Icons.call_split,
-              label: l10n.cueSplitTitle,
-              onTap: () => _showCueSplitSheet(screenContext),
-            ),
-        ],
-        if (!fileActionsOnly) ...[
-          if (_spotifyId != null || (isrc?.isNotEmpty ?? false))
-            _MetadataOption(
-              icon: Icons.open_in_new,
-              label: l10n.trackOpenOn,
-              dividerAbove: true,
-              onTap: () => OpenOnPlatformSheet.show(
-                screenContext,
-                spotifyId: _spotifyId ?? '',
-                isrc: isrc ?? '',
-              ),
-            ),
+        if (!_isLocalItem)
           _MetadataOption(
-            icon: Icons.share_outlined,
-            label: l10n.trackMetadataShare,
-            dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
-            onTap: () => _shareFile(screenContext),
+            icon: Icons.lyrics_outlined,
+            label: l10n.trackSaveLyrics,
+            onTap: _saveLyrics,
           ),
+        if (_fileExists)
           _MetadataOption(
-            icon: Icons.delete_outline,
-            label: l10n.trackRemoveFromDevice,
-            destructive: true,
-            onTap: () => _confirmDelete(screenContext, ref, colorScheme),
+            icon: Icons.travel_explore,
+            label: l10n.trackReEnrich,
+            onTap: _reEnrichMetadata,
           ),
-        ],
+        if (_fileExists && _isConvertibleFormat)
+          _MetadataOption(
+            icon: Icons.swap_horiz,
+            label: l10n.trackConvertFormat,
+            onTap: () => _showConvertSheet(screenContext),
+          ),
+        if (_fileExists && !_isCueFile)
+          _MetadataOption(
+            icon: Icons.graphic_eq,
+            label: l10n.trackReplayGain,
+            onTap: () => _updateReplayGain(),
+          ),
+        if (_fileExists && !_isCueFile)
+          _MetadataOption(
+            icon: Icons.remove_circle_outline,
+            label: l10n.trackRemoveReplayGain,
+            onTap: () => _removeReplayGain(),
+          ),
+        if (_fileExists && _isCueFile)
+          _MetadataOption(
+            icon: Icons.call_split,
+            label: l10n.cueSplitTitle,
+            onTap: () => _showCueSplitSheet(screenContext),
+          ),
+        if (_spotifyId != null || (isrc?.isNotEmpty ?? false))
+          _MetadataOption(
+            icon: Icons.open_in_new,
+            label: l10n.trackOpenOn,
+            dividerAbove: true,
+            onTap: () => OpenOnPlatformSheet.show(
+              screenContext,
+              spotifyId: _spotifyId ?? '',
+              isrc: isrc ?? '',
+            ),
+          ),
+        _MetadataOption(
+          icon: Icons.share_outlined,
+          label: l10n.trackMetadataShare,
+          dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
+          onTap: () => _shareFile(screenContext),
+        ),
+        _MetadataOption(
+          icon: Icons.delete_outline,
+          label: l10n.trackRemoveFromDevice,
+          destructive: true,
+          onTap: () => _confirmDelete(screenContext, ref, colorScheme),
+        ),
       ];
 
       if (sheetContext.isMornye) {
@@ -173,26 +143,24 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
         }
         return MornyeContextMenu(
           quickActions: [
-            if (!fileActionsOnly) ...[
-              if (_fileExists) ...[
-                MornyeMenuAction(
-                  icon: CupertinoIcons.play_fill,
-                  label: l10n.trackMetadataPlay,
-                  onPressed: () => _closeOptionsMenuAndRun(
-                    sheetContext,
-                    () => _openFile(screenContext, rawFilePath),
-                  ),
-                ),
-              ],
+            if (_fileExists) ...[
               MornyeMenuAction(
-                icon: CupertinoIcons.share_solid,
-                label: l10n.trackMetadataShare,
+                icon: CupertinoIcons.play_fill,
+                label: l10n.trackMetadataPlay,
                 onPressed: () => _closeOptionsMenuAndRun(
                   sheetContext,
-                  () => _shareFile(screenContext),
+                  () => _openFile(screenContext, rawFilePath),
                 ),
               ),
             ],
+            MornyeMenuAction(
+              icon: CupertinoIcons.share_solid,
+              label: l10n.trackMetadataShare,
+              onPressed: () => _closeOptionsMenuAndRun(
+                sheetContext,
+                () => _shareFile(screenContext),
+              ),
+            ),
           ],
           groups: groups,
         );

@@ -264,6 +264,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _tapVisible(tester, find.byIcon(CupertinoIcons.ellipsis));
+      expect(find.text('Edit audio file'), findsNothing);
+      expect(find.text('Similar songs in Library'), findsNothing);
+      expect(find.text('Edit Metadata'), findsOneWidget);
       final lastAction = find.text('Remove from device');
       expect(lastAction.hitTestable(), findsNothing);
       expect(find.byType(MornyeContextMenu), findsOneWidget);
