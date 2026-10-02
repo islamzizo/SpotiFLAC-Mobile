@@ -152,6 +152,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   bool _scanInProgress = false;
   StreamSubscription<void>? _storageEventsSubscription;
   Timer? _storageEventDebounce;
+  Timer? _availabilityRetry;
+  int _availabilityRetryCount = 0;
+  Future<List<String>>? _availabilityRefreshFuture;
   static const _scanNotificationHeartbeat = Duration(seconds: 4);
   int _lastScanNotificationPercent = -1;
   int _lastScanNotificationTotalFiles = -1;
@@ -163,6 +166,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       _progressPoller.stop();
       _storageEventsSubscription?.cancel();
       _storageEventDebounce?.cancel();
+      _availabilityRetry?.cancel();
     });
 
     if (Platform.isAndroid) {
@@ -332,24 +336,8 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
   Future<void> refreshSourceAvailability({bool scanReconnected = false}) async {
     await _ensureLoadedFromDatabase();
-    final before = await _db.getSources();
-    final reconnected = <String>[];
-    for (final source in before) {
-      final available = await _isPathAvailable(
-        source.path,
-        bookmark: source.bookmark,
-      );
-      if (available != source.available) {
-        await _db.updateSourceState(
-          source.id,
-          available: available,
-          lastSeenAt: available ? DateTime.now() : null,
-        );
-        if (available && source.enabled && source.isIndexed) {
-          reconnected.add(source.id);
-        }
-      }
-    }
+    final reconnected = await _refreshSourceAvailabilityInDatabase();
+    if (!ref.mounted) return;
     await _refreshSummaryFromStorage();
 
     // Existing rows become visible as soon as availability flips. The
@@ -486,8 +474,12 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   }
 
   Future<bool> _isPathAvailable(String path, {String? bookmark}) async {
+    return await _probePathAvailability(path, bookmark: bookmark) ?? true;
+  }
+
+  Future<bool?> _probePathAvailability(String path, {String? bookmark}) async {
     if (Platform.isAndroid && path.startsWith('content://')) {
-      return PlatformBridge.isSafTreeAccessible(path);
+      return PlatformBridge.probeSafTreeReadAccess(path);
     }
     if (Platform.isIOS && bookmark != null && bookmark.trim().isNotEmpty) {
       final access = await PlatformBridge.startAccessingIosBookmark(bookmark);
@@ -501,14 +493,30 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     return await Directory(path).exists();
   }
 
-  Future<List<String>> _refreshSourceAvailabilityInDatabase() async {
+  Future<List<String>> _refreshSourceAvailabilityInDatabase() =>
+      _availabilityRefreshFuture ??= _checkSourceAvailability().whenComplete(
+        () {
+          _availabilityRefreshFuture = null;
+        },
+      );
+
+  Future<List<String>> _checkSourceAvailability() async {
     final sources = await _db.getSources();
     final reconnected = <String>[];
+    var inconclusive = false;
     for (final source in sources) {
-      final available = await _isPathAvailable(
+      final available = await _probePathAvailability(
         source.path,
         bookmark: source.bookmark,
       );
+      if (!ref.mounted) return reconnected;
+      if (available == null) {
+        inconclusive = true;
+        _log.w(
+          'Library source access inconclusive; retaining status: ${source.id}',
+        );
+        continue;
+      }
       if (available != source.available) {
         await _db.updateSourceState(
           source.id,
@@ -519,6 +527,15 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           reconnected.add(source.id);
         }
       }
+    }
+    _availabilityRetry?.cancel();
+    if (inconclusive && _availabilityRetryCount < 3) {
+      _availabilityRetryCount++;
+      _availabilityRetry = Timer(const Duration(seconds: 2), () {
+        unawaited(refreshSourceAvailability(scanReconnected: true));
+      });
+    } else if (!inconclusive) {
+      _availabilityRetryCount = 0;
     }
     return reconnected;
   }
@@ -1270,7 +1287,8 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           sourceId: source.id,
           canDelete: () async {
             if (isContentUri(source.path)) {
-              return PlatformBridge.isSafTreeAccessible(source.path);
+              return await PlatformBridge.probeSafTreeReadAccess(source.path) ==
+                  true;
             }
             // Recheck access after the file probes, before deleting a page.
             // An empty but readable source is valid; an offline one throws.

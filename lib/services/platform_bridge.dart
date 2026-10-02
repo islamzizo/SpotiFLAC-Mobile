@@ -833,6 +833,26 @@ class PlatformBridge {
     };
   }
 
+  /// Read access for a Library source, independent of download write access.
+  /// Null means the provider could not confirm access (loading/query failure).
+  static Future<bool?> probeSafTreeReadAccess(String treeUri) async {
+    try {
+      Future<bool?> probe() => _channel.invokeMethod<bool>(
+        'probeSafTreeReadAccess',
+        {'tree_uri': treeUri},
+      );
+      final readable = await probe();
+      if (readable != false) return readable;
+      // A busy provider can briefly return an empty root after a write.
+      // Confirm a negative before hiding all tracks from this source.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      return await probe();
+    } catch (e) {
+      _log.w('Failed to probe SAF library read access: $e');
+      return null;
+    }
+  }
+
   /// Whether the persisted SAF grant for [treeUri] is still usable: the
   /// permission is present in the system's persisted list and the tree
   /// document still exists and is writable. Returns true on channel errors

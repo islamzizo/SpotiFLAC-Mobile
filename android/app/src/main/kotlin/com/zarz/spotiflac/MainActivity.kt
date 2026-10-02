@@ -108,6 +108,7 @@ class MainActivity: FlutterFragmentActivity() {
         "safExists",
         "safExistsBatch",
         "isSafTreeAccessible",
+        "probeSafTreeReadAccess",
         "safDelete",
         "safStat",
         "resolveSafFile",
@@ -1211,6 +1212,48 @@ class MainActivity: FlutterFragmentActivity() {
                                 safExistsBatch(urisJson)
                             }
                             result.success(response)
+                        }
+                        "probeSafTreeReadAccess" -> {
+                            val uriStr = call.argument<String>("tree_uri") ?: ""
+                            val readable = withContext(Dispatchers.IO) {
+                                probeSafTreeReadAccess(
+                                    hasReadPermission = {
+                                        val uri = Uri.parse(uriStr)
+                                        val root = DocumentsContract.buildDocumentUriUsingTree(
+                                            uri,
+                                            DocumentsContract.getTreeDocumentId(uri),
+                                        )
+                                        checkUriPermission(
+                                            root,
+                                            android.os.Process.myPid(),
+                                            android.os.Process.myUid(),
+                                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                    },
+                                    readRoot = {
+                                        val uri = Uri.parse(uriStr)
+                                        val root = DocumentsContract.buildDocumentUriUsingTree(
+                                            uri,
+                                            DocumentsContract.getTreeDocumentId(uri),
+                                        )
+                                        contentResolver.query(
+                                            root,
+                                            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                                            null, null, null,
+                                        )?.use { cursor ->
+                                            when {
+                                                cursor.moveToFirst() -> true
+                                                cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false) -> null
+                                                else -> false
+                                            }
+                                        }
+                                    },
+                                    onFailure = { error ->
+                                        android.util.Log.w("SpotiFLAC", "SAF library read probe failed", error)
+                                    },
+                                )
+                            }
+                            result.success(readable)
                         }
                         "isSafTreeAccessible" -> {
                             val uriStr = call.argument<String>("tree_uri") ?: ""
