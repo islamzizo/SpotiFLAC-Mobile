@@ -4,6 +4,17 @@ part of 'download_history_provider.dart';
 /// Startup maintenance: SAF repair, orphan cleanup, and audio-metadata
 /// backfill that run staggered after the initial history load.
 extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
+  Future<void> _commitMaintenanceUpdates(List<Map<String, dynamic>> updates) =>
+      _enqueueHistoryWrite(() async {
+        final persistedIds = await _db.updateExistingBatch(updates);
+        if (!ref.mounted || persistedIds.isEmpty) return;
+        state = mergeHistoryMaintenanceUpdates(
+          state,
+          updates.map(DownloadHistoryItem.fromJson),
+          persistedIds,
+        );
+      });
+
   void _scheduleStartupMaintenance(List<DownloadHistoryItem> initialItems) {
     if (_startupMaintenanceScheduled) {
       return;
@@ -159,7 +170,6 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
       return;
     }
 
-    final updatedItems = [...items];
     final persistedUpdates = <Map<String, dynamic>>[];
     var changed = false;
     var repairedCount = 0;
@@ -218,7 +228,6 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
               : item.safFileName,
           safRepaired: true,
         );
-        updatedItems[index] = updated;
         changed = true;
         if (newUri == item.filePath) {
           verifiedCount++;
@@ -229,12 +238,7 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
       }
 
       if (changed) {
-        await _db.upsertBatch(persistedUpdates);
-        state = state.copyWith(
-          items: updatedItems,
-          loadedIndexVersion: state.loadedIndexVersion + 1,
-          lookupItems: _lookupItemsWithUpdates(updatedItems),
-        );
+        await _commitMaintenanceUpdates(persistedUpdates);
         _historyLog.i(
           'SAF repair pass: verified=$verifiedCount, repaired=$repairedCount, checked=${selectedIndexes.length}',
         );
@@ -558,7 +562,6 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
         return;
       }
 
-      List<DownloadHistoryItem>? updatedItems;
       final persistedUpdates = <Map<String, dynamic>>[];
       var refreshedCount = 0;
 
@@ -690,19 +693,12 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
           hasReplayGain: resolvedHasReplayGain,
           replayGainMetadataScanVersion: resolvedReplayGainScanVersion,
         );
-        updatedItems ??= [...items];
-        updatedItems[index] = updated;
         persistedUpdates.add(updated.toJson());
         refreshedCount++;
       }
 
-      if (persistedUpdates.isNotEmpty && updatedItems != null) {
-        await _db.upsertBatch(persistedUpdates);
-        state = state.copyWith(
-          items: updatedItems,
-          loadedIndexVersion: state.loadedIndexVersion + 1,
-          lookupItems: _lookupItemsWithUpdates(updatedItems),
-        );
+      if (persistedUpdates.isNotEmpty) {
+        await _commitMaintenanceUpdates(persistedUpdates);
       }
 
       await _writeStartupCursor(

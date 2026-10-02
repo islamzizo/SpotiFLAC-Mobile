@@ -19,6 +19,27 @@ part 'download_history_provider_maintenance.dart';
 
 final _historyLog = AppLogger('DownloadHistory');
 
+/// Merge a delayed maintenance result into the live lists, never its old
+/// snapshot. Deletions, new downloads, ordering and counts stay authoritative.
+DownloadHistoryState mergeHistoryMaintenanceUpdates(
+  DownloadHistoryState current,
+  Iterable<DownloadHistoryItem> updates,
+  Set<String> persistedIds,
+) {
+  final byId = {
+    for (final item in updates)
+      if (persistedIds.contains(item.id)) item.id: item,
+  };
+  if (byId.isEmpty) return current;
+  return current.copyWith(
+    items: [for (final item in current.items) byId[item.id] ?? item],
+    lookupItems: [
+      for (final item in current.lookupItems) byId[item.id] ?? item,
+    ],
+    loadedIndexVersion: current.loadedIndexVersion + 1,
+  );
+}
+
 typedef StartupOrphanDecision = ({
   Set<String> confirmedIds,
   Set<String> pendingIds,

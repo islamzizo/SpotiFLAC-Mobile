@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
+import 'package:spotiflac_android/services/history_maintenance.dart';
 import 'package:spotiflac_android/utils/isrc_utils.dart' as isrc;
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/utils/logger.dart';
@@ -804,6 +805,16 @@ class HistoryDatabase {
       }
       await batch.commit(noResult: true);
     });
+  }
+
+  Future<Set<String>> updateExistingBatch(
+    List<Map<String, dynamic>> items,
+  ) async {
+    if (items.isEmpty) return const {};
+    final db = await database;
+    return db.transaction(
+      (txn) => updateExistingHistoryRows(txn, items.map(_jsonToDbRow)),
+    );
   }
 
   Future<List<Map<String, dynamic>>> getAll({int? limit, int? offset}) async {
