@@ -8,8 +8,6 @@ import 'package:analyzer/source/line_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart'
-    show LiquidGlassTabBar;
 import 'package:spotiflac_android/l10n/app_localizations.dart';
 import 'package:spotiflac_android/theme/app_theme.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
@@ -288,7 +286,10 @@ void main() {
           ),
         ),
       );
-      expect(find.byType(LiquidGlassTabBar), findsNothing);
+      expect(
+        tester.widget<AnimatedAlign>(find.byType(AnimatedAlign)).duration,
+        Duration.zero,
+      );
       expect(find.text('Dark'), findsOneWidget);
       await tester.tap(find.text('Dark'));
       await tester.pump();
