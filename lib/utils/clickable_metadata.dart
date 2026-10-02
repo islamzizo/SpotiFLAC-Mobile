@@ -190,7 +190,9 @@ Future<void> navigateToArtist(
       return;
     }
 
-    if (!context.mounted) return;
+    if (!context.mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return;
+    }
     _pushArtistScreen(
       context,
       artistId: resolvedId,
@@ -268,7 +270,9 @@ Future<void> navigateToAlbum(
       return;
     }
 
-    if (!context.mounted) return;
+    if (!context.mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return;
+    }
     _pushAlbumScreen(
       context,
       albumId: resolvedId,
