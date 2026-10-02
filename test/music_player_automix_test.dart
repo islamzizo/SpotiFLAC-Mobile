@@ -162,7 +162,7 @@ void main() {
     await handler.dispose();
     configurePlaybackNotification(
       presentation: const PlaybackNotification(),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     analyzer.pending?.complete(null);
     setAutoMixEnabled(false);
@@ -806,7 +806,7 @@ void main() {
         source: '/one.flac',
         loved: true,
       ),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     final state = handler.playbackState.value;
     expect(state.playing, isFalse);
@@ -819,11 +819,15 @@ void main() {
       MediaAction.custom,
     ]);
     expect(state.controls.first.androidIcon, contains('star_filled'));
+    expect(
+      state.controls.last.customAction?.name,
+      PlaybackNotification.shuffleAction,
+    );
     expect(state.androidCompactActionIndices, [1, 2, 3]);
 
     configurePlaybackNotification(
       presentation: const PlaybackNotification(),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     expect(handler.playbackState.value.controls, [
       MediaControl.skipToPrevious,
@@ -842,7 +846,7 @@ void main() {
     );
     configurePlaybackNotification(
       presentation: const PlaybackNotification(mornye: true),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     expect(
       handler.playbackState.value.updatePosition.inMilliseconds,
@@ -850,6 +854,55 @@ void main() {
       reason: 'Changing icons must not reset the live playback position',
     );
   });
+
+  test(
+    'notification shuffle toggles queue order without restarting audio',
+    () async {
+      configurePlaybackNotification(
+        presentation: const PlaybackNotification(mornye: true),
+        toggleFavorite: (_) async => false,
+      );
+      await handler.setQueueAndPlay(_tracks, initialIndex: 1);
+      final resumed = List.of(native.resumedSources);
+
+      await handler.customAction(PlaybackNotification.shuffleAction);
+      expect(
+        handler.playbackState.value.shuffleMode,
+        AudioServiceShuffleMode.all,
+      );
+      expect(handler.queue.value.first.id, 'two');
+      expect(handler.queue.value.map((item) => item.id).toSet(), {
+        'one',
+        'two',
+        'three',
+      });
+      expect(handler.mediaItem.value?.id, 'two');
+      expect(
+        handler.playbackState.value.controls.last.androidIcon,
+        endsWith('shuffle_on'),
+      );
+      expect(handler.playbackState.value.controls.last.label, 'Shuffle on');
+
+      await handler.customAction(PlaybackNotification.shuffleAction);
+      expect(
+        handler.playbackState.value.shuffleMode,
+        AudioServiceShuffleMode.none,
+      );
+      expect(handler.queue.value.map((item) => item.id), [
+        'one',
+        'two',
+        'three',
+      ]);
+      expect(handler.mediaItem.value?.id, 'two');
+      expect(
+        handler.playbackState.value.controls.last.androidIcon,
+        endsWith('shuffle'),
+      );
+      expect(handler.playbackState.value.controls.last.label, 'Shuffle off');
+      expect(handler.playbackState.value.playing, isTrue);
+      expect(native.resumedSources, resumed);
+    },
+  );
 
   test(
     'shuffle plays the published queue and off restores the original order',
@@ -1034,6 +1087,7 @@ void main() {
         toggleFavorite: (item) async {
           selected.add(item.id);
           await save.future;
+          return true;
         },
       );
       handler.mediaItem.add(_tracks.first.toMediaItem());
@@ -1043,10 +1097,72 @@ void main() {
       expect(selected, ['one']);
       save.complete();
       await first;
+      expect(
+        handler.playbackState.value.controls.first.androidIcon,
+        endsWith('ic_notification_star'),
+        reason:
+            'Completing a favorite for the old track must not star the next one',
+      );
       await handler.customAction(PlaybackNotification.favoriteAction);
       expect(selected, ['one', 'three']);
+      expect(
+        handler.playbackState.value.controls.first.androidIcon,
+        endsWith('ic_notification_star_filled'),
+      );
     },
   );
+
+  test('notification favorite refreshes without a UI rebuild', () async {
+    var loved = false;
+    configurePlaybackNotification(
+      presentation: const PlaybackNotification(
+        mornye: true,
+        favoriteLabel: 'Add to Loved',
+        unfavoriteLabel: 'Remove from Loved',
+      ),
+      toggleFavorite: (_) async => loved = !loved,
+    );
+    await handler.restoreSession(
+      items: _tracks,
+      index: 0,
+      position: const Duration(seconds: 12),
+      shuffle: false,
+    );
+    await handler.customAction(PlaybackNotification.favoriteAction);
+    expect(
+      handler.playbackState.value.controls.first.androidIcon,
+      endsWith('ic_notification_star_filled'),
+    );
+    expect(
+      handler.playbackState.value.controls.first.label,
+      'Remove from Loved',
+    );
+    expect(
+      handler.playbackState.value.updatePosition,
+      const Duration(seconds: 12),
+    );
+
+    await handler.customAction(PlaybackNotification.favoriteAction);
+    expect(
+      handler.playbackState.value.controls.first.androidIcon,
+      endsWith('ic_notification_star'),
+    );
+    expect(handler.playbackState.value.controls.first.label, 'Add to Loved');
+    expect(native.resumedSources, isEmpty);
+  });
+
+  test('failed favorite save leaves the notification icon unchanged', () async {
+    configurePlaybackNotification(
+      presentation: const PlaybackNotification(mornye: true),
+      toggleFavorite: (_) async => throw StateError('Save failed'),
+    );
+    handler.mediaItem.add(_tracks.first.toMediaItem());
+    await handler.customAction(PlaybackNotification.favoriteAction);
+    expect(
+      handler.playbackState.value.controls.first.androidIcon,
+      endsWith('ic_notification_star'),
+    );
+  });
 
   Future<void> prepare() async {
     setAutoMixEnabled(true);

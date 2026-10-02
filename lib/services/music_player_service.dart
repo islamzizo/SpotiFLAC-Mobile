@@ -51,14 +51,14 @@ bool _usbAllowFixedVolume = false;
 bool _dapExclusiveEnabled = false;
 MusicPlayerHandler? _activeMusicPlayerHandler;
 PlaybackNotification _notificationPresentation = const PlaybackNotification();
-Future<void> Function(MediaItem)? _toggleNotificationFavorite;
+Future<bool> Function(MediaItem)? _toggleNotificationFavorite;
 const _notificationChannel = MethodChannel(
   'com.zarz.spotiflac/playback_notification',
 );
 
 void configurePlaybackNotification({
   required PlaybackNotification presentation,
-  required Future<void> Function(MediaItem) toggleFavorite,
+  required Future<bool> Function(MediaItem) toggleFavorite,
 }) {
   _notificationPresentation = presentation;
   _toggleNotificationFavorite = toggleFavorite;
@@ -82,7 +82,7 @@ Future<void> _publishIosNotificationFavorite() async {
           _notificationPresentation.mornye &&
           _notificationPresentation.mediaId != null,
       'loved': _notificationPresentation.loved,
-      'label': _notificationPresentation.favoriteLabel,
+      'label': _notificationPresentation.favoriteActionLabel,
     });
   } on MissingPluginException {
     // Unit tests do not install the iOS remote-command bridge.
@@ -703,6 +703,7 @@ class MusicPlayerHandler extends BaseAudioHandler
         controls: _notificationPresentation.controls(
           playing: playing,
           item: mediaItem.value,
+          shuffle: _shuffle,
         ),
         systemActions: const {
           MediaAction.seek,
@@ -739,6 +740,7 @@ class MusicPlayerHandler extends BaseAudioHandler
         controls: _notificationPresentation.controls(
           playing: state.playing,
           item: mediaItem.value,
+          shuffle: _shuffle,
         ),
         androidCompactActionIndices: _notificationPresentation.mornye
             ? const [1, 2, 3]
@@ -748,6 +750,7 @@ class MusicPlayerHandler extends BaseAudioHandler
   }
 
   bool _savingNotificationFavorite = false;
+  bool _changingNotificationShuffle = false;
 
   @override
   Future<dynamic> customAction(
@@ -759,11 +762,37 @@ class MusicPlayerHandler extends BaseAudioHandler
       if (item == null || _savingNotificationFavorite) return;
       _savingNotificationFavorite = true;
       try {
-        await _toggleNotificationFavorite?.call(item);
+        final loved = await _toggleNotificationFavorite?.call(item);
+        final current = mediaItem.value;
+        if (!_disposed &&
+            loved != null &&
+            current?.id == item.id &&
+            current?.extras?['source'] == item.extras?['source']) {
+          // Widget/provider rebuilds may wait for a frame while the app is
+          // backgrounded. Publish the persisted result directly to the OS.
+          _notificationPresentation = _notificationPresentation.withFavorite(
+            item,
+            loved,
+          );
+          _refreshNotificationControls();
+          if (Platform.isIOS) unawaited(_publishIosNotificationFavorite());
+        }
       } catch (error) {
         _log.w('Notification favorite failed: $error');
       } finally {
         _savingNotificationFavorite = false;
+      }
+    } else if (name == PlaybackNotification.shuffleAction) {
+      if (mediaItem.value == null || _changingNotificationShuffle) return;
+      _changingNotificationShuffle = true;
+      try {
+        await setShuffleMode(
+          _shuffle ? AudioServiceShuffleMode.none : AudioServiceShuffleMode.all,
+        );
+      } catch (error) {
+        _log.w('Notification shuffle failed: $error');
+      } finally {
+        _changingNotificationShuffle = false;
       }
     } else {
       return super.customAction(name, extras);

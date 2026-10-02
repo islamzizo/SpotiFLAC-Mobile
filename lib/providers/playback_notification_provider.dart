@@ -11,10 +11,15 @@ import 'package:spotiflac_android/services/playback_notification.dart';
 /// Kept alive by the app shell so notification favorites share the exact
 /// Library identity and refresh when the same track is starred inside the app.
 final playbackNotificationProvider = Provider.autoDispose
-    .family<void, ({String favorite, String unfavorite, String output})>((
-      ref,
-      labels,
-    ) {
+    .family<
+      void,
+      ({
+        String favorite,
+        String unfavorite,
+        String shuffleOn,
+        String shuffleOff,
+      })
+    >((ref, labels) {
       final mornye = ref.watch(
         themeProvider.select((theme) => theme.style == AppThemeStyle.mornye),
       );
@@ -39,15 +44,17 @@ final playbackNotificationProvider = Provider.autoDispose
             mediaId: item?.id,
             source: item?.extras?['source']?.toString(),
             loved: loved,
-            favoriteLabel: loved ? labels.unfavorite : labels.favorite,
-            outputLabel: labels.output,
+            favoriteLabel: labels.favorite,
+            unfavoriteLabel: labels.unfavorite,
+            shuffleOnLabel: labels.shuffleOn,
+            shuffleOffLabel: labels.shuffleOff,
           ),
           toggleFavorite: (selected) async {
             final collections = ref.read(libraryCollectionsProvider.notifier);
             final selectedTrack = await ref.read(
               playerCollectionTrackProvider(selected).future,
             );
-            await collections.toggleLoved(selectedTrack);
+            return collections.toggleLoved(selectedTrack);
           },
         );
       });

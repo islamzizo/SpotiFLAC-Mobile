@@ -772,7 +772,8 @@ class _MainShellState extends ConsumerState<MainShell>
       playbackNotificationProvider((
         favorite: context.l10n.trackOptionAddToLoved,
         unfavorite: context.l10n.trackOptionRemoveFromLoved,
-        output: context.l10n.nowPlayingAudioOutput,
+        shuffleOn: context.l10n.nowPlayingShuffleOn,
+        shuffleOff: context.l10n.nowPlayingPlayInOrder,
       )),
     );
     ref.listen(settingsProvider.select((s) => s.playbackNormalization), (
