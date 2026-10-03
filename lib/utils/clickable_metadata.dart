@@ -443,10 +443,12 @@ void pushViaPreferredNavigator(BuildContext context, WidgetBuilder builder) {
   // stack so they are visible immediately instead of being pushed underneath
   // the Spotify screen.
   if (spotifyNavigation != null) {
-    // Spotify owns a nested Navigator for its playlist/detail flow. Use the
-    // current navigator so album/artist pages are placed above the visible
-    // Spotify playlist instead of on the app's hidden shell navigator.
-    currentNavigator.push(MaterialPageRoute<void>(builder: builder));
+    // Use the navigator owned by Spotify itself. This avoids accidentally
+    // resolving to an ancestor/descendant navigator when the Spotify screen
+    // is opened from the Settings stack.
+    final navigator = spotifyNavigation.navigatorKey.currentState;
+    if (navigator == null) return;
+    navigator.push(MaterialPageRoute<void>(builder: builder));
     return;
   }
   final activeTabNavigator = ShellNavigationService.activeTabNavigator();
