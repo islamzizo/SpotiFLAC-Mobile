@@ -1,8 +1,15 @@
+import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:spotiflac_android/widgets/mornye_liquid_backdrop.dart';
+
+Future<ui.FragmentProgram>? _selectionMaskProgram;
+const _heldWidthGrowth = 0.28;
+const _heldHeightGrowth = 0.24;
+const _pillRadius = 32.0;
 
 /// Selection with a small, transient refractive lens while held. Labels are
 /// rendered once above the lens; it samples the bar's backdrop on the GPU.
@@ -37,7 +44,8 @@ class MornyeSelectionPill extends StatefulWidget {
   State<MornyeSelectionPill> createState() => _MornyeSelectionPillState();
 }
 
-class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
+class _MornyeSelectionPillState extends State<MornyeSelectionPill>
+    with SingleTickerProviderStateMixin {
   int? _dragIndex;
   bool _dragCancelled = false;
   bool _pressed = false;
@@ -45,10 +53,50 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
   double? _dragAlignment;
   int? _activePointer;
   final _foregroundKey = GlobalKey();
+  late final AnimationController _pressController;
+  late final CurvedAnimation _pressAnimation;
+  ui.FragmentProgram? _maskProgram;
+
+  @override
+  void initState() {
+    super.initState();
+    _pressController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
+    _pressAnimation = CurvedAnimation(
+      parent: _pressController,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    )..addListener(() => setState(() {}));
+    if (widget.selectionColor != null) unawaited(_loadMaskProgram());
+  }
+
+  Future<void> _loadMaskProgram() async {
+    try {
+      final program = await (_selectionMaskProgram ??=
+          ui.FragmentProgram.fromAsset(
+            'assets/shaders/mornye_selection_mask.frag',
+          ));
+      if (mounted) setState(() => _maskProgram = program);
+    } catch (error) {
+      debugPrint('Mornye selection mask unavailable: $error');
+    }
+  }
+
+  @override
+  void dispose() {
+    _pressAnimation.dispose();
+    _pressController.dispose();
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(MornyeSelectionPill oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectionColor == null && widget.selectionColor != null) {
+      unawaited(_loadMaskProgram());
+    }
     if (oldWidget.labels.length != widget.labels.length ||
         oldWidget.selectedIndex != widget.selectedIndex) {
       _dragIndex = null;
@@ -113,10 +161,12 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
               ? count - visual - 1
               : visual;
         });
+        _pressController.forward();
       },
       onPointerUp: (event) {
         if (event.pointer != _activePointer) return;
         _activePointer = null;
+        _pressController.reverse();
         setState(() {
           _pressed = false;
           _pressedIndex = null;
@@ -126,6 +176,7 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
       onPointerCancel: (event) {
         if (event.pointer != _activePointer) return;
         _activePointer = null;
+        _pressController.reverse();
         setState(() {
           _dragCancelled = true;
           _pressed = false;
@@ -187,7 +238,7 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
                                     ? 0.12
                                     : 0.08,
                               ),
-                              borderRadius: BorderRadius.circular(32),
+                              borderRadius: BorderRadius.circular(_pillRadius),
                               border: Border.all(
                                 color: scheme.onSurface.withValues(alpha: 0.05),
                                 width: 0.5,
@@ -206,10 +257,11 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
                     ),
                   ),
                 if (lensEnabled && selected >= 0 && selected < count)
-                  _interactionLens(selected, count),
+                  _interactionLens(selected, count, _pressAnimation.value),
                 _foreground(
                   selected,
                   count,
+                  lensEnabled ? _pressAnimation.value : 0,
                   Row(
                     key: _foregroundKey,
                     children: [
@@ -222,7 +274,9 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
                             child: Material(
                               color: Colors.transparent,
                               child: InkWell(
-                                borderRadius: BorderRadius.circular(32),
+                                borderRadius: BorderRadius.circular(
+                                  _pillRadius,
+                                ),
                                 // The moving pill supplies press feedback. An
                                 // ink highlight would leave a colored patch on
                                 // the tab where the drag started.
@@ -289,7 +343,12 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
     return (1 - (index - position).abs()).clamp(0.0, 1.0);
   }
 
-  Widget _foreground(int selected, int count, Widget child) {
+  Widget _foreground(
+    int selected,
+    int count,
+    double pressProgress,
+    Widget child,
+  ) {
     final color = widget.selectionColor;
     if (color == null) return child;
     return TweenAnimationBuilder<double>(
@@ -309,6 +368,9 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
             ? -alignment
             : alignment,
         count: count,
+        scaleX: 1 + _heldWidthGrowth * pressProgress,
+        scaleY: 1 + _heldHeightGrowth * pressProgress,
+        program: _maskProgram,
         color: selected >= 0 && selected < count
             ? color
             : color.withValues(alpha: 0),
@@ -318,7 +380,11 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
     );
   }
 
-  Widget _interactionLens(int selected, int count) => Positioned.fill(
+  Widget _interactionLens(
+    int selected,
+    int count,
+    double progress,
+  ) => Positioned.fill(
     child: IgnorePointer(
       child: AnimatedAlign(
         duration: _dragAlignment != null
@@ -329,42 +395,37 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
           _dragAlignment ?? (count == 1 ? 0 : -1 + 2 * selected / (count - 1)),
           0,
         ),
-        child: TweenAnimationBuilder<double>(
-          tween: Tween(end: _pressed ? 1 : 0),
-          duration: const Duration(milliseconds: 240),
-          curve: Curves.easeOutCubic,
-          builder: (context, progress, child) => FractionallySizedBox(
-            widthFactor: 1 / count,
-            heightFactor: 1,
-            child: Transform.scale(
-              scaleX: 1 + 0.28 * progress,
-              scaleY: 1 + 0.24 * progress,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(32),
-                child: LiquidGlassBatch.exclude(
-                  child: MornyeLiquidBackdrop(
-                    borderRadius: BorderRadius.circular(32),
-                    clarity: 1,
-                    interaction: true,
-                    progress: progress,
-                    blurSigma: 0,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(32),
-                        color: Colors.white.withValues(
-                          alpha:
-                              progress *
-                              (Theme.of(context).brightness == Brightness.light
-                                  ? 0.24
-                                  : 0.08),
-                        ),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.6 * progress),
-                          width: 0.75,
-                        ),
+        child: FractionallySizedBox(
+          widthFactor: 1 / count,
+          heightFactor: 1,
+          child: Transform.scale(
+            scaleX: 1 + _heldWidthGrowth * progress,
+            scaleY: 1 + _heldHeightGrowth * progress,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(_pillRadius),
+              child: LiquidGlassBatch.exclude(
+                child: MornyeLiquidBackdrop(
+                  borderRadius: BorderRadius.circular(_pillRadius),
+                  clarity: 1,
+                  interaction: true,
+                  progress: progress,
+                  blurSigma: 0,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(_pillRadius),
+                      color: Colors.white.withValues(
+                        alpha:
+                            progress *
+                            (Theme.of(context).brightness == Brightness.light
+                                ? 0.24
+                                : 0.08),
                       ),
-                      child: const SizedBox.expand(),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.6 * progress),
+                        width: 0.75,
+                      ),
                     ),
+                    child: const SizedBox.expand(),
                   ),
                 ),
               ),
@@ -378,16 +439,36 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill> {
 
 /// Paint only icons and labels with the sliding selection color. Badge fills
 /// and counters can remain outside this widget and retain their own contrast.
-class MornyeSelectionForeground extends StatelessWidget {
+class MornyeSelectionForeground extends StatefulWidget {
   const MornyeSelectionForeground({super.key, required this.child});
 
   final Widget child;
 
   @override
+  State<MornyeSelectionForeground> createState() =>
+      _MornyeSelectionForegroundState();
+}
+
+class _MornyeSelectionForegroundState extends State<MornyeSelectionForeground> {
+  ui.FragmentProgram? _program;
+  ui.FragmentShader? _shader;
+
+  @override
+  void dispose() {
+    _shader?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scope = context
         .dependOnInheritedWidgetOfExactType<_SelectionForegroundScope>();
-    if (scope == null) return child;
+    if (scope == null) return widget.child;
+    if (_program != scope.program) {
+      _shader?.dispose();
+      _program = scope.program;
+      _shader = _program?.fragmentShader();
+    }
     return ShaderMask(
       blendMode: BlendMode.srcATop,
       shaderCallback: (bounds) {
@@ -396,21 +477,46 @@ class MornyeSelectionForeground extends StatelessWidget {
         final box = context.findRenderObject()! as RenderBox;
         final width = row.size.width / scope.count;
         final left = (scope.alignment + 1) * (row.size.width - width) / 2;
-        // Convert from the bar so scaled icons and nested badges still share
-        // exactly the same moving selection boundary.
-        final start = box.globalToLocal(row.localToGlobal(Offset(left, 0)));
-        final end = box.globalToLocal(
-          row.localToGlobal(Offset(left + width, 0)),
+        final lens = Rect.fromCenter(
+          center: Offset(left + width / 2, row.size.height / 2),
+          width: width * scope.scaleX,
+          height: row.size.height * scope.scaleY,
         );
+        // Use the same rounded, expanding bounds as the glass, including the
+        // inverse scale of each icon. A one-tab rectangular mask cuts through
+        // the foreground before it reaches the held lens's curved edge.
+        final local = Rect.fromPoints(
+          box.globalToLocal(row.localToGlobal(lens.topLeft)),
+          box.globalToLocal(row.localToGlobal(lens.bottomRight)),
+        );
+        final shader = _shader;
+        if (shader != null) {
+          shader
+            ..setFloat(0, local.left)
+            ..setFloat(1, local.top)
+            ..setFloat(2, local.width)
+            ..setFloat(3, local.height)
+            ..setFloat(4, local.width / width)
+            ..setFloat(5, local.height / row.size.height)
+            ..setFloat(
+              6,
+              math.min(_pillRadius, math.min(width, row.size.height) / 2),
+            )
+            ..setFloat(7, scope.color.r)
+            ..setFloat(8, scope.color.g)
+            ..setFloat(9, scope.color.b)
+            ..setFloat(10, scope.color.a);
+          return shader;
+        }
         return ui.Gradient.linear(
-          Offset(start.dx, 0),
-          Offset(end.dx, 0),
+          Offset(local.left, 0),
+          Offset(local.right, 0),
           [scope.color, scope.color],
           null,
           TileMode.decal,
         );
       },
-      child: child,
+      child: widget.child,
     );
   }
 }
@@ -420,6 +526,9 @@ class _SelectionForegroundScope extends InheritedWidget {
     required this.rowKey,
     required this.alignment,
     required this.count,
+    required this.scaleX,
+    required this.scaleY,
+    required this.program,
     required this.color,
     required super.child,
   });
@@ -427,12 +536,18 @@ class _SelectionForegroundScope extends InheritedWidget {
   final GlobalKey rowKey;
   final double alignment;
   final int count;
+  final double scaleX;
+  final double scaleY;
+  final ui.FragmentProgram? program;
   final Color color;
 
   @override
   bool updateShouldNotify(_SelectionForegroundScope oldWidget) =>
       alignment != oldWidget.alignment ||
       count != oldWidget.count ||
+      scaleX != oldWidget.scaleX ||
+      scaleY != oldWidget.scaleY ||
+      program != oldWidget.program ||
       color != oldWidget.color ||
       rowKey != oldWidget.rowKey;
 }

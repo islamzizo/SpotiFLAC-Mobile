@@ -17,6 +17,98 @@ import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('held foreground reaches the curved glass edge', (tester) async {
+    final capture = GlobalKey();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: MornyeTheme.build(Brightness.dark),
+        home: Center(
+          child: RepaintBoundary(
+            key: capture,
+            child: SizedBox(
+              width: 360,
+              child: MornyeSelectionPill(
+                labels: const ['Home', 'Library', 'Repo', 'Search'],
+                selectedIndex: 0,
+                onChanged: (_) {},
+                padding: EdgeInsets.zero,
+                liquidInteraction: true,
+                selectionColor: Colors.red,
+                itemBuilder: (_, _, _) => const SizedBox(
+                  height: 64,
+                  child: ColoredBox(color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(() async {
+      await LiquidGlassShaders.ensureLoaded();
+      await ui.FragmentProgram.fromAsset(
+        'assets/shaders/mornye_selection_mask.frag',
+      );
+    });
+    await tester.pumpAndSettle();
+    final row = tester.getRect(find.byType(MornyeSelectionPill));
+    final gesture = await tester.startGesture(
+      row.topLeft + const Offset(45, 32),
+    );
+    await gesture.moveTo(row.topLeft + const Offset(90, 32));
+    await tester.pump();
+    final lens = find.byWidgetPredicate(
+      (widget) => widget is MornyeLiquidBackdrop && widget.interaction,
+    );
+    for (final duration in [
+      const Duration(milliseconds: 60),
+      const Duration(milliseconds: 240),
+    ]) {
+      await tester.pump(duration);
+      final bounds = tester.getRect(lens).shift(-row.topLeft);
+      final pixels = (await tester.runAsync(() async {
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.byKey(capture),
+        );
+        final image = await boundary.toImage();
+        try {
+          final bytes = (await image.toByteData())!;
+          return [
+            for (final point in [
+              Offset(bounds.left + 2, 32),
+              Offset(bounds.right - 3, 32),
+              Offset(bounds.left + 2, 2),
+            ])
+              Color.fromARGB(
+                bytes.getUint8(
+                  (point.dy.toInt() * image.width + point.dx.toInt()) * 4 + 3,
+                ),
+                bytes.getUint8(
+                  (point.dy.toInt() * image.width + point.dx.toInt()) * 4,
+                ),
+                bytes.getUint8(
+                  (point.dy.toInt() * image.width + point.dx.toInt()) * 4 + 1,
+                ),
+                bytes.getUint8(
+                  (point.dy.toInt() * image.width + point.dx.toInt()) * 4 + 2,
+                ),
+              ),
+          ];
+        } finally {
+          image.dispose();
+        }
+      }))!;
+      expect(
+        pixels.map((color) => color.toARGB32()),
+        [Colors.red, Colors.red, Colors.white].map((color) => color.toARGB32()),
+      );
+    }
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'Impeller lens refracts its own bounds and preserves foreground',
     (tester) async {

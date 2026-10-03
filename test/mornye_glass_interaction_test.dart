@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +11,82 @@ import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:spotiflac_android/widgets/mornye_selection_pill.dart';
 
 void main() {
+  testWidgets('selection color follows rounded pill corners', (tester) async {
+    final capture = GlobalKey();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: RepaintBoundary(
+            key: capture,
+            child: SizedBox(
+              width: 200,
+              child: MornyeSelectionPill(
+                labels: const ['A', 'B'],
+                selectedIndex: 0,
+                onChanged: (_) {},
+                padding: EdgeInsets.zero,
+                selectionColor: Colors.red,
+                itemBuilder: (_, _, _) => const SizedBox(
+                  height: 64,
+                  child: ColoredBox(color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => ui.FragmentProgram.fromAsset(
+        'assets/shaders/mornye_selection_mask.frag',
+      ),
+    );
+    await tester.pumpAndSettle();
+    final colors = (await tester.runAsync(() async {
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+        find.byKey(capture),
+      );
+      final image = await boundary.toImage();
+      try {
+        final bytes = (await image.toByteData())!;
+        return [
+          for (final point in [
+            const Offset(2, 2),
+            const Offset(20, 32),
+            const Offset(98, 2),
+            const Offset(150, 32),
+          ])
+            Color.fromARGB(
+              bytes.getUint8(
+                (point.dy.toInt() * image.width + point.dx.toInt()) * 4 + 3,
+              ),
+              bytes.getUint8(
+                (point.dy.toInt() * image.width + point.dx.toInt()) * 4,
+              ),
+              bytes.getUint8(
+                (point.dy.toInt() * image.width + point.dx.toInt()) * 4 + 1,
+              ),
+              bytes.getUint8(
+                (point.dy.toInt() * image.width + point.dx.toInt()) * 4 + 2,
+              ),
+            ),
+        ];
+      } finally {
+        image.dispose();
+      }
+    }))!;
+    expect(
+      colors.map((color) => color.toARGB32()),
+      [
+        Colors.white,
+        Colors.red,
+        Colors.white,
+        Colors.white,
+      ].map((color) => color.toARGB32()),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   for (final direction in TextDirection.values) {
     testWidgets('tab dragging previews, commits and cancels ($direction)', (
       tester,
