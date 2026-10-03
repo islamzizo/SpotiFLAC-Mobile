@@ -163,7 +163,7 @@ class TrackNotifier extends Notifier<TrackState> {
 
   bool _isRequestValid(int requestId) => requestId == _currentRequestId;
 
-  Future<void> fetchFromUrl(String url, {bool useDeezerFallback = true}) async {
+  Future<void> fetchFromUrl(String url) async {
     final requestId = ++_currentRequestId;
 
     state = TrackState(isLoading: true, hasSearchText: state.hasSearchText);
