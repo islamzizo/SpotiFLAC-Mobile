@@ -12,6 +12,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/services/audio_analysis_jobs.dart';
+import 'package:spotiflac_android/services/audio_analysis_cache.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/app_content_card.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
@@ -705,6 +706,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
   Future<void> _tryLoadFromCache() async {
     final expectedPath = widget.filePath;
     final requestId = _spectrogramRequestId;
+    final releaseCache = _cacheBudget.retain(_cacheKey(expectedPath));
     bool isCurrentRequest() =>
         mounted &&
         widget.filePath == expectedPath &&
@@ -747,7 +749,12 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
         }
         return;
       }
-    } catch (_) {}
+    } catch (_) {
+      // Missing or unreadable cache entries fall back to the Analyze action.
+    } finally {
+      releaseCache();
+      unawaited(_trimCache());
+    }
     if (isCurrentRequest()) {
       setState(() => _checkingCache = false);
     }
@@ -777,6 +784,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
   Future<void> _analyze({bool forceRefresh = false}) async {
     if (_analyzing) return;
     final sourcePath = widget.filePath;
+    final releaseCache = _cacheBudget.retain(_cacheKey(sourcePath));
     final requestId = ++_spectrogramRequestId;
     _analysisJobs.invalidate();
     setState(() {
@@ -856,6 +864,9 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
           _analyzing = false;
         });
       }
+    } finally {
+      releaseCache();
+      unawaited(_trimCache());
     }
   }
 
@@ -897,6 +908,16 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
     return dir;
   }
 
+  static final _cacheBudget = AudioAnalysisCache();
+
+  static Future<void> _trimCache() async {
+    try {
+      await _cacheBudget.trim(await _cacheDir());
+    } catch (_) {
+      // Cache maintenance must not interrupt the selected track's analysis.
+    }
+  }
+
   static Future<AudioAnalysisData?> _loadFromCache(String filePath) async {
     try {
       final dir = await _cacheDir();
@@ -921,7 +942,9 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
         if (currentSize > 0 && currentSize != cachedSize) return null;
       }
 
-      return AudioAnalysisData.fromJson(json);
+      final data = AudioAnalysisData.fromJson(json);
+      await file.setLastModified(DateTime.now());
+      return data;
     } catch (_) {
       return null;
     }
@@ -953,6 +976,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
           '${dir.path}/${_spectrogramCacheFileName(key, channel)}',
         );
         await file.writeAsBytes(byteData.buffer.asUint8List());
+        await _cacheBudget.trim(dir);
       }
     } catch (_) {}
   }
@@ -1221,6 +1245,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
 
     final previousChannel = _spectrogramChannel;
     final sourcePath = widget.filePath;
+    final releaseCache = _cacheBudget.retain(_cacheKey(sourcePath));
     final requestId = ++_spectrogramRequestId;
     setState(() {
       _spectrogramChannel = channel;
@@ -1260,6 +1285,9 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
           _spectrogramChannelLoading = false;
         });
       }
+    } finally {
+      releaseCache();
+      unawaited(_trimCache());
     }
   }
 
