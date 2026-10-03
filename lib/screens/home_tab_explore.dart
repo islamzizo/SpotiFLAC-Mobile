@@ -372,6 +372,35 @@ extension _HomeTabExploreUI on _HomeTabState {
   }
 
   void _showTrackBottomSheet(ExploreItem item) {
+    if (context.isMornye) {
+      showMornyeContextMenu<void>(
+        context: context,
+        builder: (menuContext) => MornyeContextMenu(
+          groups: [
+            [
+              MornyeMenuAction(
+                icon: mornyeIconFor(Icons.download),
+                label: menuContext.l10n.downloadTitle,
+                onPressed: () {
+                  Navigator.pop(menuContext);
+                  _handleExploreTrackPrimaryAction(item);
+                },
+              ),
+              MornyeMenuAction(
+                icon: mornyeIconFor(Icons.album),
+                label: menuContext.l10n.homeGoToAlbum,
+                onPressed: () {
+                  Navigator.pop(menuContext);
+                  _navigateToTrackAlbum(item);
+                },
+              ),
+            ],
+          ],
+        ),
+      );
+      return;
+    }
+
     final colorScheme = Theme.of(context).colorScheme;
 
     showModalBottomSheet<void>(
