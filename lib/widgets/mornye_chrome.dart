@@ -103,7 +103,8 @@ class MornyeGlassPanel extends ConsumerWidget {
     tintColor: tintColor,
     blurEnabled: blurEnabled && ref.watch(mornyeBlurEnabledProvider),
     highlightBorder: highlightBorder,
-    child: child,
+    // Tile ink must paint above the glass tint rather than beneath it.
+    child: Material(type: MaterialType.transparency, child: child),
   );
 }
 

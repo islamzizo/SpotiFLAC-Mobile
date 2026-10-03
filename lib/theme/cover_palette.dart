@@ -19,6 +19,7 @@ class CoverPalette {
   static final Map<String, ColorScheme> _cache = <String, ColorScheme>{};
   static final Map<String, Color> _sourceColors = {};
   static final Map<String, Future<ColorScheme?>> _pending = {};
+  static final Map<String, String> _sourceKeys = {};
   static final List<String> _cacheOrder = <String>[];
   static const int _maxEntries = 32;
 
@@ -27,11 +28,14 @@ class CoverPalette {
 
   /// Includes the local file version so replacing artwork at the same path
   /// cannot reuse a palette derived from the previous image.
-  static String cacheKeyFor(String source, Brightness brightness) {
+  static Future<String> cacheKeyFor(
+    String source,
+    Brightness brightness,
+  ) async {
     var versionedSource = source;
     if (!_isNetworkSource(source)) {
       try {
-        final stat = File(source).statSync();
+        final stat = await File(source).stat();
         if (stat.type != FileSystemEntityType.notFound) {
           versionedSource =
               '$source|${stat.modified.microsecondsSinceEpoch}|${stat.size}';
@@ -45,14 +49,12 @@ class CoverPalette {
 
   /// Cached scheme for [source], or null when it has not been resolved yet.
   static ColorScheme? peek(String source, Brightness brightness) =>
-      _cache[cacheKeyFor(source, brightness)];
+      _cache[_sourceKeys['$source|${brightness.name}']];
 
   /// Average cover colour before Material's accent selection or tonal mapping.
   /// Near-monochrome covers stay neutral instead of acquiring a seed hue.
   static Color? sourceColor(String source, Brightness brightness) =>
-      _sourceColors[cacheKeyFor(source, brightness)];
-
-  static ColorScheme? _peekByKey(String key) => _cache[key];
+      _sourceColors[_sourceKeys['$source|${brightness.name}']];
 
   /// Resolves the scheme for [source] (a network URL or a local file path).
   /// Returns null when the image cannot be decoded.
@@ -61,15 +63,48 @@ class CoverPalette {
     Brightness brightness, {
     String? cacheKey,
   }) {
-    final key = cacheKey ?? cacheKeyFor(source, brightness);
-    final cached = _cache[key];
-    if (cached != null) return Future.value(cached);
+    final sourceKey = '$source|${brightness.name}';
     return _pending.putIfAbsent(
-      key,
-      () => _resolve(source, brightness, key).whenComplete(() {
-        _pending.remove(key);
-      }),
+      sourceKey,
+      () =>
+          (() async {
+            final key = cacheKey ?? await cacheKeyFor(source, brightness);
+            final previous = _sourceKeys.remove(sourceKey);
+            // FileImage keys contain the path, not its modification time. A new
+            // palette key also needs a fresh decode after an in-place cover edit.
+            if ((!_cache.containsKey(key) ||
+                    (previous != null && previous != key)) &&
+                !_isNetworkSource(source)) {
+              if (previous != null && previous != key) {
+                await _evictDecodedImage(FileImage(File(source)));
+              }
+              await _evictDecodedImage(
+                ResizeImage(
+                  FileImage(File(source)),
+                  width: 112,
+                  height: 112,
+                  policy: ResizeImagePolicy.fit,
+                ),
+              );
+            }
+            _sourceKeys[sourceKey] = key;
+            while (_sourceKeys.length > _maxEntries) {
+              _sourceKeys.remove(_sourceKeys.keys.first);
+            }
+            return _cache[key] ?? await _resolve(source, brightness, key);
+          })().whenComplete(() {
+            _pending.remove(sourceKey);
+          }),
     );
+  }
+
+  static Future<void> _evictDecodedImage(ImageProvider provider) async {
+    final key = await provider.obtainKey(ImageConfiguration.empty);
+    // A first palette request can overlap the header's initial precache. Do
+    // not cancel that pending decode while removing an older retained bitmap.
+    if (!PaintingBinding.instance.imageCache.statusForKey(key).pending) {
+      await provider.evict();
+    }
   }
 
   static Future<ColorScheme?> _resolve(
@@ -82,7 +117,7 @@ class CoverPalette {
       provider = cachedCoverImageProvider(source);
     } else {
       final file = File(source);
-      if (!file.existsSync()) return null;
+      if (!await file.exists()) return null;
       provider = FileImage(file);
     }
 
@@ -216,7 +251,8 @@ class CoverPaletteBuilder extends StatefulWidget {
 
 class _CoverPaletteBuilderState extends State<CoverPaletteBuilder> {
   ColorScheme? _scheme;
-  String? _resolvedKey;
+  String? _resolvedSource;
+  Brightness? _resolvedBrightness;
   int _resolveGeneration = 0;
 
   @override
@@ -238,29 +274,24 @@ class _CoverPaletteBuilderState extends State<CoverPaletteBuilder> {
     final brightness = Theme.of(context).brightness;
     if (source == null || source.isEmpty) {
       _resolveGeneration++;
-      _resolvedKey = null;
+      _resolvedSource = null;
+      _resolvedBrightness = null;
       _scheme = null;
       return;
     }
-    final key = CoverPalette.cacheKeyFor(source, brightness);
-    if (_resolvedKey == key) return;
-
     final requestGeneration = ++_resolveGeneration;
-    _resolvedKey = key;
-
-    final cached = CoverPalette._peekByKey(key);
-    if (cached != null) {
-      _scheme = cached;
-      return;
+    if (_resolvedSource != source || _resolvedBrightness != brightness) {
+      _resolvedSource = source;
+      _resolvedBrightness = brightness;
+      _scheme = CoverPalette.peek(source, brightness);
     }
-    _scheme = null;
 
-    CoverPalette.resolve(source, brightness, cacheKey: key).then((scheme) {
+    CoverPalette.resolve(source, brightness).then((scheme) {
       if (!mounted) return;
-      if (_resolveGeneration != requestGeneration || _resolvedKey != key) {
+      if (_resolveGeneration != requestGeneration) {
         return;
       }
-      setState(() => _scheme = scheme);
+      if (_scheme != scheme) setState(() => _scheme = scheme);
     });
   }
 
