@@ -63,7 +63,7 @@ void main() {
   });
 
   for (final brightness in Brightness.values) {
-    testWidgets('monthly goal respects hidden amounts in $brightness', (
+    testWidgets('monthly goal shows progress without counts in $brightness', (
       tester,
     ) async {
       tester.view.physicalSize = const Size(430, 932);
@@ -97,7 +97,7 @@ void main() {
       expect(find.text('Monthly development goal'), findsOneWidget);
       expect(find.text('Oktober 2026'), findsOneWidget);
       expect(find.text('9%'), findsOneWidget);
-      expect(find.text('14 supporters'), findsOneWidget);
+      expect(find.text('14 supporters'), findsNothing);
       expect(
         tester
             .widget<LinearProgressIndicator>(
@@ -150,7 +150,7 @@ void main() {
                   'display': {
                     'amounts': true,
                     'percentage': false,
-                    'supporter_count': false,
+                    'supporter_count': true,
                     'source_breakdown': true,
                   },
                 },

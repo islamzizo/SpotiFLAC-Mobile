@@ -162,8 +162,8 @@ class DonateConfig {
     return DonateConfig(
       enabled: json['enabled'] as bool? ?? true,
       title: _readString(json['title']).isEmpty
-          ? 'Support Development'
-          : _readString(json['title']),
+          ? 'Support SpotiFLAC-Mobile'
+          : _mobileDonationText(_readString(json['title'])),
       message: _readString(json['message']).isEmpty
           ? 'Optional support helps cover tools, testing devices, and hosting.'
           : _readString(json['message']),
@@ -185,7 +185,7 @@ class DonateConfig {
   factory DonateConfig.fallback() {
     return const DonateConfig(
       enabled: true,
-      title: 'Support Development',
+      title: 'Support SpotiFLAC-Mobile',
       message: 'Optional support helps cover dev tools and testing devices.',
       methods: [
         DonateMethod(
@@ -272,8 +272,11 @@ class MonthlyDonationGoal {
       enabled: _readBool(json['enabled']),
       active: _readBool(json['active']),
       period: _readString(json['period']),
-      title: _readNullableString(json['title']) ?? 'Monthly development goal',
-      description: _readString(json['description']),
+      title: _mobileDonationText(
+        _readNullableString(json['title']) ??
+            'Monthly SpotiFLAC-Mobile development goal',
+      ),
+      description: _mobileDonationText(_readString(json['description'])),
       progressPercent: (_readFiniteNumber(json['progress_percent']) ?? 0).clamp(
         0,
         double.maxFinite,
@@ -499,6 +502,11 @@ class AppRemoteConfigService {
 String _readString(Object? value) {
   return value is String ? value.trim() : '';
 }
+
+String _mobileDonationText(String text) => text.replaceAll(
+  RegExp(r'\bSpotiFLAC(?:[ -]+Mobile)?\b', caseSensitive: false),
+  'SpotiFLAC-Mobile',
+);
 
 double? _readFiniteNumber(Object? value) {
   final number = value is num

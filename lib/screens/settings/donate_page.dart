@@ -79,11 +79,6 @@ class _DonatePageState extends State<DonatePage> {
                     const SizedBox(height: 16),
                   ],
                   _DonateLinksCard(colorScheme: colorScheme, config: _config),
-                  const SizedBox(height: 24),
-                  _RecentDonorsCard(
-                    colorScheme: colorScheme,
-                    supporters: _config.supporters,
-                  ),
                   const SizedBox(height: 16),
                   _DonateNoticeCard(
                     colorScheme: colorScheme,
@@ -212,15 +207,6 @@ class _MonthlyDonationGoalCard extends StatelessWidget {
                 style: theme.textTheme.bodyMedium,
               ),
             ],
-            if (goal.showSupporterCount) ...[
-              const SizedBox(height: 12),
-              Text(
-                '${NumberFormat.decimalPattern(locale).format(goal.supporterCount)} supporters',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
             if (goal.showSourceBreakdown && goal.sources.isNotEmpty) ...[
               const SizedBox(height: 16),
               for (final entry in goal.sources.entries)
@@ -236,8 +222,6 @@ class _MonthlyDonationGoalCard extends StatelessWidget {
                       },
                       if (goal.showAmounts && entry.value.amount != null)
                         currencyFormat.format(entry.value.amount),
-                      if (goal.showSupporterCount)
-                        '${NumberFormat.decimalPattern(locale).format(entry.value.supporterCount)} supporters',
                     ].join(' · '),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
@@ -281,33 +265,12 @@ class _DonateLinksCard extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        config.title,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: colorScheme.onSurface,
-                            ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        config.message,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            child: Text(
+              config.title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
             ),
           ),
           Divider(
@@ -341,102 +304,6 @@ class _DonateLinksCard extends StatelessWidget {
                 ),
             ],
         ],
-      ),
-    );
-  }
-}
-
-class _RecentDonorsCard extends StatelessWidget {
-  final ColorScheme colorScheme;
-  final List<String> supporters;
-
-  const _RecentDonorsCard({
-    required this.colorScheme,
-    required this.supporters,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark
-        ? Color.alphaBlend(
-            Colors.white.withValues(alpha: 0.08),
-            colorScheme.surface,
-          )
-        : Color.alphaBlend(
-            Colors.black.withValues(alpha: 0.04),
-            colorScheme.surface,
-          );
-
-    return Card(
-      elevation: 0,
-      color: cardColor,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.star_rounded, size: 20, color: colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Recent Supporters',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: colorScheme.onSurface,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Thank you for your generosity!',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 16),
-            if (supporters.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.emoji_events_outlined,
-                        size: 32,
-                        color: colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.4,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No supporters yet - be the first!',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.6,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: supporters
-                    .map(
-                      (name) =>
-                          _SupporterChip(name: name, colorScheme: colorScheme),
-                    )
-                    .toList(),
-              ),
-          ],
-        ),
       ),
     );
   }
@@ -576,49 +443,6 @@ class _DonateMethodItem extends StatelessWidget {
     if (uri == null) return;
 
     await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-}
-
-class _SupporterChip extends StatelessWidget {
-  final String name;
-  final ColorScheme colorScheme;
-
-  const _SupporterChip({required this.name, required this.colorScheme});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: colorScheme.secondaryContainer,
-      borderRadius: BorderRadius.circular(20),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 10,
-              backgroundColor: colorScheme.primary.withValues(alpha: 0.2),
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              name,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: colorScheme.onSecondaryContainer,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 
