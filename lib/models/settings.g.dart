@@ -106,14 +106,14 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   lyricsIncludeRomanizationNetease:
       json['lyricsIncludeRomanizationNetease'] as bool? ?? false,
   lyricsMultiPersonWordByWord:
-      json['lyricsMultiPersonWordByWord'] as bool? ?? false,
-  lyricsAppleElrcWordSync: json['lyricsAppleElrcWordSync'] as bool? ?? false,
+      json['lyricsMultiPersonWordByWord'] as bool? ?? true,
+  lyricsAppleElrcWordSync: json['lyricsAppleElrcWordSync'] as bool? ?? true,
   musixmatchLanguage: json['musixmatchLanguage'] as String? ?? '',
   lastSeenVersion: json['lastSeenVersion'] as String? ?? '',
   deduplicateDownloads: json['deduplicateDownloads'] as bool? ?? true,
   allowQualityVariants: json['allowQualityVariants'] as bool? ?? false,
   saveDownloadHistory: json['saveDownloadHistory'] as bool? ?? true,
-  playerMode: json['playerMode'] as String? ?? 'external',
+  playerMode: json['playerMode'] as String? ?? 'internal',
   playerShowPronunciation: json['playerShowPronunciation'] as bool? ?? true,
   playerShowTranslation: json['playerShowTranslation'] as bool? ?? true,
 );

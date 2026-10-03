@@ -1082,7 +1082,9 @@ void main() {
       expect(settings.embeddedCoverMaxDimension, 0);
       expect(settings.autoFallback, isTrue);
       expect(settings.lyricsProviders, ['lrclib', 'apple_music']);
-      expect(settings.lyricsAppleElrcWordSync, isFalse);
+      expect(settings.playerMode, 'internal');
+      expect(settings.lyricsMultiPersonWordByWord, isTrue);
+      expect(settings.lyricsAppleElrcWordSync, isTrue);
       expect(settings.deduplicateDownloads, isTrue);
       expect(settings.allowQualityVariants, isFalse);
       expect(settings.nativeDownloadWorkerEnabled, isFalse);

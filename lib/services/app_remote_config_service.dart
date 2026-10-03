@@ -139,6 +139,7 @@ class DonateConfig {
   final List<DonateMethod> methods;
   final List<String> supporters;
   final List<String> notices;
+  final MonthlyDonationGoal? monthlyGoal;
 
   const DonateConfig({
     required this.enabled,
@@ -147,9 +148,11 @@ class DonateConfig {
     required this.methods,
     required this.supporters,
     required this.notices,
+    this.monthlyGoal,
   });
 
   factory DonateConfig.fromJson(Map<String, dynamic> json) {
+    final monthlyGoalJson = json['monthly_goal'];
     final methods = (json['methods'] as List<dynamic>? ?? const [])
         .whereType<Map<Object?, Object?>>()
         .map((value) => DonateMethod.fromJson(Map<String, dynamic>.from(value)))
@@ -171,6 +174,11 @@ class DonateConfig {
       notices: _readStringList(json['notices']).isEmpty
           ? DonateConfig.fallback().notices
           : _readStringList(json['notices']),
+      monthlyGoal: monthlyGoalJson is Map
+          ? MonthlyDonationGoal.fromJson(
+              Map<String, dynamic>.from(monthlyGoalJson),
+            )
+          : null,
     );
   }
 
@@ -214,6 +222,107 @@ class DonateConfig {
       ],
     );
   }
+}
+
+class MonthlyDonationGoal {
+  final bool enabled;
+  final bool active;
+  final String period;
+  final String title;
+  final String description;
+  final double progressPercent;
+  final double progressRatio;
+  final bool goalReached;
+  final bool showAmounts;
+  final bool showPercentage;
+  final bool showSupporterCount;
+  final bool showSourceBreakdown;
+  final String currency;
+  final double? targetAmount;
+  final double? raisedAmount;
+  final int supporterCount;
+  final Map<String, MonthlyDonationSource> sources;
+
+  const MonthlyDonationGoal({
+    required this.enabled,
+    required this.active,
+    required this.period,
+    required this.title,
+    required this.description,
+    required this.progressPercent,
+    required this.progressRatio,
+    required this.goalReached,
+    required this.showAmounts,
+    required this.showPercentage,
+    required this.showSupporterCount,
+    required this.showSourceBreakdown,
+    required this.currency,
+    required this.targetAmount,
+    required this.raisedAmount,
+    required this.supporterCount,
+    required this.sources,
+  });
+
+  factory MonthlyDonationGoal.fromJson(Map<String, dynamic> json) {
+    final display = json['display'] is Map
+        ? Map<String, dynamic>.from(json['display'] as Map)
+        : const <String, dynamic>{};
+    final sourcesJson = json['sources'];
+    return MonthlyDonationGoal(
+      enabled: _readBool(json['enabled']),
+      active: _readBool(json['active']),
+      period: _readString(json['period']),
+      title: _readNullableString(json['title']) ?? 'Monthly development goal',
+      description: _readString(json['description']),
+      progressPercent: (_readFiniteNumber(json['progress_percent']) ?? 0).clamp(
+        0,
+        double.maxFinite,
+      ),
+      progressRatio: (_readFiniteNumber(json['progress_ratio']) ?? 0).clamp(
+        0,
+        1,
+      ),
+      goalReached: _readBool(json['goal_reached']),
+      showAmounts: _readBool(display['amounts'] ?? json['amounts_visible']),
+      showPercentage: _readBool(display['percentage']),
+      showSupporterCount: _readBool(display['supporter_count']),
+      showSourceBreakdown: _readBool(display['source_breakdown']),
+      currency: _readNullableString(json['currency']) ?? 'USD',
+      targetAmount: _readFiniteNumber(json['target_amount']),
+      raisedAmount: _readFiniteNumber(json['raised_amount']),
+      supporterCount: (_readFiniteNumber(json['supporter_count']) ?? 0)
+          .clamp(0, double.maxFinite)
+          .toInt(),
+      sources: {
+        if (sourcesJson is Map)
+          for (final entry in sourcesJson.entries)
+            if (entry.key is String && entry.value is Map)
+              entry.key as String: MonthlyDonationSource.fromJson(
+                Map<String, dynamic>.from(entry.value as Map),
+              ),
+      },
+    );
+  }
+
+  bool get isVisible => enabled && active;
+}
+
+class MonthlyDonationSource {
+  final double? amount;
+  final int supporterCount;
+
+  const MonthlyDonationSource({
+    required this.amount,
+    required this.supporterCount,
+  });
+
+  factory MonthlyDonationSource.fromJson(Map<String, dynamic> json) =>
+      MonthlyDonationSource(
+        amount: _readFiniteNumber(json['amount']),
+        supporterCount: (_readFiniteNumber(json['supporter_count']) ?? 0)
+            .clamp(0, double.maxFinite)
+            .toInt(),
+      );
 }
 
 class DonateMethod {
@@ -295,7 +404,13 @@ class AppRemoteConfigService {
       );
 
       final response = await _client
-          .get(uri, headers: {'Accept': 'application/json'})
+          .get(
+            uri,
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'SpotiFLAC-Mobile/${AppInfo.version}',
+            },
+          )
           .timeout(const Duration(seconds: 8));
 
       if (response.statusCode != 200) {
@@ -383,6 +498,15 @@ class AppRemoteConfigService {
 
 String _readString(Object? value) {
   return value is String ? value.trim() : '';
+}
+
+double? _readFiniteNumber(Object? value) {
+  final number = value is num
+      ? value.toDouble()
+      : value is String
+      ? double.tryParse(value)
+      : null;
+  return number != null && number.isFinite ? number : null;
 }
 
 String? _readNullableString(Object? value) {

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -57,6 +58,7 @@ class _DonatePageState extends State<DonatePage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final monthlyGoal = _config.monthlyGoal;
 
     return Scaffold(
       body: CustomScrollView(
@@ -72,6 +74,10 @@ class _DonatePageState extends State<DonatePage> {
               ),
               child: Column(
                 children: [
+                  if (monthlyGoal != null && monthlyGoal.isVisible) ...[
+                    _MonthlyDonationGoalCard(goal: monthlyGoal),
+                    const SizedBox(height: 16),
+                  ],
                   _DonateLinksCard(colorScheme: colorScheme, config: _config),
                   const SizedBox(height: 24),
                   _RecentDonorsCard(
@@ -88,6 +94,159 @@ class _DonatePageState extends State<DonatePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MonthlyDonationGoalCard extends StatelessWidget {
+  final MonthlyDonationGoal goal;
+
+  const _MonthlyDonationGoalCard({required this.goal});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final locale = Localizations.localeOf(context).toLanguageTag();
+    final numberFormat = NumberFormat('0.#', locale);
+    final currencyFormat = NumberFormat.simpleCurrency(
+      name: goal.currency,
+      locale: locale,
+    );
+    var period = goal.period;
+    if (RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(period)) {
+      period = DateFormat.yMMMM(locale).format(DateTime.parse('$period-01'));
+    }
+    final isDark = theme.brightness == Brightness.dark;
+    final cardColor = Color.alphaBlend(
+      (isDark ? Colors.white : Colors.black).withValues(
+        alpha: isDark ? 0.08 : 0.04,
+      ),
+      colorScheme.surface,
+    );
+
+    return Card(
+      elevation: 0,
+      color: cardColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              goal.title,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            if (period.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                period,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            if (goal.description.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                goal.description,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            if (goal.showPercentage) ...[
+              Text(
+                '${numberFormat.format(goal.progressPercent)}%',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            LinearProgressIndicator(
+              value: goal.progressRatio,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(4),
+              semanticsLabel: goal.title,
+              semanticsValue: goal.showPercentage
+                  ? '${numberFormat.format(goal.progressPercent)}%'
+                  : null,
+            ),
+            if (goal.goalReached) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 20,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Goal reached',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (goal.showAmounts &&
+                goal.raisedAmount != null &&
+                goal.targetAmount != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                '${currencyFormat.format(goal.raisedAmount)} / '
+                '${currencyFormat.format(goal.targetAmount)}',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+            if (goal.showSupporterCount) ...[
+              const SizedBox(height: 12),
+              Text(
+                '${NumberFormat.decimalPattern(locale).format(goal.supporterCount)} supporters',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            if (goal.showSourceBreakdown && goal.sources.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              for (final entry in goal.sources.entries)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    [
+                      switch (entry.key) {
+                        'kofi' => 'Ko-fi',
+                        'patreon' => 'Patreon',
+                        'manual' => 'Manual',
+                        _ => entry.key,
+                      },
+                      if (goal.showAmounts && entry.value.amount != null)
+                        currencyFormat.format(entry.value.amount),
+                      if (goal.showSupporterCount)
+                        '${NumberFormat.decimalPattern(locale).format(entry.value.supporterCount)} supporters',
+                    ].join(' · '),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
       ),
     );
   }
