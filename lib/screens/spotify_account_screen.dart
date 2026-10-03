@@ -27,6 +27,8 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   int _progress = 0;
   String? _error;
   String? _openingId;
+  final GlobalKey<NavigatorState> _spotifyNavigatorKey =
+      GlobalKey<NavigatorState>();
 
   @override
   void initState() {
@@ -130,12 +132,10 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
     if (!mounted) return;
     context.go('/');
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-      // Wait for GoRouter to finish replacing the Spotify route before
-      // selecting the library tab. Otherwise the tab request can target the
-      // old route tree and only become visible after another back/navigation.
+      // The Spotify route may be disposed by context.go('/'), so do not gate
+      // this callback on the Spotify State remaining mounted. The shell is
+      // the destination and owns the tab-selection handler.
       await WidgetsBinding.instance.endOfFrame;
-      if (!mounted) return;
       ShellNavigationService.requestTab(ShellTab.library);
     });
   }
@@ -154,8 +154,9 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
           : 'This playlist is empty or Spotify returned no tracks.');
         return;
       }
-      await Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => SpotifyNavigationScope(
+      await _spotifyNavigatorKey.currentState?.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => SpotifyNavigationScope(
           onViewQueue: _openQueueFromSpotify,
           child: PlaylistScreen(
             playlistName: playlist.name,
@@ -164,7 +165,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
             playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
           ),
         ),
-      ));
+      );
     } catch (error) {
       if (mounted) setState(() => _error = 'Could not open Spotify playlist: $error');
     } finally {
@@ -181,7 +182,16 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) => Navigator(
+    key: _spotifyNavigatorKey,
+    onGenerateInitialRoutes: (_, _) => [
+      MaterialPageRoute<void>(
+        builder: (_) => _buildSpotifyHome(),
+      ),
+    ],
+  );
+
+  Widget _buildSpotifyHome() => Scaffold(
     appBar: AppBar(
       title: const Text('Spotify'),
       actions: [
