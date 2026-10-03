@@ -1,7 +1,10 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
+import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 
 /// Account input goes straight to the action, never into extension settings.
 Future<Map<String, dynamic>?> runExtensionActionWithForms(
@@ -75,10 +78,13 @@ class _AccountForm {
       value == null || (value is String && value.length <= max);
 
   static _AccountForm? parse(dynamic raw) {
+    final cancelAction = raw is Map ? raw['cancel_action'] : null;
     if (raw is! Map ||
         raw['version'] != 1 ||
         !_action(raw['submit_action']) ||
-        (raw['cancel_action'] != null && !_action(raw['cancel_action'])) ||
+        (cancelAction != null &&
+            cancelAction != '' &&
+            !_action(cancelAction)) ||
         !_text(raw['title'], 256) ||
         !_text(raw['description'], 4096)) {
       return null;
@@ -120,7 +126,7 @@ class _AccountForm {
     }
     return _AccountForm(
       raw['submit_action'] as String,
-      raw['cancel_action'] as String?,
+      cancelAction == '' ? null : cancelAction as String?,
       raw['title'] as String?,
       raw['description'] as String?,
       validated,
@@ -185,6 +191,183 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
     Navigator.pop(context, values);
   }
 
+  String? _validate(Map<String, dynamic> field, String? value) {
+    if (field['required'] == true && (value == null || value.isEmpty)) {
+      return context.l10n.extensionAccountRequiredValue;
+    }
+    if (field['type'] == 'number' &&
+        value != null &&
+        value.isNotEmpty &&
+        num.tryParse(value)?.isFinite != true) {
+      return context.l10n.extensionAccountInvalidNumber;
+    }
+    return null;
+  }
+
+  Future<void> _chooseOption(Map<String, dynamic> field) async {
+    final key = field['key'] as String;
+    final value = await showAppBottomSheet<String>(
+      context: context,
+      title: field['label'] as String? ?? key,
+      maxHeightFactor: 0.7,
+      builder: (sheetContext) => SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final option in (field['options'] as List).cast<String>())
+              AppSheetOption(
+                title: Text(option),
+                trailing: option == _choices[key]
+                    ? const Icon(CupertinoIcons.check_mark)
+                    : null,
+                onTap: () => Navigator.pop(sheetContext, option),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (mounted && value != null) setState(() => _choices[key] = value);
+  }
+
+  Widget _field(Map<String, dynamic> field, int index) {
+    final key = field['key'] as String;
+    final label = field['label'] as String? ?? key;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final mornye = context.isMornye;
+    final last = index == widget.form.fields.length - 1;
+    final secret = field['type'] == 'password' || field['secret'] == true;
+    final keyboard = field['type'] == 'number'
+        ? const TextInputType.numberWithOptions(decimal: true, signed: true)
+        : TextInputType.text;
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(12),
+      borderSide: BorderSide.none,
+    );
+    final decoration = InputDecoration(
+      labelText: label,
+      filled: true,
+      fillColor: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+      border: border,
+      counterText: '',
+    );
+    Widget input;
+    if (field['type'] == 'select') {
+      input = mornye
+          ? CupertinoButton(
+              onPressed: () => _chooseOption(field),
+              color: MornyeTheme.controlFill(context),
+              borderRadius: BorderRadius.circular(12),
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _choices[key]!,
+                      style: theme.textTheme.bodyLarge,
+                    ),
+                  ),
+                  Icon(
+                    CupertinoIcons.chevron_up_chevron_down,
+                    size: 16,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            )
+          : DropdownButtonFormField<String>(
+              initialValue: _choices[key],
+              isExpanded: true,
+              decoration: decoration,
+              items: (field['options'] as List)
+                  .cast<String>()
+                  .map(
+                    (option) =>
+                        DropdownMenuItem(value: option, child: Text(option)),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value != null) setState(() => _choices[key] = value);
+              },
+            );
+    } else if (mornye) {
+      input = FormField<String>(
+        validator: (value) => _validate(field, value),
+        builder: (state) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            CupertinoTextField(
+              controller: _controllers[key],
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: MornyeTheme.controlFill(context),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              style: theme.textTheme.bodyLarge,
+              obscureText: secret,
+              autocorrect: false,
+              enableSuggestions: false,
+              enableIMEPersonalizedLearning: false,
+              maxLength: 4096,
+              keyboardType: keyboard,
+              textInputAction: last
+                  ? TextInputAction.done
+                  : TextInputAction.next,
+              onChanged: state.didChange,
+              onSubmitted: (_) =>
+                  last ? _submit() : FocusScope.of(context).nextFocus(),
+            ),
+            if (state.errorText != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 4, top: 6),
+                child: Text(
+                  state.errorText!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.error,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    } else {
+      input = TextFormField(
+        controller: _controllers[key],
+        obscureText: secret,
+        autocorrect: false,
+        enableSuggestions: false,
+        enableIMEPersonalizedLearning: false,
+        maxLength: 4096,
+        keyboardType: keyboard,
+        textInputAction: last ? TextInputAction.done : TextInputAction.next,
+        onFieldSubmitted: (_) =>
+            last ? _submit() : FocusScope.of(context).nextFocus(),
+        decoration: decoration,
+        validator: (value) => _validate(field, value),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (mornye) ...[
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 6),
+              child: Text(
+                label,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+          Semantics(label: label, child: input),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => AppAlertDialog(
     title: Text(widget.form.title ?? context.l10n.extensionAccountTitle),
@@ -194,68 +377,13 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (widget.form.description != null)
+            if (widget.form.description?.isNotEmpty == true)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Text(widget.form.description!),
               ),
-            for (final field in widget.form.fields)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: field['type'] == 'select'
-                    ? DropdownButtonFormField<String>(
-                        initialValue: _choices[field['key']],
-                        decoration: InputDecoration(
-                          labelText: field['label'] as String?,
-                        ),
-                        items: (field['options'] as List)
-                            .cast<String>()
-                            .map(
-                              (option) => DropdownMenuItem(
-                                value: option,
-                                child: Text(option),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          if (value != null) {
-                            setState(
-                              () => _choices[field['key'] as String] = value,
-                            );
-                          }
-                        },
-                      )
-                    : TextFormField(
-                        controller: _controllers[field['key']],
-                        obscureText:
-                            field['type'] == 'password' ||
-                            field['secret'] == true,
-                        autocorrect: false,
-                        enableSuggestions: false,
-                        enableIMEPersonalizedLearning: false,
-                        maxLength: 4096,
-                        keyboardType: field['type'] == 'number'
-                            ? TextInputType.number
-                            : TextInputType.text,
-                        decoration: InputDecoration(
-                          labelText: field['label'] as String?,
-                          counterText: '',
-                        ),
-                        validator: (value) {
-                          if (field['required'] == true &&
-                              (value == null || value.isEmpty)) {
-                            return context.l10n.extensionAccountRequiredValue;
-                          }
-                          if (field['type'] == 'number' &&
-                              value != null &&
-                              value.isNotEmpty &&
-                              (num.tryParse(value)?.isFinite != true)) {
-                            return context.l10n.extensionAccountInvalidNumber;
-                          }
-                          return null;
-                        },
-                      ),
-              ),
+            for (var i = 0; i < widget.form.fields.length; i++)
+              _field(widget.form.fields[i], i),
           ],
         ),
       ),

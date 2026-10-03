@@ -1,9 +1,19 @@
 import 'dart:convert';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/l10n/app_localizations.dart';
+import 'package:spotiflac_android/models/settings.dart';
+import 'package:spotiflac_android/providers/settings_provider.dart';
+import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/extension_action_forms.dart';
+
+class _Settings extends SettingsNotifier {
+  @override
+  AppSettings build() => const AppSettings();
+}
 
 void main() {
   const channel = MethodChannel('com.zarz.spotiflac/backend');
@@ -14,23 +24,187 @@ void main() {
 
   Future<void> showHost(
     WidgetTester tester,
-    Future<void> Function(BuildContext) action,
-  ) {
+    Future<void> Function(BuildContext) action, {
+    bool mornye = false,
+  }) {
     return tester.pumpWidget(
-      MaterialApp(
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        home: Scaffold(
-          body: Builder(
-            builder: (context) => ElevatedButton(
-              onPressed: () => action(context),
-              child: const Text('Connect'),
+      ProviderScope(
+        overrides: [settingsProvider.overrideWith(_Settings.new)],
+        child: MaterialApp(
+          theme: mornye ? MornyeTheme.build(Brightness.dark) : ThemeData(),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () => action(context),
+                child: const Text('Connect'),
+              ),
             ),
           ),
         ),
       ),
     );
   }
+
+  for (final mornye in [false, true]) {
+    testWidgets('empty cancel action allows account setup ($mornye)', (
+      tester,
+    ) async {
+      final actions = <String>[];
+      final inputs = <Map<String, dynamic>>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = call.arguments as Map;
+            actions.add(args['action'] as String);
+            if (args['arguments_json'] != null) {
+              inputs.add(
+                Map<String, dynamic>.from(
+                  (jsonDecode(args['arguments_json'] as String) as List).single
+                      as Map,
+                ),
+              );
+              return '{"success":true,"state":"active"}';
+            }
+            return jsonEncode({
+              'success': true,
+              'result': {
+                'success': true,
+                'byoa_form': {
+                  'version': 1,
+                  'title': 'Connect your account',
+                  'submit_action': 'connectAccount',
+                  'cancel_action': '',
+                  'fields': [
+                    {
+                      'key': 'region',
+                      'label': 'Account region',
+                      'type': 'select',
+                      'options': ['Europe', 'Asia'],
+                    },
+                    {
+                      'key': 'port',
+                      'label': 'Port',
+                      'type': 'number',
+                      'required': true,
+                    },
+                    {
+                      'key': 'password',
+                      'label': 'Password',
+                      'type': 'password',
+                      'required': true,
+                    },
+                  ],
+                },
+              },
+            });
+          });
+      Map<String, dynamic>? result;
+      await showHost(tester, (context) async {
+        result = await runExtensionActionWithForms(
+          context,
+          'example.account',
+          'connectAccount',
+        );
+      }, mornye: mornye);
+      await tester.tap(find.text('Connect'));
+      await tester.pumpAndSettle();
+      expect(find.text('Connect your account'), findsOneWidget);
+      expect(result, isNull);
+
+      final fields = find.byType(mornye ? CupertinoTextField : TextFormField);
+      await tester.enterText(fields.first, 'invalid');
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enter a valid number.'), findsOneWidget);
+      expect(find.text('Enter a value.'), findsOneWidget);
+      expect(actions, ['connectAccount']);
+
+      await tester.enterText(fields.first, '443');
+      await tester.enterText(fields.last, 'fixture-password');
+      if (mornye) {
+        final text = tester.widget<CupertinoTextField>(fields.last);
+        expect(text.obscureText, isTrue);
+        expect(text.enableIMEPersonalizedLearning, isFalse);
+        await tester.tap(find.text('Europe'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Asia'));
+        await tester.pumpAndSettle();
+      } else {
+        await tester.tap(find.byType(DropdownButtonFormField<String>));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Asia').last);
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+      expect(result!['state'], 'active');
+      expect(inputs, [
+        {'region': 'Asia', 'port': 443, 'password': 'fixture-password'},
+      ]);
+      expect(actions, ['connectAccount', 'connectAccount']);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('empty cancel action does not invoke an unnamed action', (
+    tester,
+  ) async {
+    final actions = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          actions.add((call.arguments as Map)['action'] as String);
+          return '{"success":true,"action_form":{"version":1,'
+              '"submit_action":"loginAccount","cancel_action":"",'
+              '"fields":[{"key":"password","type":"password"}]}}';
+        });
+    await showHost(tester, (context) async {
+      await runExtensionActionWithForms(
+        context,
+        'example.account',
+        'loginAccount',
+      );
+    });
+    await tester.tap(find.text('Connect'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(actions, ['loginAccount']);
+  });
+
+  testWidgets('nonempty malformed cancel actions are still rejected', (
+    tester,
+  ) async {
+    for (final cancelAction in ['not an action', 42]) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            channel,
+            (_) async => jsonEncode({
+              'success': true,
+              'action_form': {
+                'version': 1,
+                'submit_action': 'loginAccount',
+                'cancel_action': cancelAction,
+                'fields': [
+                  {'key': 'password', 'type': 'password'},
+                ],
+              },
+            }),
+          );
+      Map<String, dynamic>? result;
+      await showHost(tester, (context) async {
+        result = await runExtensionActionWithForms(
+          context,
+          'example.account',
+          'loginAccount',
+        );
+      });
+      await tester.tap(find.text('Connect'));
+      await tester.pumpAndSettle();
+      expect(result!['success'], isFalse);
+      expect(find.byType(TextFormField), findsNothing);
+    }
+  });
 
   testWidgets('password form submits transient input and clears its text', (
     tester,
