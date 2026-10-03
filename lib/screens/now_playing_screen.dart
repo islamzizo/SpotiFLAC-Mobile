@@ -42,6 +42,7 @@ import 'package:spotiflac_android/widgets/expressive_icon_button.dart';
 import 'package:spotiflac_android/widgets/aligned_lyric_pronunciation.dart';
 import 'package:spotiflac_android/widgets/lyric_supplement_transition.dart';
 import 'package:spotiflac_android/widgets/lyric_scroll_motion.dart';
+import 'package:spotiflac_android/widgets/automix_status_badge.dart';
 import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
 import 'package:spotiflac_android/widgets/audio_output_button.dart';
 import 'package:spotiflac_android/widgets/lyric_gap_indicator.dart';
@@ -2917,9 +2918,15 @@ class _PlaybackControls extends ConsumerWidget {
                             Text(formatClock(elapsedSeconds), style: timeStyle),
                           Expanded(
                             child: Center(
-                              child: _QualityBadge(
-                                label: qualityLabel,
-                                colorScheme: colorScheme,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _QualityBadge(
+                                    label: qualityLabel,
+                                    colorScheme: colorScheme,
+                                  ),
+                                  const AutoMixStatusBadge(),
+                                ],
                               ),
                             ),
                           ),
