@@ -7,16 +7,18 @@ class SpotifyNavigationScope extends InheritedWidget {
     super.key,
     required this.onViewQueue,
     required this.navigatorKey,
+    required this.push,
     required super.child,
   });
 
   final VoidCallback onViewQueue;
   final GlobalKey<NavigatorState> navigatorKey;
+  final void Function(WidgetBuilder builder) push;
 
   static SpotifyNavigationScope? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<SpotifyNavigationScope>();
 
   @override
   bool updateShouldNotify(SpotifyNavigationScope oldWidget) =>
-      !identical(onViewQueue, oldWidget.onViewQueue);
+      !identical(onViewQueue, oldWidget.onViewQueue) || !identical(push, oldWidget.push);
 }
