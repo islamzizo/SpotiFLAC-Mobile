@@ -735,6 +735,24 @@ internal fun Context.listSafChildrenOrThrow(
     dir: DocumentFile,
     includeLastModified: Boolean = true,
 ): List<SafChildEntry> {
+    for (attempt in 0..2) {
+        try {
+            return querySafChildrenOrThrow(dir, includeLastModified)
+        } catch (error: SafProviderLoadingException) {
+            if (attempt == 2) throw error
+            Thread.sleep(300L * (attempt + 1))
+        }
+    }
+    throw IOException("SAF directory listing did not complete")
+}
+
+private class SafProviderLoadingException(uri: Uri) :
+    IOException("SAF provider is still loading $uri; retry the scan when it is ready")
+
+private fun Context.querySafChildrenOrThrow(
+    dir: DocumentFile,
+    includeLastModified: Boolean,
+): List<SafChildEntry> {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
             dir.uri,
             DocumentsContract.getDocumentId(dir.uri),
@@ -758,6 +776,11 @@ internal fun Context.listSafChildrenOrThrow(
             )
         } ?: throw IOException("SAF provider returned no cursor for ${dir.uri}")
         return cursor.use {
+            // Network DocumentsProviders may return cached/partial rows while
+            // fetching a directory. Never commit that as an empty/full scan.
+            if (it.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) {
+                throw SafProviderLoadingException(dir.uri)
+            }
             val documentIdIndex = it.getColumnIndexOrThrow(
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             )
@@ -776,7 +799,7 @@ internal fun Context.listSafChildrenOrThrow(
                         dir.uri,
                         it.getString(documentIdIndex),
                     )
-                    val child = DocumentFile.fromTreeUri(this@listSafChildrenOrThrow, childUri)
+                    val child = DocumentFile.fromTreeUri(this@querySafChildrenOrThrow, childUri)
                         ?: throw IOException("Invalid SAF child URI: $childUri")
                     val name = if (displayNameIndex >= 0 && !it.isNull(displayNameIndex)) {
                         it.getString(displayNameIndex)
@@ -813,17 +836,19 @@ internal fun Context.listSafChildrenOrThrow(
         }
     }
 
-internal fun MainActivity.resolveReadableSafTreeOrThrow(
+internal fun Context.resolveReadableSafTreeOrThrow(
         treeUriStr: String,
-    ): Pair<Uri, DocumentFile> {
+    ): Triple<Uri, DocumentFile, List<SafChildEntry>> {
         if (treeUriStr.isBlank()) {
             throw IllegalArgumentException("SAF tree URI is empty")
         }
         val treeUri = Uri.parse(treeUriStr)
+        val root = DocumentFile.fromTreeUri(this, treeUri)
+            ?: throw IOException("Unable to resolve SAF tree")
         val hasReadPermission = contentResolver.persistedUriPermissions.any {
             it.uri == treeUri && it.isReadPermission
         } || checkUriPermission(
-            treeUri,
+            root.uri,
             android.os.Process.myPid(),
             android.os.Process.myUid(),
             Intent.FLAG_GRANT_READ_URI_PERMISSION,
@@ -831,12 +856,20 @@ internal fun MainActivity.resolveReadableSafTreeOrThrow(
         if (!hasReadPermission) {
             throw SecurityException("Read access to the SAF tree has been revoked")
         }
-        val root = DocumentFile.fromTreeUri(this, treeUri)
-            ?: throw IOException("Unable to resolve SAF tree")
-        if (!root.exists() || !root.canRead()) {
-            throw IOException("SAF tree is unavailable or unreadable")
+        // canRead() also requires a non-empty MIME type from queryDocument.
+        // Remote providers can omit that metadata after reconnecting even
+        // though queryChildDocuments can read the folder. The real listing is
+        // authoritative; reuse it in the scan instead of another round trip.
+        for (attempt in 0..2) {
+            val children = listSafChildrenOrThrow(root)
+            if (children.isNotEmpty() || root.exists()) {
+                return Triple(treeUri, root, children)
+            }
+            // An empty listing without a confirmed root is inconclusive,
+            // never evidence that previously indexed songs were deleted.
+            if (attempt < 2) Thread.sleep(300L * (attempt + 1))
         }
-        return treeUri to root
+        throw IOException("SAF provider could not confirm the library folder; reconnect it and retry")
     }
 
 internal fun MainActivity.scanSafTree(
@@ -867,7 +900,7 @@ internal fun MainActivity.scanSafTree(
             throw java.util.concurrent.CancellationException("SAF library scan cancelled")
         }
 
-        val (_, root) = resolveReadableSafTreeOrThrow(treeUriStr)
+        val (_, root, rootChildren) = resolveReadableSafTreeOrThrow(treeUriStr)
 
         resetSafScanProgress()
         safScanCancel = false
@@ -914,7 +947,11 @@ internal fun MainActivity.scanSafTree(
                 continue
             }
 
-            val listing = lister.list(dir, queue, visitedDirUris)
+            val listing = if (dir.uri == root.uri) {
+                Result.success(rootChildren)
+            } else {
+                lister.list(dir, queue, visitedDirUris)
+            }
             val children = listing.getOrNull()
             if (children == null) {
                 traversalErrors++
@@ -1297,7 +1334,7 @@ internal fun MainActivity.scanSafTreeIncremental(
         treeUriStr: String,
         existingFiles: Map<String, Long>,
     ): Any {
-        val (_, root) = resolveReadableSafTreeOrThrow(treeUriStr)
+        val (_, root, rootChildren) = resolveReadableSafTreeOrThrow(treeUriStr)
 
         resetSafScanProgress()
         safScanCancel = false
@@ -1355,7 +1392,11 @@ internal fun MainActivity.scanSafTreeIncremental(
                 continue
             }
 
-            val listing = lister.list(dir, queue, visitedDirUris)
+            val listing = if (dir.uri == root.uri) {
+                Result.success(rootChildren)
+            } else {
+                lister.list(dir, queue, visitedDirUris)
+            }
             val children = listing.getOrNull()
             if (children == null) {
                 traversalErrors++

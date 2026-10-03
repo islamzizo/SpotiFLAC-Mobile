@@ -1240,7 +1240,7 @@ class MainActivity: FlutterFragmentActivity() {
                                             uri,
                                             DocumentsContract.getTreeDocumentId(uri),
                                         )
-                                        contentResolver.query(
+                                        val rootPresent = contentResolver.query(
                                             root,
                                             arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
                                             null, null, null,
@@ -1249,6 +1249,19 @@ class MainActivity: FlutterFragmentActivity() {
                                                 cursor.moveToFirst() -> true
                                                 cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false) -> null
                                                 else -> false
+                                            }
+                                        }
+                                        if (rootPresent == true) {
+                                            true
+                                        } else {
+                                            // A reconnecting remote provider may not have
+                                            // queryDocument metadata yet. A completed child
+                                            // listing is stronger evidence of read access.
+                                            val directory = DocumentFile.fromTreeUri(this@MainActivity, uri)
+                                            if (directory != null && listSafChildrenOrThrow(directory).isNotEmpty()) {
+                                                true
+                                            } else {
+                                                rootPresent
                                             }
                                         }
                                     },
