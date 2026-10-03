@@ -6,10 +6,12 @@ class SpotifyNavigationScope extends InheritedWidget {
   const SpotifyNavigationScope({
     super.key,
     required this.onViewQueue,
+    required this.navigatorKey,
     required super.child,
   });
 
   final VoidCallback onViewQueue;
+  final GlobalKey<NavigatorState> navigatorKey;
 
   static SpotifyNavigationScope? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<SpotifyNavigationScope>();
