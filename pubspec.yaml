@@ -1,7 +1,7 @@
 name: spotiflac_android
 description: Extension-driven music metadata and downloads for mobile devices
 publish_to: "none"
-version: 5.1.0+158
+version: 5.1.0+160
 
 environment:
   sdk: ^3.10.0
