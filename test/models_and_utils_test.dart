@@ -1821,7 +1821,7 @@ void main() {
         ),
         isTrue,
       );
-      expect(config.donate.title, 'Support SpotiFLAC Mobile');
+      expect(config.donate.title, 'Support SpotiFLAC-Mobile');
       expect(config.donate.methods, hasLength(2));
       expect(config.donate.methods.first.color, 0xFFFF5E5B);
       expect(config.donate.methods.last.isWallet, isTrue);
