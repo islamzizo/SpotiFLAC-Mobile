@@ -4,13 +4,18 @@ version '1.0'
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
+def discordSdkEnabled = System.getenv('SPOTIFLAC_DISCORD_SDK') != '0'
+
 android {
     namespace 'com.zarz.spotiflac.discord'
     compileSdk 37
     defaultConfig {
         minSdk 24
         externalNativeBuild {
-            cmake { arguments '-DANDROID_STL=c++_static' }
+            cmake {
+                arguments '-DANDROID_STL=c++_static',
+                    "-DSPOTIFLAC_DISCORD_SDK=${discordSdkEnabled ? 'ON' : 'OFF'}"
+            }
         }
     }
     compileOptions {
@@ -18,7 +23,7 @@ android {
         targetCompatibility JavaVersion.VERSION_25
     }
     kotlinOptions { jvmTarget = '25' }
-    sourceSets.main.assets.srcDir('../sdk/notices')
+    if (discordSdkEnabled) sourceSets.main.assets.srcDir('../sdk/notices')
     externalNativeBuild {
         cmake { path 'CMakeLists.txt'; version '3.22.1' }
     }

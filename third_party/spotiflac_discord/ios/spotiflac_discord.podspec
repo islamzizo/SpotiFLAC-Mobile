@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
   s.dependency 'Flutter'
   s.platform = :ios, '16.0'
   sdk = 'Frameworks/discord_partner_sdk.xcframework'
-  if File.directory?(File.join(__dir__, sdk))
+  if ENV['SPOTIFLAC_DISCORD_SDK'] != '0' && File.directory?(File.join(__dir__, sdk))
     s.vendored_frameworks = sdk
     s.resources = 'Frameworks/Discord-License-Notices.txt'
     s.pod_target_xcconfig = {

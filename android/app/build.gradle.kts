@@ -20,6 +20,7 @@ val rustAndroidAbis = providers.environmentVariable("SPOTIFLAC_RUST_ANDROID_ABIS
     .get()
     .split(",")
 val supportedRustAndroidAbis = setOf("arm64-v8a", "armeabi-v7a")
+val discordSdkEnabled = providers.environmentVariable("SPOTIFLAC_DISCORD_SDK").orElse("1").get() != "0"
 require(rustAndroidAbis.size == rustAndroidAbis.toSet().size) {
     "SPOTIFLAC_RUST_ANDROID_ABIS must not contain duplicate ABIs"
 }
@@ -36,7 +37,7 @@ android {
         buildConfig = true
     }
     packaging {
-        jniLibs.pickFirsts += "**/libdiscord_partner_sdk.so"
+        if (discordSdkEnabled) jniLibs.pickFirsts += "**/libdiscord_partner_sdk.so"
     }
 
     externalNativeBuild {
@@ -171,7 +172,7 @@ flutter {
 
 dependencies {
     val discordSdk = file("../../third_party/spotiflac_discord/sdk/discord_partner_sdk.aar")
-    if (discordSdk.exists()) {
+    if (discordSdkEnabled && discordSdk.exists()) {
         implementation(files(discordSdk))
     }
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")

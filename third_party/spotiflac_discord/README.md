@@ -23,6 +23,17 @@ in Android assets and iOS resources. Without these files the app still builds, b
 the presence setting reports that the SDK is unavailable. A clean clone alone
 does not produce a Discord-enabled build.
 
+To deliberately omit a staged SDK, set `SPOTIFLAC_DISCORD_SDK=0` during Android
+builds or iOS `pod install` and app builds. `bash scripts/build_android.sh --lite`
+sets this flag for Android. The bridge remains registered and reports presence
+as unavailable; the staged SDK files are retained for subsequent full builds.
+
+Production Android builds use `bash scripts/build_android.sh --production`,
+which forces Discord on, checks the staged SDK and audits it in every APK ABI.
+`--production --lite` is rejected. Release CI requires the SDK on both platforms
+and stops before publication if the SDK is absent. Provision the official SDK
+in the build environment before running that workflow.
+
 Android uses the installed Discord app's signed-in session (Social SDK 1.10+).
 The AAR and CMake use the same staged native library; the host packages one copy
 with `jniLibs.pickFirsts`. Microphone/Bluetooth permissions and the SDK voice
