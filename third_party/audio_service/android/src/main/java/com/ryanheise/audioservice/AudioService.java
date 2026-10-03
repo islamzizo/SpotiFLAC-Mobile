@@ -42,7 +42,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -100,11 +99,12 @@ public class AudioService extends MediaBrowserServiceCompat {
             | PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE
             | PlaybackStateCompat.ACTION_SET_CAPTIONING_ENABLED;
 
-    static AudioService instance;
+    static volatile AudioService instance;
+    private volatile boolean destroyed;
     private static PendingIntent contentIntent;
     private static ServiceListener listener;
     private static List<MediaSessionCompat.QueueItem> queue = new ArrayList<>();
-    private static final Map<String, MediaMetadataCompat> mediaMetadataCache = new HashMap<>();
+    private static final PinnedMetadataCache<MediaMetadataCompat> mediaMetadataCache = new PinnedMetadataCache<>(256);
 
     public static void init(ServiceListener listener) {
         AudioService.listener = listener;
@@ -164,7 +164,10 @@ public class AudioService extends MediaBrowserServiceCompat {
             }
         }
         MediaMetadataCompat mediaMetadata = builder.build();
-        mediaMetadataCache.put(mediaId, mediaMetadata);
+        synchronized (mediaMetadataCache) {
+            if (destroyed) throw new IllegalStateException("Audio service is no longer attached");
+            mediaMetadataCache.put(mediaId, mediaMetadata);
+        }
         return mediaMetadata;
     }
 
@@ -359,6 +362,10 @@ public class AudioService extends MediaBrowserServiceCompat {
 
     @Override
     public void onDestroy() {
+        synchronized (mediaMetadataCache) {
+            destroyed = true;
+            mediaMetadataCache.clear();
+        }
         super.onDestroy();
         if (listener != null) {
             listener.onDestroy();
@@ -367,7 +374,6 @@ public class AudioService extends MediaBrowserServiceCompat {
         mediaMetadata = null;
         artBitmap = null;
         queue.clear();
-        mediaMetadataCache.clear();
         controls.clear();
         artBitmapCache.evictAll();
         compactActionIndices = null;
@@ -800,7 +806,11 @@ public class AudioService extends MediaBrowserServiceCompat {
      * Updates queue.
      * Gets called from background thread.
      */
-    synchronized void setQueue(List<MediaSessionCompat.QueueItem> queue) {
+    synchronized void setQueue(List<MediaSessionCompat.QueueItem> queue, Map<String, MediaMetadataCompat> metadata) {
+        synchronized (mediaMetadataCache) {
+            if (destroyed) throw new IllegalStateException("Audio service is no longer attached");
+            mediaMetadataCache.setQueue(metadata);
+        }
         AudioService.queue = queue;
         mediaSession.setQueue(queue);
     }
@@ -822,6 +832,10 @@ public class AudioService extends MediaBrowserServiceCompat {
      *  - https://9to5google.com/2020/08/02/android-11-lockscreen-art/
      */
     synchronized void setMetadata(MediaMetadataCompat mediaMetadata) {
+        synchronized (mediaMetadataCache) {
+            if (destroyed) throw new IllegalStateException("Audio service is no longer attached");
+            mediaMetadataCache.setCurrent(mediaMetadata.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID), mediaMetadata);
+        }
         String artCacheFilePath = mediaMetadata.getString("artCacheFile");
         if (artCacheFilePath != null) {
             // Load local files and network images, cached in files
@@ -838,6 +852,7 @@ public class AudioService extends MediaBrowserServiceCompat {
                 artBitmap = null;
             }
         }
+        if (destroyed) throw new IllegalStateException("Audio service is no longer attached");
         this.mediaMetadata = mediaMetadata;
         mediaSession.setMetadata(mediaMetadata);
         handler.removeCallbacksAndMessages(null);
@@ -907,19 +922,19 @@ public class AudioService extends MediaBrowserServiceCompat {
         @Override
         public void onAddQueueItem(MediaDescriptionCompat description) {
             if (listener == null) return;
-            listener.onAddQueueItem(getMediaMetadata(description.getMediaId()));
+            listener.onAddQueueItem(description);
         }
 
         @Override
         public void onAddQueueItem(MediaDescriptionCompat description, int index) {
             if (listener == null) return;
-            listener.onAddQueueItemAt(getMediaMetadata(description.getMediaId()), index);
+            listener.onAddQueueItemAt(description, index);
         }
 
         @Override
         public void onRemoveQueueItem(MediaDescriptionCompat description) {
             if (listener == null) return;
-            listener.onRemoveQueueItem(getMediaMetadata(description.getMediaId()));
+            listener.onRemoveQueueItem(description);
         }
 
         @Override
@@ -1141,7 +1156,7 @@ public class AudioService extends MediaBrowserServiceCompat {
 
         public void onPlayMediaItem(final MediaDescriptionCompat description) {
             if (listener == null) return;
-            listener.onPlayMediaItem(getMediaMetadata(description.getMediaId()));
+            listener.onPlayMediaItem(description);
         }
     }
 
@@ -1172,9 +1187,9 @@ public class AudioService extends MediaBrowserServiceCompat {
         void onSetRepeatMode(int repeatMode);
         void onSetShuffleMode(int shuffleMode);
         void onCustomAction(String action, Bundle extras);
-        void onAddQueueItem(MediaMetadataCompat metadata);
-        void onAddQueueItemAt(MediaMetadataCompat metadata, int index);
-        void onRemoveQueueItem(MediaMetadataCompat metadata);
+        void onAddQueueItem(MediaDescriptionCompat description);
+        void onAddQueueItemAt(MediaDescriptionCompat description, int index);
+        void onRemoveQueueItem(MediaDescriptionCompat description);
         void onRemoveQueueItemAt(int index);
         void onSetPlaybackSpeed(float speed);
         void onSetCaptioningEnabled(boolean enabled);
@@ -1185,7 +1200,7 @@ public class AudioService extends MediaBrowserServiceCompat {
         // NON-STANDARD METHODS
         //
 
-        void onPlayMediaItem(MediaMetadataCompat metadata);
+        void onPlayMediaItem(MediaDescriptionCompat description);
         void onTaskRemoved();
         void onClose();
         void onDestroy();
