@@ -22,7 +22,7 @@ class LibraryDatabase {
   static final LibraryDatabase instance = LibraryDatabase._init();
   // The FTS table is a derived, optional index and is initialized lazily after
   // the existing schema migration, so it does not require a user_version bump.
-  static const int schemaVersion = 15;
+  static const int schemaVersion = 16;
   static const String legacySourceId = LocalLibraryItem.legacySourceId;
   static const String visibleLibraryView = 'library_visible';
   static const String searchFtsTable = 'library_search_fts';
@@ -285,7 +285,6 @@ class LibraryDatabase {
     }
     if (oldVersion < 8) {
       await _createPathKeyTable(db);
-      await sqlite.backfillPathKeys(db, 'library', 'library_path_keys');
       _log.i('Added local library path-key lookup table');
     }
     if (oldVersion < 9) {
@@ -348,6 +347,10 @@ class LibraryDatabase {
         'INTEGER NOT NULL DEFAULT 0',
       );
       _log.i('Added indexed ReplayGain availability metadata');
+    }
+    if (oldVersion < 16) {
+      await sqlite.backfillPathKeys(db, 'library', 'library_path_keys');
+      _log.i('Updated Library path keys with provider document identities');
     }
   }
 

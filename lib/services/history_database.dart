@@ -96,7 +96,7 @@ class HistoryDatabase {
   // the existing schema migration. The background native writer shares
   // history.db and must accept the same schema contract and
   // user_version without depending on FTS5.
-  static const int schemaVersion = 14;
+  static const int schemaVersion = 15;
   static const String searchFtsTable = 'history_search_fts';
   static final HistoryDatabase instance = HistoryDatabase._init();
   static final sqlite.SingleFlightInitializer<Database> _database =
@@ -243,7 +243,6 @@ class HistoryDatabase {
     }
     if (oldVersion < 7) {
       await _createPathKeyTable(db);
-      await sqlite.backfillPathKeys(db, 'history', 'history_path_keys');
     }
     if (oldVersion < 8) {
       await sqlite.addColumnIfMissing(db, 'history', 'spotify_id_norm', 'TEXT');
@@ -315,6 +314,10 @@ class HistoryDatabase {
         'INTEGER NOT NULL DEFAULT 0',
       );
       _log.i('Added indexed ReplayGain availability metadata');
+    }
+    if (oldVersion < 15) {
+      await sqlite.backfillPathKeys(db, 'history', 'history_path_keys');
+      _log.i('Updated history path keys with provider document identities');
     }
   }
 

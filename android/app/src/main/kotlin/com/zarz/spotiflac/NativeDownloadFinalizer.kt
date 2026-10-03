@@ -37,7 +37,7 @@ object NativeDownloadFinalizer {
     const val NATIVE_WORKER_CONTRACT_VERSION = 1
     // Native finalizer owns background-safe history writes while Flutter may be suspended.
     // Keep this schema contract in sync with Dart HistoryDatabase before bumping either side.
-    const val HISTORY_SCHEMA_VERSION = 14
+    const val HISTORY_SCHEMA_VERSION = 15
     // Keep one native connection for the process. Opening history.db and
     // probing/migrating its schema for every finalized track was expensive,
     // and a single guarded writer also prevents native finalizer calls from
@@ -1384,9 +1384,10 @@ object NativeDownloadFinalizer {
                             "history schema v${db.version} is newer than native finalizer contract v$HISTORY_SCHEMA_VERSION"
                         )
                     }
-                    // v14 only adds gain flags; v13 already has normalized keys.
-                    // Avoid walking the entire history for this additive upgrade.
+                    // Only older schemas need metadata backfills. v15 adds
+                    // tree-independent document identities to the path index.
                     val needsBackfill = db.version < 13
+                    val needsPathBackfill = db.version < 15
                 db.execSQL(
 	                    """
 	                    CREATE TABLE IF NOT EXISTS history (
@@ -1471,6 +1472,8 @@ object NativeDownloadFinalizer {
 	                ensureHistoryPathKeyTable(db)
 	                if (needsBackfill) {
 	                    backfillNormalizedHistoryColumns(db)
+                    }
+                    if (needsPathBackfill) {
 	                    backfillHistoryPathKeys(db)
 	                }
 	                validateHistorySchema(db)
@@ -1846,6 +1849,13 @@ object NativeDownloadFinalizer {
 
 	        val keys = linkedSetOf<String>()
 	        val visited = linkedSetOf<String>()
+            // Parse the original URI once; repeated percent decoding changes
+            // opaque provider IDs containing literal percent escapes.
+            try {
+                val uri = Uri.parse(cleaned)
+                safDocumentMatchKey(uri.scheme, uri.authority, uri.pathSegments)?.let(keys::add)
+            } catch (_: IllegalArgumentException) {
+            }
 
 	        fun addNormalized(value: String) {
 	            val trimmed = value.trim()
