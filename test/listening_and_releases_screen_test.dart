@@ -10,6 +10,7 @@ import 'package:spotiflac_android/screens/weekly_releases_screen.dart';
 import 'package:spotiflac_android/services/listening_statistics.dart';
 import 'package:spotiflac_android/services/weekly_releases.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
+import 'package:spotiflac_android/widgets/player_artwork.dart';
 
 class _Settings extends SettingsNotifier {
   @override
@@ -43,7 +44,7 @@ void main() {
                     'album': 'Album',
                     'milliseconds': 120000,
                     'plays': 1,
-                    'artwork': null,
+                    'artwork': '/covers/album.jpg',
                   },
                 ]);
               }),
@@ -57,6 +58,23 @@ void main() {
         await tester.pumpAndSettle();
         expect(requested.last.days, 0);
         expect(requested.last.year, DateTime.now().year);
+        final artistTile = find.byWidgetPredicate(
+          (widget) =>
+              widget is ListTile &&
+              widget.title is Text &&
+              (widget.title! as Text).data == 'Artist',
+        );
+        await tester.scrollUntilVisible(artistTile, 150);
+        await tester.pumpAndSettle();
+        final artistArtwork = find.descendant(
+          of: artistTile,
+          matching: find.byType(PlayerArtwork),
+        );
+        expect(artistArtwork, findsOneWidget);
+        expect(
+          tester.widget<PlayerArtwork>(artistArtwork).artUri,
+          '/covers/album.jpg',
+        );
         expect(tester.takeException(), isNull);
       },
     );

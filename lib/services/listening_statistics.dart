@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 import 'package:spotiflac_android/utils/logger.dart';
+import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:sqflite/sqflite.dart';
 
 final _log = AppLogger('ListeningStatistics');
@@ -49,6 +50,23 @@ class ListeningSummary {
   final List<ListeningTotal> tracks;
   final Map<String, int> artists;
   final Map<String, int> days;
+
+  Map<String, String> get artistArtwork {
+    final artwork = <String, String>{};
+    final listeningTime = <String, int>{};
+    for (final total in tracks) {
+      final cover = normalizeCoverReference(total.track.artwork);
+      if (cover == null) continue;
+      final artist = total.track.artist;
+      if (listeningTime.containsKey(artist) &&
+          total.milliseconds <= listeningTime[artist]!) {
+        continue;
+      }
+      artwork[artist] = cover;
+      listeningTime[artist] = total.milliseconds;
+    }
+    return artwork;
+  }
 
   factory ListeningSummary.fromRows(List<Map<String, Object?>> rows) {
     final tracks = <String, ListeningTotal>{};

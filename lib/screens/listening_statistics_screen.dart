@@ -177,8 +177,10 @@ class _ListeningStatisticsScreenState
   }
 
   List<Widget> _summarySlivers(BuildContext context, ListeningSummary data) {
+    final colors = Theme.of(context).colorScheme;
     final artists = data.artists.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
+    final artistArtwork = data.artistArtwork;
     final days = data.days.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
     return [
@@ -275,7 +277,26 @@ class _ListeningStatisticsScreenState
         children: [
           for (final artist in artists.take(10))
             ListTile(
-              leading: const Icon(Icons.person_outline),
+              leading: ExcludeSemantics(
+                child: ClipOval(
+                  child: SizedBox.square(
+                    dimension: 48,
+                    child: artistArtwork[artist.key] == null
+                        ? ColoredBox(
+                            color: colors.surfaceContainerHighest,
+                            child: const Icon(Icons.person_outline),
+                          )
+                        : PlayerArtwork(
+                            artUri: artistArtwork[artist.key],
+                            colorScheme: colors,
+                            cacheWidth:
+                                (48 * MediaQuery.devicePixelRatioOf(context))
+                                    .ceil(),
+                            iconSize: 24,
+                          ),
+                  ),
+                ),
+              ),
               title: Text(artist.key),
               subtitle: Text(
                 context.l10n.listeningStatsMinutes(

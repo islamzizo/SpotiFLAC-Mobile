@@ -172,4 +172,58 @@ void main() {
     expect(summary.artists, {'Artist': 120000});
     expect(summary.days.length, 2);
   });
+
+  test(
+    'artist artwork uses the most listened track with an available cover',
+    () {
+      final summary = ListeningSummary(
+        tracks: [
+          ListeningTotal(_one, 180000, 3),
+          ListeningTotal(
+            const ListeningTrack(
+              key: 'other',
+              title: 'Other',
+              artist: 'Other Artist',
+              album: 'Other Album',
+              artwork: 'https://example.com/other.jpg',
+            ),
+            60000,
+            1,
+          ),
+          ListeningTotal(
+            const ListeningTrack(
+              key: 'less',
+              title: 'Less',
+              artist: 'Artist',
+              album: 'Another Album',
+              artwork: 'https://example.com/less.jpg',
+            ),
+            30000,
+            1,
+          ),
+          ListeningTotal(
+            const ListeningTrack(
+              key: 'more',
+              title: 'More',
+              artist: 'Artist',
+              album: 'Album',
+              artwork: ' file:///covers/album.jpg ',
+            ),
+            120000,
+            2,
+          ),
+        ],
+      );
+      expect(summary.artistArtwork, {
+        'Artist': 'file:///covers/album.jpg',
+        'Other Artist': 'https://example.com/other.jpg',
+      });
+      expect(
+        ListeningSummary(
+          tracks: [ListeningTotal(_one, 60000, 1)],
+        ).artistArtwork,
+        isEmpty,
+      );
+    },
+  );
 }
