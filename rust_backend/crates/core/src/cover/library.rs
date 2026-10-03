@@ -69,6 +69,15 @@ pub fn library_thumbnail(
         return Ok(thumbnail);
     }
     let resized = super::resize(data, super::LIBRARY_MAX_DIMENSION, check)?;
+    if let std::borrow::Cow::Owned(thumbnail) = &resized
+        && data.len().saturating_add(thumbnail.len()) > MAX_BYTES
+    {
+        check()?;
+        let std::borrow::Cow::Owned(thumbnail) = resized else {
+            unreachable!("owned resized thumbnail");
+        };
+        return Ok(thumbnail.into());
+    }
     let original: Arc<[u8]> = data.into();
     let thumbnail = match resized {
         std::borrow::Cow::Borrowed(_) => original.clone(),
@@ -107,6 +116,27 @@ mod tests {
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(super::super::dimensions(&first), (800, 800));
         assert!(library_thumbnail(png.get_ref(), &|| Err("cancelled".into())).is_err());
+    }
+
+    #[test]
+    fn oversized_original_still_returns_a_resized_thumbnail() {
+        let mut png = Cursor::new(Vec::new());
+        ImageBuffer::from_pixel(1000, 1000, Rgb([30_u8, 90, 150]))
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+        // Trailing bytes leave the decoded pixels unchanged but put the
+        // original beyond the cache budget.
+        png.get_mut().resize(MAX_BYTES + 1, 0);
+        let thumbnail = library_thumbnail(png.get_ref(), &|| Ok(())).unwrap();
+        assert_eq!(super::super::dimensions(&thumbnail), (800, 800));
+        assert!(thumbnail.len() < MAX_BYTES);
+        let cache = CACHE.get().unwrap().lock().unwrap();
+        assert!(
+            cache
+                .entries
+                .iter()
+                .all(|entry| entry.original.len() <= MAX_BYTES)
+        );
     }
 
     #[test]
