@@ -208,6 +208,7 @@ internal interface CoreBackend {
     fun parseCueSheet(path: String, audioDirectory: String): String
     fun parseCueSheetWithResolvedAudio(path: String, audioPath: String): String
     fun scanCueForLibrary(path: String, audioDirectory: String, virtualPrefix: String, modTime: Long, cacheKey: String): String
+    fun scanCueForLibraryWithResolvedAudio(path: String, audioPath: String, audioName: String, virtualPrefix: String, modTime: Long, cacheKey: String): String
     fun editFileMetadata(path: String, metadataJson: String): String
     fun reEnrichFile(requestJson: String): String
     fun rewriteSplitArtistTags(path: String, artist: String, albumArtist: String): String

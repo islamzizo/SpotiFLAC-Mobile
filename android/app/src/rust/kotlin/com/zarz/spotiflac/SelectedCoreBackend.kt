@@ -363,6 +363,32 @@ internal object RustCoreBackend : CoreBackend {
         }
     }
 
+    override fun scanCueForLibraryWithResolvedAudio(path: String, audioPath: String, audioName: String, virtualPrefix: String, modTime: Long, cacheKey: String): String {
+        val cue = File(path).canonicalFile
+        fun scan(descriptor: Int): String {
+            // Artwork remains optional, as in the filesystem CUE scanner.
+            // A cover extraction failure must not discard valid CUE rows.
+            val coverPath = try {
+                JSONObject(readAudioMetadata("/proc/self/fd/$descriptor", audioName, cacheKey)).optString("coverPath", "")
+            } catch (error: Exception) {
+                if (error is java.util.concurrent.CancellationException) throw error
+                android.util.Log.w("SpotiFLAC", "Could not read CUE artwork", error)
+                ""
+            }
+            return withLibraryDirectories(listOf(requireNotNull(cue.parent))) {
+                it.scanCueFileForLibraryFromDescriptor(
+                    cue.path, descriptor, audioName, virtualPrefix, modTime,
+                    coverPath, java.time.Instant.now().toString(), null,
+                )
+            }
+        }
+        val descriptor = audioPath.removePrefix("/proc/self/fd/").toIntOrNull()
+        if (audioPath.startsWith("/proc/self/fd/") && descriptor != null) return scan(descriptor)
+        return android.os.ParcelFileDescriptor.open(File(audioPath), android.os.ParcelFileDescriptor.MODE_READ_ONLY).use {
+            scan(it.fd)
+        }
+    }
+
     override fun editFileMetadata(path: String, metadataJson: String): String {
         val cover = if (metadataJson.trim() == "null") "" else JSONObject(metadataJson).optString("cover_path", "")
         return withMediaFiles(listOf(path, cover)) {

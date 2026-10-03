@@ -358,6 +358,24 @@ internal fun MainActivity.readCompleteMetadataFromUri(
     JSONObject(coreBackend.readFileMetadata(path, name)).takeUnless { it.has("error") }
 }
 
+/** Keep the resolved audio descriptor alive for quality and artwork reads.
+ * Only nonseekable providers need a staged audio copy. */
+internal fun MainActivity.scanCueFromUri(
+    cuePath: String,
+    audioUri: Uri,
+    audioName: String,
+    virtualPrefix: String,
+    modTime: Long,
+    cacheKey: String,
+): String {
+    val result = readMetadataFromUri(audioUri, audioName) { path, name ->
+        JSONObject().put("rows", coreBackend.scanCueForLibraryWithResolvedAudio(
+            cuePath, path, name, virtualPrefix, modTime, cacheKey,
+        ))
+    }
+    return result?.getString("rows") ?: error("Could not read resolved CUE audio")
+}
+
 /** Seekable remote documents need only tag reads, not a full audio download. */
 internal fun MainActivity.extractCoverFromUri(uri: Uri, outputPath: String) {
     val name = buildUriDisplayName(uri)

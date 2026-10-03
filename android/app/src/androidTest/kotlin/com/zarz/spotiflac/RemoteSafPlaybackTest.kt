@@ -13,12 +13,14 @@ import com.spotiflac.backend.readFileMetadata
 import com.spotiflac.backend.readLibraryMetadataFromDescriptor
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
+import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
@@ -116,6 +118,47 @@ class RemoteSafPlaybackTest {
             assertEquals(16, complete.getInt("bit_depth"))
             assertTrue("Metadata must not transfer 64 MiB of audio", reads.get() < 1024 * 1024)
             assertTrue(fd.fileDescriptor.valid())
+        }
+    }
+
+    @Test fun proxyCueLibraryScanReadsTagsWithoutTransferringTheAlbum() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = File(context.cacheDir, "proxy-cue-${System.nanoTime()}").apply { mkdirs() }
+        val library = File(root, "library").apply { mkdirs() }
+        val backend = createCoreBackend(context)
+        try {
+            backend.invokeApplication("initExtensionSystem", mapOf(
+                "extensions_dir" to File(root, "sources").apply { mkdirs() }.path,
+                "data_dir" to File(root, "data").apply { mkdirs() }.path,
+                "master_key" to "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                "allowed_directories" to listOf(library.path),
+            ))
+            val cue = File(library, "album.cue").apply {
+                writeText("FILE \"absent.flac\" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nINDEX 01 00:01:00\n")
+            }
+            val streamInfo = ByteBuffer.allocate(34).apply {
+                putShort(4096); putShort(4096); position(10)
+                putLong((96000L shl 44) or (1L shl 41) or (23L shl 36) or 264000L)
+            }.array()
+            val header = "fLaC".toByteArray() + byteArrayOf(0x80.toByte(), 0, 0, 34) + streamInfo + byteArrayOf(0xff.toByte(), 0xf8.toByte())
+            withProxy(header, 64L * 1024 * 1024) { fd, reads ->
+                val prefix = "content://example.documents/document/album.cue"
+                val rows = JSONArray(backend.scanCueForLibraryWithResolvedAudio(
+                    cue.path, "/proc/self/fd/${fd.fd}", "Remote.flac", prefix, 123L, "proxy-cue-cover",
+                ))
+                assertEquals(2, rows.length())
+                val last = rows.getJSONObject(1)
+                assertEquals("$prefix#track02", last.getString("filePath"))
+                assertEquals(96000, last.getInt("sampleRate"))
+                assertEquals(24, last.getInt("bitDepth"))
+                assertEquals(1, last.getInt("duration"))
+                assertTrue("CUE metadata must not transfer 64 MiB of audio", reads.get() < 1024 * 1024)
+                assertTrue(fd.fileDescriptor.valid())
+            }
+            assertFalse(File(library, "absent.flac").exists())
+        } finally {
+            backend.invokeApplication("cleanupExtensions", emptyMap<String, Any>())
+            root.deleteRecursively()
         }
     }
 }

@@ -69,6 +69,64 @@ impl ExtensionManager {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn scan_cue_file_for_library_from_descriptor(
+        &self,
+        path: String,
+        descriptor: i32,
+        hint: String,
+        virtual_prefix: String,
+        mod_time: i64,
+        cover_path: String,
+        scan_time: String,
+        lease: Option<Arc<RequestLease>>,
+    ) -> Result<String, ExtensionManagerError> {
+        let check = || check_lease(lease.as_deref());
+        check().map_err(ExtensionManagerError::Operation)?;
+        if descriptor < 0 {
+            return Err(ExtensionManagerError::Operation(
+                "invalid audio descriptor".into(),
+            ));
+        }
+        let directory = if cfg!(any(target_os = "android", target_os = "linux")) {
+            "/proc/self/fd"
+        } else {
+            "/dev/fd"
+        };
+        let audio_path = format!("{directory}/{descriptor}");
+        let mut file = open_audio_file(&audio_path).map_err(ExtensionManagerError::Operation)?;
+        let format = tags::library_extension(&audio_path, &hint);
+        let mut metadata = serde_json::json!({"coverPath":cover_path});
+        if format == "flac" {
+            if let Ok(quality) = spotiflac_core::media::probe_quality(&mut file, &check) {
+                metadata["bitDepth"] = quality.bit_depth.into();
+                metadata["sampleRate"] = quality.sample_rate.into();
+                if quality.sample_rate > 0 && quality.total_samples > 0 {
+                    metadata["duration"] =
+                        (quality.total_samples as f64 / quality.sample_rate as f64).into();
+                }
+            }
+        } else if format == "mp3"
+            && let Ok(value) = tags::read_file_metadata(&mut file, &audio_path, &hint, &check)
+        {
+            metadata["sampleRate"] = value["sample_rate"].clone();
+            metadata["duration"] = value["duration"].clone();
+        }
+        check().map_err(ExtensionManagerError::Operation)?;
+        self.inner
+            .scan_cue_file_for_library_with_metadata(
+                &path,
+                &hint,
+                &metadata.to_string(),
+                &virtual_prefix,
+                mod_time,
+                &scan_time,
+                &check,
+            )
+            .map(|value| value.to_string())
+            .map_err(ExtensionManagerError::Operation)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn scan_cue_file_for_library(
         &self,
         path: String,

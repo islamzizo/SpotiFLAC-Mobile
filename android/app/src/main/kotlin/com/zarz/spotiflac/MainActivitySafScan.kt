@@ -1089,7 +1089,6 @@ internal fun MainActivity.scanSafTree(
             updateSafScanProgress { it.currentFile = cueName }
 
             var tempCuePath: String? = null
-            var tempAudioPath: String? = null
             try {
                 tempCuePath = copyUriToTemp(cueDoc.uri, ".cue", cueName)
                 if (tempCuePath == null) {
@@ -1121,36 +1120,19 @@ internal fun MainActivity.scanSafTree(
                     continue
                 }
 
-                val tempDir = File(tempCuePath).parent ?: cacheDir.absolutePath
                 val audioName = try { audioDoc.name ?: "audio.flac" } catch (_: Exception) { "audio.flac" }
-                val audioExt = audioName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                val fallbackAudioExt = if (audioExt.isNotBlank()) ".$audioExt" else null
                 val audioLastModified = try { audioDoc.lastModified() } catch (_: Exception) { cueDoc.lastModified() }
                 val coverCacheKey = buildLibraryCoverCacheKey(
                     audioDoc.uri.toString(),
                     audioLastModified,
                 )
 
-                tempAudioPath = copyUriToTemp(audioDoc.uri, fallbackAudioExt)
-                if (tempAudioPath == null) {
-                    reportLibraryScanError(audioDoc.uri.toString(), "Read CUE audio", "Failed to copy audio for $cueName")
-                    errors++
-                    scanned++
-                    continue
-                }
-
-                val renamedAudio = File(tempDir, audioName)
-                val tempAudioFile = File(tempAudioPath)
-                if (renamedAudio.absolutePath != tempAudioFile.absolutePath) {
-                    tempAudioFile.renameTo(renamedAudio)
-                    tempAudioPath = renamedAudio.absolutePath
-                }
-
                 val cueLastModified = cue.lastModified
 
-                val cueResultsJson = coreBackend.scanCueForLibrary(
+                val cueResultsJson = scanCueFromUri(
                     tempCuePath,
-                    tempDir,
+                    audioDoc.uri,
+                    audioName,
                     cueDoc.uri.toString(),
                     cueLastModified,
                     coverCacheKey,
@@ -1168,7 +1150,6 @@ internal fun MainActivity.scanSafTree(
                 reportLibraryScanError(cueUri, "Scan CUE", e.message ?: e.javaClass.simpleName)
             } finally {
                 try { tempCuePath?.let { File(it).delete() } } catch (_: Exception) {}
-                try { tempAudioPath?.let { File(it).delete() } } catch (_: Exception) {}
             }
 
             scanned++
@@ -1521,7 +1502,6 @@ internal fun MainActivity.scanSafTreeIncremental(
             updateSafScanProgress { it.currentFile = cueName }
 
             var tempCuePath: String? = null
-            var tempAudioPath: String? = null
             try {
                 tempCuePath = copyUriToTemp(cueDoc.uri, ".cue", cueName)
                 if (tempCuePath == null) {
@@ -1549,34 +1529,17 @@ internal fun MainActivity.scanSafTreeIncremental(
 
                 cueReferencedAudioUris.add(audioDoc.uri.toString())
 
-                val tempDir = File(tempCuePath).parent ?: cacheDir.absolutePath
                 val audioName = try { audioDoc.name ?: "audio.flac" } catch (_: Exception) { "audio.flac" }
-                val audioExt = audioName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                val fallbackAudioExt = if (audioExt.isNotBlank()) ".$audioExt" else null
                 val audioLastModified = try { audioDoc.lastModified() } catch (_: Exception) { cueLastModified }
                 val coverCacheKey = buildLibraryCoverCacheKey(
                     audioDoc.uri.toString(),
                     audioLastModified,
                 )
 
-                tempAudioPath = copyUriToTemp(audioDoc.uri, fallbackAudioExt)
-                if (tempAudioPath == null) {
-                    reportLibraryScanError(audioDoc.uri.toString(), "Read CUE audio", "Failed to copy audio for $cueName")
-                    errors++
-                    scanned++
-                    continue
-                }
-
-                val renamedAudio = File(tempDir, audioName)
-                val tempAudioFile = File(tempAudioPath)
-                if (renamedAudio.absolutePath != tempAudioFile.absolutePath) {
-                    tempAudioFile.renameTo(renamedAudio)
-                    tempAudioPath = renamedAudio.absolutePath
-                }
-
-                val cueResultsJson = coreBackend.scanCueForLibrary(
+                val cueResultsJson = scanCueFromUri(
                     tempCuePath,
-                    tempDir,
+                    audioDoc.uri,
+                    audioName,
                     cueDoc.uri.toString(),
                     cueLastModified,
                     coverCacheKey,
@@ -1597,7 +1560,6 @@ internal fun MainActivity.scanSafTreeIncremental(
                 reportLibraryScanError(cueDoc.uri.toString(), "Scan CUE", e.message ?: e.javaClass.simpleName)
             } finally {
                 try { tempCuePath?.let { File(it).delete() } } catch (_: Exception) {}
-                try { tempAudioPath?.let { File(it).delete() } } catch (_: Exception) {}
             }
 
             scanned++
