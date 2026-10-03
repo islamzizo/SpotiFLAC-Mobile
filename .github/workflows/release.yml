@@ -70,6 +70,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      - name: Prepare pinned Discord SDK
+        uses: ./.github/actions/discord-sdk
+        with:
+          passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
+
       - name: Setup Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
@@ -240,6 +245,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      - name: Prepare pinned Discord SDK
+        uses: ./.github/actions/discord-sdk
+        with:
+          passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
+
       - name: Select Xcode 26.1.1
         run: |
           sudo xcode-select -s /Applications/Xcode_26.1.1.app
@@ -334,7 +344,7 @@ jobs:
           mkdir Payload
           cp -r Runner.app Payload/
           # Use absolute path to avoid relative path issues
-          zip -r $GITHUB_WORKSPACE/build/ios/ipa/SpotiFLAC-${VERSION}-ios-unsigned.ipa Payload
+          zip -r "$GITHUB_WORKSPACE/build/ios/ipa/SpotiFLAC-${VERSION}-ios-unsigned.ipa" Payload
           rm -rf Payload
 
       - name: Verify IPA created
@@ -517,8 +527,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add apps.json
-          git diff --cached --quiet && echo "No changes to commit" || \
-            (git commit -m "chore: update AltStore source to ${VERSION}" && git push)
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update AltStore source to ${VERSION}"
+            git push
+          fi
 
   notify-telegram:
     runs-on: ubuntu-latest

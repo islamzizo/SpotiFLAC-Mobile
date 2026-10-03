@@ -14,10 +14,19 @@ bash scripts/setup_discord_sdk.sh /path/to/discord_social_sdk
 flutter pub get
 ```
 
-On CI, provide the official SDK through the build environment and run the same
-script before building. Vendor binaries and their license notices stay under
-the ignored `sdk/` and `ios/Frameworks/` directories; do not commit developer credentials or rehost SDK
-downloads. Distributions containing the SDK must include its license notices
+CI prepares the pinned mobile SDK with `.github/actions/discord-sdk` before
+building. Its AES-256 encrypted payload contains only the Android AAR, iOS
+XCFramework, C++ header and license notices from the official download. Set the
+Actions repository secret `DISCORD_MOBILE_SDK_PASSPHRASE` to the payload's key.
+The helper verifies SHA-256 checksums for all 16 required files before staging
+them. A missing key, failed decryption or changed SDK stops the build.
+
+Decrypted vendor binaries and notices stay under the ignored `.dart_tool/`,
+`sdk/` and `ios/Frameworks/` directories. Do not commit the encryption key,
+developer credentials or unencrypted SDK downloads. This uses GitHub's
+[large-secret storage pattern](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets#storing-large-secrets);
+the portal's signed download link expires after one hour and is unsuitable for
+release automation. Distributions containing the SDK must include its license notices
 and follow Discord's SDK terms. The setup script stages notices for inclusion
 in Android assets and iOS resources. Without these files the app still builds, but
 the presence setting reports that the SDK is unavailable. A clean clone alone
@@ -31,8 +40,9 @@ as unavailable; the staged SDK files are retained for subsequent full builds.
 Production Android builds use `bash scripts/build_android.sh --production`,
 which forces Discord on, checks the staged SDK and audits it in every APK ABI.
 `--production --lite` is rejected. Release CI requires the SDK on both platforms
-and stops before publication if the SDK is absent. Provision the official SDK
-in the build environment before running that workflow.
+and stops before publication if the SDK is absent. CI on trusted branches also
+builds with Discord; fork PRs run native/debug checks and explicit Lite builds
+without receiving the decryption key.
 
 Android uses the installed Discord app's signed-in session (Social SDK 1.10+).
 The AAR and CMake use the same staged native library; the host packages one copy

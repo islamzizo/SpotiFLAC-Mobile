@@ -53,8 +53,9 @@ AGENTS.md
 /android/*.keystore
 /android/app/*.jks
 
-# Keep obsolete local SDK copies out of the checkout.
+# Only the pinned encrypted CI payload belongs in the checkout.
 /third_party/discord/*
+!/third_party/discord/discord-mobile-1.10.19337.zip.gpg
 
 # iOS generated state
 /ios/build/
