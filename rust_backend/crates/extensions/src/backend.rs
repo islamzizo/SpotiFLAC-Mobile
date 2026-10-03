@@ -225,6 +225,10 @@ impl Backend {
             .cleanup_connections()
             .map_err(|error| error.to_string())?;
         if under_pressure {
+            self.manager
+                .environment()
+                .clear_isrc_cache()
+                .map_err(|error| error.to_string())?;
             self.cover.clear();
             self.lyrics
                 .drop_memory()
