@@ -760,23 +760,30 @@ final class RustCoreBackend: CoreBackend {
             try completeSessionGrant(current, id: string("extension_id"), grant: string("grant"))
             return true
         case "getLyricsLRC", "getLyricsLRCWithSource", "fetchAndSaveLyrics":
-            let request = LyricsRequest(
-                spotifyId: string("spotify_id"),
-                track: string("track_name"),
-                artist: string("artist_name"),
-                filePath: string(method == "fetchAndSaveLyrics" ? "audio_file_path" : "file_path"),
-                durationMs: (args["duration_ms"] as? NSNumber)?.int64Value ?? 0
-            )
-            if method == "getLyricsLRC" { return try current.getLyricsLrc(request: request, lease: nil) }
-            if method == "getLyricsLRCWithSource" { return try current.getLyricsLrcWithSource(request: request, lease: nil) }
-            try current.fetchAndSaveLyrics(request: request, outputPath: string("output_path"), lease: nil)
-            return "{\"success\":true}"
+            let source = string(method == "fetchAndSaveLyrics" ? "audio_file_path" : "file_path")
+            let output = method == "fetchAndSaveLyrics" ? string("output_path") : ""
+            return try withMediaFiles([source, output]) { manager -> Any? in
+                let request = LyricsRequest(
+                    spotifyId: string("spotify_id"),
+                    track: string("track_name"),
+                    artist: string("artist_name"),
+                    filePath: mediaPath(source),
+                    durationMs: (args["duration_ms"] as? NSNumber)?.int64Value ?? 0
+                )
+                if method == "getLyricsLRC" { return try manager.getLyricsLrc(request: request, lease: nil) }
+                if method == "getLyricsLRCWithSource" { return try manager.getLyricsLrcWithSource(request: request, lease: nil) }
+                try manager.fetchAndSaveLyrics(request: request, outputPath: mediaPath(output), lease: nil)
+                return "{\"success\":true}"
+            }
         case "runPostProcessingV2":
             return try withFFmpegCommands(current) {
                 try current.runPostProcessing(inputJson: string("input"), metadataJson: string("metadata"), timeoutMs: 120_000)
             }
         case "embedLyricsToFile":
-            return try current.embedLyricsToFile(path: string("file_path"), lyrics: string("lyrics"), lease: nil)
+            let path = string("file_path")
+            return try withMediaFiles([path]) {
+                try $0.embedLyricsToFile(path: mediaPath(path), lyrics: string("lyrics"), lease: nil)
+            }
         case "setProviderPriority", "setMetadataProviderPriority":
             try current.setProviderPriority(kind: method == "setProviderPriority" ? "download" : "metadata", ids: ids(string("priority", "[]")))
             return nil

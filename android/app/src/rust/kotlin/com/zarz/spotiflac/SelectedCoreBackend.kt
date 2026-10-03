@@ -558,7 +558,7 @@ internal object RustCoreBackend : CoreBackend {
             string("spotify_id"),
             string("track_name"),
             string("artist_name"),
-            string(fileKey),
+            mediaPath(string(fileKey)),
             (args["duration_ms"] as? Number)?.toLong() ?: 0L,
         )
         fun ids(raw: String): List<String> {
@@ -826,16 +826,19 @@ internal object RustCoreBackend : CoreBackend {
                     null
                 }
             }
-            "getLyricsLRC" -> current.getLyricsLrc(lyricsRequest("file_path"), null)
-            "getLyricsLRCWithSource" -> current.getLyricsLrcWithSource(lyricsRequest("file_path"), null)
-            "embedLyricsToFile" -> current.embedLyricsToFile(
-                string("file_path"),
-                string("lyrics"),
-                null,
-            )
+            "getLyricsLRC", "getLyricsLRCWithSource" -> withMediaFiles(listOf(string("file_path"))) {
+                val request = lyricsRequest("file_path")
+                if (method == "getLyricsLRC") it.getLyricsLrc(request, null)
+                else it.getLyricsLrcWithSource(request, null)
+            }
+            "embedLyricsToFile" -> withMediaFiles(listOf(string("file_path"))) {
+                it.embedLyricsToFile(mediaPath(string("file_path")), string("lyrics"), null)
+            }
             "fetchAndSaveLyrics" -> try {
-                current.fetchAndSaveLyrics(lyricsRequest("audio_file_path"), string("output_path"), null)
-                """{"success":true}"""
+                withMediaFiles(listOf(string("audio_file_path"), string("output_path"))) {
+                    it.fetchAndSaveLyrics(lyricsRequest("audio_file_path"), mediaPath(string("output_path")), null)
+                    """{"success":true}"""
+                }
             } catch (error: Exception) {
                 JSONObject().put("success", false).put("error", error.message ?: "Lyrics operation failed").toString()
             }
