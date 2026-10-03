@@ -6,6 +6,36 @@ import 'package:spotiflac_android/screens/settings/log_screen.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 void main() {
+  test(
+    'native log batches notify once and preserve redaction and capacity',
+    () {
+      final buffer = LogBuffer()..clear();
+      var updates = 0;
+      void listener() => updates++;
+      buffer.addListener(listener);
+      addTearDown(() {
+        buffer.removeListener(listener);
+        buffer.clear();
+      });
+      buffer.addAll([
+        for (var index = 0; index < 600; index++)
+          LogEntry(
+            timestamp: DateTime(2026),
+            level: 'ERROR',
+            tag: 'Native',
+            message: '$index -decryption_key secret-value',
+          ),
+      ]);
+      expect(updates, 1);
+      expect(buffer.length, LogBuffer.maxEntries);
+      expect(buffer.entries.first.message, startsWith('100 '));
+      expect(buffer.entries.last.message, startsWith('599 '));
+      expect(formatLogEntries(buffer.entries), isNot(contains('secret-value')));
+      buffer.addAll(const []);
+      expect(updates, 1);
+    },
+  );
+
   test('selected log export keeps chronological lines only', () {
     final entries = [
       LogEntry(

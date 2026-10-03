@@ -142,8 +142,21 @@ class LogBuffer extends ChangeNotifier {
   int get length => _entries.length;
 
   void add(LogEntry entry) {
+    if (_append(entry)) notifyListeners();
+  }
+
+  /// A native poll is one UI update, even when it contains hundreds of logs.
+  void addAll(Iterable<LogEntry> entries) {
+    var changed = false;
+    for (final entry in entries) {
+      changed = _append(entry) || changed;
+    }
+    if (changed) notifyListeners();
+  }
+
+  bool _append(LogEntry entry) {
     if (!_loggingEnabled && entry.level != 'ERROR' && entry.level != 'FATAL') {
-      return;
+      return false;
     }
 
     final sanitizedMessage = _truncateLogText(
@@ -172,7 +185,7 @@ class LogBuffer extends ChangeNotifier {
       _entries.removeFirst();
     }
     _entries.add(sanitizedEntry);
-    notifyListeners();
+    return true;
   }
 
   void startGoLogPolling() {
@@ -200,6 +213,7 @@ class LogBuffer extends ChangeNotifier {
       final logs = result['logs'] as List<dynamic>? ?? [];
       final nextIndex = result['next_index'] as int? ?? _lastGoLogIndex;
       final keepNonErrorLogs = _loggingEnabled;
+      final entries = <LogEntry>[];
 
       for (final log in logs.whereType<Map<Object?, Object?>>()) {
         final logMap = Map<String, dynamic>.from(log);
@@ -231,7 +245,7 @@ class LogBuffer extends ChangeNotifier {
           } catch (_) {}
         }
 
-        add(
+        entries.add(
           LogEntry(
             timestamp: parsedTime,
             level: level,
@@ -242,6 +256,7 @@ class LogBuffer extends ChangeNotifier {
         );
       }
 
+      addAll(entries);
       _lastGoLogIndex = nextIndex;
     } catch (e) {
       if (kDebugMode) {
