@@ -229,6 +229,19 @@ impl Read for RangeReader<'_> {
     }
 }
 
+impl Seek for RangeReader<'_> {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        let next = match position {
+            SeekFrom::Start(n) => i128::from(n),
+            SeekFrom::Current(n) => i128::from(self.position) + i128::from(n),
+            SeekFrom::End(n) => i128::from(self.size) + i128::from(n),
+        };
+        self.position =
+            u64::try_from(next).map_err(|_| io::Error::other("invalid metadata seek"))?;
+        Ok(self.position)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -409,18 +422,5 @@ mod tests {
         }
         let fixture = Fixture::new(vec![0; 1024 * 1024], false);
         assert!(read(&fixture.url, "song.flac", &|| Ok(())).is_err());
-    }
-}
-
-impl Seek for RangeReader<'_> {
-    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
-        let next = match position {
-            SeekFrom::Start(n) => i128::from(n),
-            SeekFrom::Current(n) => i128::from(self.position) + i128::from(n),
-            SeekFrom::End(n) => i128::from(self.size) + i128::from(n),
-        };
-        self.position =
-            u64::try_from(next).map_err(|_| io::Error::other("invalid metadata seek"))?;
-        Ok(self.position)
     }
 }
