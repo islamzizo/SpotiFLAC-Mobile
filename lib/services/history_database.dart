@@ -1269,21 +1269,24 @@ class HistoryDatabase {
     if (ids.isEmpty) return 0;
 
     final db = await database;
-    var totalDeleted = 0;
-    const chunkSize = 500;
-    for (var i = 0; i < ids.length; i += chunkSize) {
-      final end = (i + chunkSize < ids.length) ? i + chunkSize : ids.length;
-      final chunk = ids.sublist(i, end);
-      final placeholders = List.filled(chunk.length, '?').join(',');
-      await db.rawDelete(
-        'DELETE FROM history_path_keys WHERE item_id IN ($placeholders)',
-        chunk,
-      );
-      totalDeleted += await db.rawDelete(
-        'DELETE FROM history WHERE id IN ($placeholders)',
-        chunk,
-      );
-    }
+    final totalDeleted = await db.transaction((txn) async {
+      var deleted = 0;
+      const chunkSize = 500;
+      for (var i = 0; i < ids.length; i += chunkSize) {
+        final end = (i + chunkSize < ids.length) ? i + chunkSize : ids.length;
+        final chunk = ids.sublist(i, end);
+        final placeholders = List.filled(chunk.length, '?').join(',');
+        await txn.rawDelete(
+          'DELETE FROM history_path_keys WHERE item_id IN ($placeholders)',
+          chunk,
+        );
+        deleted += await txn.rawDelete(
+          'DELETE FROM history WHERE id IN ($placeholders)',
+          chunk,
+        );
+      }
+      return deleted;
+    });
     _log.i('Deleted $totalDeleted orphaned entries');
     return totalDeleted;
   }

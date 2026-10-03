@@ -6,6 +6,7 @@ import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/history_database.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -16,6 +17,13 @@ class PlaybackState {
 }
 
 class PlaybackController extends Notifier<PlaybackState> {
+  PlaybackController({LibraryDatabase? library, HistoryDatabase? history})
+    : _library = library ?? LibraryDatabase.instance,
+      _history = history ?? HistoryDatabase.instance;
+
+  final LibraryDatabase _library;
+  final HistoryDatabase _history;
+
   @override
   PlaybackState build() => const PlaybackState();
 
@@ -148,9 +156,42 @@ class PlaybackController extends Notifier<PlaybackState> {
     if (tracks.isEmpty) return;
 
     final safeStart = startIndex.clamp(0, tracks.length - 1);
-    final resolvedPaths = await resolveTrackFilePaths(tracks);
+    List<String?>? resolvedPaths;
+    String? networkSource;
+    if (ref.read(settingsProvider).playerMode != 'internal') {
+      var skippedCueVirtualTrack = false;
+      // External playback opens one file. Resolve only candidates actually
+      // visited, preserving the original forward/wrap fallback order.
+      for (var offset = 0; offset < tracks.length; offset++) {
+        final index = (safeStart + offset) % tracks.length;
+        final path = (await resolveTrackFilePaths([tracks[index]])).single;
+        if (path == null) continue;
+        if (isCueVirtualPath(path)) {
+          skippedCueVirtualTrack = true;
+          continue;
+        }
+        if (path.startsWith('network://')) {
+          // Network identities require the internal proxy-aware player.
+          networkSource = path;
+          resolvedPaths = await resolveTrackFilePaths(tracks);
+          break;
+        }
+        await openFile(path);
+        return;
+      }
+      if (resolvedPaths == null) {
+        throw Exception(
+          skippedCueVirtualTrack
+              ? cueVirtualTrackRequiresSplitMessage
+              : 'No local audio file is available to open. Download the track first.',
+        );
+      }
+    }
+    resolvedPaths ??= await resolveTrackFilePaths(tracks);
 
-    if (await _useInternalPlayer(source: resolvedPaths[safeStart])) {
+    if (await _useInternalPlayer(
+      source: networkSource ?? resolvedPaths[safeStart],
+    )) {
       final queue = <PlayableMedia>[];
       int? initialIndex;
       var skippedCueVirtualTrack = false;
@@ -233,7 +274,7 @@ class PlaybackController extends Notifier<PlaybackState> {
 
   Future<List<String?>> _resolveTrackPaths(List<Track> tracks) async {
     if (tracks.isEmpty) return const [];
-    final localFuture = LibraryDatabase.instance.findExistingBatch([
+    final localFuture = _library.findExistingBatch([
       for (final track in tracks)
         LocalLibraryBatchLookupRequest(
           id: (track.source ?? '').toLowerCase() == 'local' ? track.id : null,
@@ -242,7 +283,7 @@ class PlaybackController extends Notifier<PlaybackState> {
           artistName: track.artistName,
         ),
     ]);
-    final historyFuture = HistoryDatabase.instance.findExistingTracks([
+    final historyFuture = _history.findExistingTracks([
       for (final track in tracks)
         HistoryLookupRequest(
           spotifyId: track.id,
@@ -256,12 +297,42 @@ class PlaybackController extends Notifier<PlaybackState> {
 
     final results = List<String?>.filled(tracks.length, null);
     final existsChecks = <String, Future<bool>>{};
+    final unknownSafPaths = <String>{};
+    final safPaths = <String>{
+      for (final row in [...localMatches, ...historyMatches])
+        if (isContentUri(
+          stripCueTrackSuffix(row?['filePath']?.toString() ?? ''),
+        ))
+          stripCueTrackSuffix(row!['filePath'].toString()),
+    }.toList(growable: false);
+    for (var start = 0; start < safPaths.length; start += 64) {
+      final batch = safPaths.sublist(
+        start,
+        (start + 64).clamp(0, safPaths.length),
+      );
+      try {
+        final checks = await PlatformBridge.safExistsBatch(batch);
+        for (final path in batch) {
+          final exists = checks[path];
+          if (exists != null) {
+            existsChecks[path] = Future.value(exists);
+          } else {
+            unknownSafPaths.add(path);
+          }
+        }
+      } catch (_) {
+        // Older bindings may lack the batch API; retain per-file fallback.
+        unknownSafPaths.addAll(batch);
+      }
+    }
     final invalidHistoryIds = <String>{};
     var next = 0;
     final workerCount = tracks.length < 8 ? tracks.length : 8;
 
-    Future<bool> pathExists(String path) =>
-        existsChecks.putIfAbsent(path, () => fileExists(path));
+    Future<bool> pathExists(String path) {
+      final realPath = stripCueTrackSuffix(path);
+      return existsChecks.putIfAbsent(realPath, () => fileExists(path));
+    }
 
     Future<void> worker() async {
       while (true) {
@@ -280,15 +351,16 @@ class PlaybackController extends Notifier<PlaybackState> {
           continue;
         }
         final historyId = historyMatch?['id']?.toString() ?? '';
-        if (historyId.isNotEmpty) invalidHistoryIds.add(historyId);
+        if (historyId.isNotEmpty &&
+            !unknownSafPaths.contains(stripCueTrackSuffix(historyPath))) {
+          invalidHistoryIds.add(historyId);
+        }
       }
     }
 
     await Future.wait(List.generate(workerCount, (_) => worker()));
     final historyNotifier = ref.read(downloadHistoryProvider.notifier);
-    for (final id in invalidHistoryIds) {
-      historyNotifier.removeFromHistory(id);
-    }
+    await historyNotifier.removeManyFromHistory(invalidHistoryIds);
     return results;
   }
 }

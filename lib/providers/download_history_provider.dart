@@ -80,6 +80,9 @@ String? resolvePersistedHistoryQuality({
 }
 
 class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
+  DownloadHistoryNotifier({HistoryDatabase? database})
+    : _db = database ?? HistoryDatabase.instance;
+
   static const int _initialHistoryLoadLimit = 100;
   static const int _safRepairMaxPerLaunch = 60;
   static const int _orphanCleanupMaxPerLaunch = 80;
@@ -97,7 +100,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
   static const _audioProbeFailedPathsKey =
       'history_audio_probe_failed_paths_v1';
   static const _audioProbeFailedPathsMax = 300;
-  final HistoryDatabase _db = HistoryDatabase.instance;
+  final HistoryDatabase _db;
   bool _isLoaded = false;
   bool _isSafRepairInProgress = false;
   bool _isAudioMetadataBackfillInProgress = false;
@@ -416,6 +419,32 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
         .then((_) {
           _bumpHistoryRevision();
         });
+  }
+
+  Future<void> removeManyFromHistory(Iterable<String> ids) async {
+    final removedIds = ids.toSet();
+    if (removedIds.isEmpty) return;
+    // Persist first: a failed deletion must not invalidate every Library view
+    // or silently remove an entry from the visible history snapshot.
+    try {
+      final deletedCount = await _db.deleteByIds(removedIds.toList());
+      if (deletedCount == 0) return;
+      state = state.copyWith(
+        items: state.items
+            .where((item) => !removedIds.contains(item.id))
+            .toList(),
+        totalCount: (state.totalCount - deletedCount).clamp(
+          0,
+          state.totalCount,
+        ),
+        lookupItems: state.lookupItems
+            .where((item) => !removedIds.contains(item.id))
+            .toList(growable: false),
+        loadedIndexVersion: state.loadedIndexVersion + 1,
+      );
+    } catch (error) {
+      _historyLog.e('Failed to delete from database: $error');
+    }
   }
 
   DownloadHistoryItem? getBySpotifyId(String spotifyId) {

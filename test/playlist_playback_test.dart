@@ -57,6 +57,7 @@ class _Player extends MusicPlayerController {
 }
 
 class _Playback extends PlaybackController {
+  final List<List<String>> resolvedRequests = [];
   final Map<String, String?> paths = {
     'First': 'content://library/first',
     'Selected': 'content://library/selected',
@@ -64,9 +65,10 @@ class _Playback extends PlaybackController {
   };
 
   @override
-  Future<List<String?>> resolveTrackFilePaths(List<Track> tracks) async => [
-    for (final track in tracks) paths[track.id],
-  ];
+  Future<List<String?>> resolveTrackFilePaths(List<Track> tracks) async {
+    resolvedRequests.add(tracks.map((track) => track.id).toList());
+    return [for (final track in tracks) paths[track.id]];
+  }
 }
 
 class _Collections extends LibraryCollectionsNotifier {
@@ -278,5 +280,54 @@ void main() {
       containsPair('uri', 'content://library/selected'),
     );
     expect(player.index, isNull);
+    expect(playback.resolvedRequests, [
+      ['Selected'],
+    ]);
   });
+
+  test('external mode skips unavailable and CUE candidates lazily', () async {
+    container.read(settingsProvider.notifier).setPlayerMode('external');
+    playback.paths['Selected'] = '/album.cue#track02';
+    const channel = MethodChannel('com.zarz.spotiflac/backend');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await container
+        .read(playbackProvider.notifier)
+        .playTrackList(_tracks, startIndex: 1);
+    expect(playback.resolvedRequests, [
+      ['Unavailable'],
+      ['Selected'],
+      ['Last'],
+    ]);
+    expect(
+      calls.single.arguments,
+      containsPair('uri', 'content://library/last'),
+    );
+  });
+
+  test(
+    'external mode routes a network fallback to the internal queue',
+    () async {
+      container.read(settingsProvider.notifier).setPlayerMode('external');
+      playback.paths['Selected'] = 'network://storage/track.flac';
+      await container
+          .read(playbackProvider.notifier)
+          .playTrackList(_tracks, startIndex: 1);
+      expect(
+        player.queue[player.index!].source,
+        'network://storage/track.flac',
+      );
+      expect(playback.resolvedRequests.take(2), [
+        ['Unavailable'],
+        ['Selected'],
+      ]);
+      expect(playback.resolvedRequests.last, _tracks.map((track) => track.id));
+    },
+  );
 }
