@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
+import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 
 class AutoMixSettings extends ConsumerStatefulWidget {
@@ -16,6 +17,53 @@ class _AutoMixSettingsState extends ConsumerState<AutoMixSettings> {
   double? _duration;
   double? _pitch;
   double? _speed;
+
+  void _showEffectPicker(
+    BuildContext context,
+    AutoMixEffect current,
+    Map<AutoMixEffect, String> names,
+  ) {
+    final notifier = ref.read(settingsProvider.notifier);
+    showAppBottomSheet<void>(
+      context: context,
+      useRootNavigator: true,
+      title: context.l10n.autoMixEffect,
+      maxHeightFactor: 0.85,
+      builder: (sheetContext) => SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final effect in AutoMixEffect.values)
+              Semantics(
+                selected: effect == current,
+                child: AppSheetOption(
+                  leading: Icon(switch (effect) {
+                    AutoMixEffect.auto => Icons.auto_awesome,
+                    AutoMixEffect.crossfade => Icons.compare_arrows,
+                    AutoMixEffect.muffled => Icons.graphic_eq,
+                    AutoMixEffect.echo => Icons.surround_sound,
+                    AutoMixEffect.pitch => Icons.music_note,
+                    AutoMixEffect.custom => Icons.tune,
+                  }),
+                  title: Text(names[effect]!),
+                  trailing: effect == current
+                      ? Icon(
+                          Icons.check,
+                          color: Theme.of(sheetContext).colorScheme.primary,
+                        )
+                      : null,
+                  onTap: () {
+                    notifier.setAutoMixEffect(effect);
+                    Navigator.pop(sheetContext);
+                  },
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -83,21 +131,13 @@ class _AutoMixSettingsState extends ConsumerState<AutoMixSettings> {
               setState(() => _duration = null);
             },
           ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: DropdownButtonFormField<AutoMixEffect>(
-            initialValue: settings.autoMixEffect,
-            decoration: InputDecoration(labelText: l10n.autoMixEffect),
-            items: [
-              for (final effect in AutoMixEffect.values)
-                DropdownMenuItem(value: effect, child: Text(names[effect]!)),
-            ],
-            onChanged: enabled
-                ? (value) {
-                    if (value != null) notifier.setAutoMixEffect(value);
-                  }
-                : null,
-          ),
+        SettingsItem(
+          icon: Icons.tune,
+          title: l10n.autoMixEffect,
+          subtitle: names[settings.autoMixEffect],
+          onTap: enabled
+              ? () => _showEffectPicker(context, settings.autoMixEffect, names)
+              : null,
         ),
         if (settings.autoMixEffect == AutoMixEffect.pitch ||
             settings.autoMixEffect == AutoMixEffect.custom)
