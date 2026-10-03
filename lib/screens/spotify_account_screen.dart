@@ -131,6 +131,11 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   void _openQueueFromSpotify() {
     if (!mounted) return;
     context.go('/');
+    // Spotify can be opened from a pushed Settings page while the router is
+    // already at '/'. Clear that overlay before selecting Library.
+    ShellNavigationService.homeTabNavigatorKey.currentState?.popUntil(
+      (route) => route.isFirst,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // The Spotify route may be disposed by context.go('/'), so do not gate
       // this callback on the Spotify State remaining mounted. The shell is
@@ -158,6 +163,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
         MaterialPageRoute<void>(
           builder: (_) => SpotifyNavigationScope(
             onViewQueue: _openQueueFromSpotify,
+            navigatorKey: _spotifyNavigatorKey,
             child: PlaylistScreen(
               playlistName: playlist.name,
               coverUrl: playlist.coverUrl,
