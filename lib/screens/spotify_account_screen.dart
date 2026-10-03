@@ -164,18 +164,11 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       }
       await _spotifyNavigatorKey.currentState?.push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => SpotifyNavigationScope(
-            onViewQueue: _openQueueFromSpotify,
-            navigatorKey: _spotifyNavigatorKey,
-            push: (builder) => _spotifyNavigatorKey.currentState?.push<void>(
-              MaterialPageRoute<void>(builder: builder),
-            ),
-            child: PlaylistScreen(
-              playlistName: playlist.name,
-              coverUrl: playlist.coverUrl,
-              tracks: tracks.map(_toTrack).toList(growable: false),
-              playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
-            ),
+          builder: (_) => PlaylistScreen(
+            playlistName: playlist.name,
+            coverUrl: playlist.coverUrl,
+            tracks: tracks.map(_toTrack).toList(growable: false),
+            playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
           ),
         ),
       );
@@ -195,13 +188,20 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Navigator(
-    key: _spotifyNavigatorKey,
-    onGenerateInitialRoutes: (_, _) => [
-      MaterialPageRoute<void>(
-        builder: (_) => _buildSpotifyHome(),
-      ),
-    ],
+  Widget build(BuildContext context) => SpotifyNavigationScope(
+    onViewQueue: _openQueueFromSpotify,
+    navigatorKey: _spotifyNavigatorKey,
+    push: (builder) => _spotifyNavigatorKey.currentState?.push<void>(
+      MaterialPageRoute<void>(builder: builder),
+    ),
+    child: Navigator(
+      key: _spotifyNavigatorKey,
+      onGenerateInitialRoutes: (_, _) => [
+        MaterialPageRoute<void>(
+          builder: (_) => _buildSpotifyHome(),
+        ),
+      ],
+    ),
   );
 
   Widget _buildSpotifyHome() => Scaffold(
