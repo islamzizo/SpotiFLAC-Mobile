@@ -260,7 +260,15 @@ class SettingsSearchCatalog {
           icon: Icons.compare_arrows,
           title: 'AutoMix',
           subtitle: l10n.autoMixDescription,
-          keywords: const ['crossfade', 'beat matching'],
+          keywords: const [
+            'crossfade',
+            'beat matching',
+            'duration',
+            'pitch',
+            'echo',
+            'filter',
+            'speed',
+          ],
         ),
         if (androidAudio) ...[
           SettingsSearchEntry(

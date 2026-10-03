@@ -7,11 +7,13 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/services/audio_analysis_jobs.dart';
 import 'package:spotiflac_android/services/automix_analysis.dart';
+import 'package:spotiflac_android/utils/logger.dart';
 
 /// Only short head/tail windows are decoded. Summaries are bounded in memory;
 /// raw PCM is deleted immediately and is never added to the user's library.
 class AutoMixAnalyzer {
   static const windowSeconds = 24.0;
+  final _log = AppLogger('AutoMixAnalyzer');
   final _cache = <String, AutoMixBeatGrid>{};
   final _jobs = AudioAnalysisJobs<bool>(
     start: (arguments) async {
@@ -49,7 +51,10 @@ class AutoMixAnalyzer {
     Directory? work;
     try {
       final stat = await File(path).stat();
-      if (stat.type != FileSystemEntityType.file) return null;
+      if (stat.type != FileSystemEntityType.file) {
+        _log.w('AutoMix beat analysis unavailable: input is not a file');
+        return null;
+      }
       final key =
           '$path:${stat.size}:${stat.modified.microsecondsSinceEpoch}:$offset';
       final cached = _cache.remove(key);
@@ -90,10 +95,21 @@ class AutoMixAnalyzer {
         's16le',
         output.path,
       ]);
-      if (!success || generation != _generation || !await output.exists()) {
+      if (generation != _generation) return null;
+      if (!success) {
+        _log.w('AutoMix beat analysis unavailable: native decoding failed');
         return null;
       }
-      if (await output.length() > 11025 * 2 * 25) return null;
+      if (!await output.exists()) {
+        _log.w('AutoMix beat analysis unavailable: decoded window is missing');
+        return null;
+      }
+      if (await output.length() > 11025 * 2 * 25) {
+        _log.w(
+          'AutoMix beat analysis unavailable: decoded window exceeds limit',
+        );
+        return null;
+      }
       final grid = await compute(analyzeAutoMixPcm, await output.readAsBytes());
       if (generation != _generation) return null;
       _cache[key] = grid;
@@ -103,8 +119,9 @@ class AutoMixAnalyzer {
       return grid;
     } on AudioAnalysisCancelled {
       return null;
-    } on Object {
+    } on Object catch (error) {
       // Unsupported/corrupt input must not interrupt ordinary playback.
+      _log.w('AutoMix beat analysis unavailable (${error.runtimeType})');
       return null;
     } finally {
       if (work != null && await work.exists()) {

@@ -170,6 +170,14 @@ AutoMixBeatGrid analyzeAutoMixPcm(Uint8List pcm) {
   );
 }
 
+enum AutoMixFallbackReason {
+  crossfadePreset,
+  analysisUnavailable,
+  unreliableBeats,
+  incompatibleTempo,
+  longIntro,
+}
+
 class AutoMixPlan {
   const AutoMixPlan({
     required this.start,
@@ -177,6 +185,7 @@ class AutoMixPlan {
     required this.duration,
     required this.rate,
     required this.beatMatched,
+    this.fallbackReason,
   });
 
   final Duration start;
@@ -184,6 +193,7 @@ class AutoMixPlan {
   final Duration duration;
   final double rate;
   final bool beatMatched;
+  final AutoMixFallbackReason? fallbackReason;
 
   static AutoMixPlan? create({
     required Duration outgoingDuration,
@@ -206,11 +216,16 @@ class AutoMixPlan {
     var incomingStart = 0.0;
     var rate = 1.0;
     var matched = false;
-    if (options.effect != AutoMixEffect.crossfade &&
-        outro?.reliable == true &&
-        intro?.reliable == true) {
-      final outgoing = outro!;
-      final incoming = intro!;
+    AutoMixFallbackReason? fallbackReason;
+    if (options.effect == AutoMixEffect.crossfade) {
+      fallbackReason = AutoMixFallbackReason.crossfadePreset;
+    } else if (outro == null || intro == null) {
+      fallbackReason = AutoMixFallbackReason.analysisUnavailable;
+    } else if (!outro.reliable || !intro.reliable) {
+      fallbackReason = AutoMixFallbackReason.unreliableBeats;
+    } else {
+      final outgoing = outro;
+      final incoming = intro;
       final candidates =
           [
               0.5,
@@ -221,7 +236,11 @@ class AutoMixPlan {
       final candidate = candidates.first;
       final firstBeat = incoming.beatAtOrAfter(incoming.firstSound);
       // Never stretch wildly or discard a long musical intro to force a mix.
-      if ((candidate - 1).abs() <= 0.08 && firstBeat <= 3) {
+      if ((candidate - 1).abs() > 0.08) {
+        fallbackReason = AutoMixFallbackReason.incompatibleTempo;
+      } else if (firstBeat > 3) {
+        fallbackReason = AutoMixFallbackReason.longIntro;
+      } else {
         rate = candidate;
         if (manualDuration == 0) {
           fade = (8 * outgoing.period).clamp(3.0, math.min(8.0, maximum));
@@ -240,6 +259,7 @@ class AutoMixPlan {
       duration: Duration(microseconds: (fade * 1e6).round()),
       rate: rate,
       beatMatched: matched,
+      fallbackReason: fallbackReason,
     );
   }
 }

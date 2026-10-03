@@ -39,6 +39,10 @@ class _MusicAutoMix {
     }
   }
 
+  String _beatSummary(AutoMixBeatGrid? grid) => grid == null
+      ? 'unavailable'
+      : '${grid.bpm.toStringAsFixed(2)} BPM/${grid.confidence.toStringAsFixed(3)} confidence';
+
   Set<String> get pinnedPaths => {
     ..._mixPins,
     for (final paths in _preparationPins.values) ...paths,
@@ -197,7 +201,10 @@ class _MusicAutoMix {
       _mixPins.addAll(pins);
       _plan = plan;
       _log.d(
-        'AutoMix prepared (${plan.beatMatched ? 'beat matched' : 'crossfade'}, rate=${plan.rate.toStringAsFixed(3)})',
+        'AutoMix prepared (${plan.beatMatched ? 'beat matched' : 'crossfade'}, '
+        'rate=${plan.rate.toStringAsFixed(3)}, '
+        'fallback=${plan.fallbackReason?.name ?? 'none'}, '
+        'outro=${_beatSummary(outro)}, intro=${_beatSummary(intro)})',
       );
       final position = await handler._player.getCurrentPosition();
       if (position != null && _current(generation)) onPosition(position);
