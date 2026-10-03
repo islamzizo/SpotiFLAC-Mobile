@@ -109,6 +109,7 @@ class _MainShellState extends ConsumerState<MainShell>
       ref.read(settingsProvider).playbackNormalization,
     );
     setAutoMixEnabled(ref.read(settingsProvider).autoMix);
+    setAutoMixOptions(ref.read(settingsProvider).autoMixOptions);
     unawaited(
       DiscordPresenceService.instance.setEnabled(
         ref.read(settingsProvider).discordRichPresenceEnabled,
@@ -791,6 +792,9 @@ class _MainShellState extends ConsumerState<MainShell>
     });
     ref.listen(settingsProvider.select((s) => s.autoMix), (_, enabled) {
       setAutoMixEnabled(enabled);
+    });
+    ref.listen(settingsProvider.select((s) => s.autoMixOptions), (_, options) {
+      setAutoMixOptions(options);
     });
     ref.listen(settingsProvider.select((s) => s.discordRichPresenceEnabled), (
       _,

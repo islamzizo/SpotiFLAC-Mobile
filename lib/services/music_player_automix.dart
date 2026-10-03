@@ -3,14 +3,17 @@ part of 'music_player_service.dart';
 /// Owns only the extra deck and transition work. The ordinary player remains
 /// the sole transport when AutoMix is disabled or a transition cannot be made.
 class _MusicAutoMix {
-  _MusicAutoMix(this.handler, this.analyzer);
+  _MusicAutoMix(this.handler, this.analyzer, this.renderer);
 
   final MusicPlayerHandler handler;
   final AutoMixAnalyzer analyzer;
+  final AutoMixEffectRenderer renderer;
   final _preparationPins = <int, Set<String>>{};
   final _mixPins = <String>{};
   MusicPlaybackDeck? _prepared;
   MusicPlaybackDeck? _outgoing;
+  MusicPlaybackDeck? _effectPrepared;
+  RenderedMixTail? _effectTail;
   AutoMixPlan? _plan;
   PlayableMedia? _next;
   String? _nextPath;
@@ -29,6 +32,12 @@ class _MusicAutoMix {
   Timer? _fadeTimer;
   Future<void> _fadeWrite = Future<void>.value();
   bool _writing = false;
+
+  void _setStatus(AutoMixStatus status) {
+    if (identical(_activeMusicPlayerHandler, handler)) {
+      autoMixStatus.value = status;
+    }
+  }
 
   Set<String> get pinnedPaths => {
     ..._mixPins,
@@ -94,6 +103,9 @@ class _MusicAutoMix {
     final pins = <String>{};
     _preparationPins[generation] = pins;
     MusicPlaybackDeck? deck;
+    MusicPlaybackDeck? effectDeck;
+    RenderedMixTail? effectTail;
+    final options = _autoMixOptions;
     try {
       if (nextIndex < 0 || nextIndex == index || index < 0) return;
       final current = handler._media[index];
@@ -118,9 +130,9 @@ class _MusicAutoMix {
       if (!_current(generation)) return;
       final nextDuration =
           await deck.getDuration() ?? next.duration ?? Duration.zero;
-      final offset = max(
-        0.0,
-        duration.inMicroseconds / 1e6 - AutoMixAnalyzer.windowSeconds,
+      final offset = options.outroWindowOffset(
+        duration,
+        AutoMixAnalyzer.windowSeconds,
       );
       final outro = await analyzer.analyze(currentPath, offset: offset);
       if (!_current(generation)) return;
@@ -132,6 +144,7 @@ class _MusicAutoMix {
         outro: outro,
         intro: intro,
         outroOffset: offset,
+        options: options,
       );
       if (plan == null) return;
       await deck.seek(plan.incomingStart);
@@ -141,6 +154,39 @@ class _MusicAutoMix {
         cacheKey: next.isContentUri ? next.source : null,
       );
       if (!_current(generation)) return;
+      if (options.hasEffects) {
+        effectTail = await renderer.render(
+          currentPath,
+          start: plan.start,
+          duration: plan.duration,
+          options: options,
+        );
+        if (!_current(generation)) return;
+        if (effectTail != null) {
+          effectDeck = MusicPlaybackDeck(
+            playerId:
+                'music-effect-$generation-${DateTime.now().microsecondsSinceEpoch}',
+          );
+          handler._listenToPlayer(effectDeck);
+          try {
+            await effectDeck.setReleaseMode(ReleaseMode.stop);
+            await effectDeck.setAudioContext(_musicAudioContext);
+            await effectDeck.setVolume(handler._normalizationVolume);
+            await effectDeck.setSource(DeviceFileSource(effectTail.path));
+          } catch (error) {
+            _log.w('AutoMix effect preparation fallback: $error');
+            await handler._disposeDeck(effectDeck);
+            await effectTail.dispose();
+            effectDeck = null;
+            effectTail = null;
+          }
+          if (!_current(generation)) return;
+        }
+      }
+      _effectPrepared = effectDeck;
+      _effectTail = effectTail;
+      effectDeck = null;
+      effectTail = null;
       _prepared = deck;
       deck = null;
       _next = next;
@@ -159,6 +205,8 @@ class _MusicAutoMix {
       _log.w('AutoMix preparation skipped: $error');
     } finally {
       if (deck != null) await handler._disposeDeck(deck);
+      if (effectDeck != null) await handler._disposeDeck(effectDeck);
+      if (effectTail != null) await effectTail.dispose();
       _preparationPins.remove(generation);
       if (generation == _generation) _preparing = false;
       await handler._cleanupPendingResolvedPaths();
@@ -192,12 +240,41 @@ class _MusicAutoMix {
       if (delta > const Duration(milliseconds: 350)) return;
       await incoming.resume();
       if (!_current(generation)) return;
-      final outgoing = handler._player;
+      final original = handler._player;
       final outgoingVolume = handler._normalizationVolume;
+      var outgoing = original;
+      final effectDeck = _effectPrepared;
+      if (effectDeck != null) {
+        try {
+          await effectDeck.seek(delta.isNegative ? Duration.zero : delta);
+          if (!_current(generation)) return;
+          await original.setVolume(0);
+          await effectDeck.resume();
+          if (!_current(generation)) {
+            await original.setVolume(outgoingVolume);
+            return;
+          }
+          outgoing = effectDeck;
+        } catch (error) {
+          await original.setVolume(outgoingVolume);
+          if (!_current(generation)) return;
+          _log.w('AutoMix effect fallback: $error');
+          await handler._disposeDeck(effectDeck);
+          await _effectTail?.dispose();
+          _effectTail = null;
+        }
+        _effectPrepared = null;
+      }
       _outgoing = outgoing;
       _prepared = null;
       _plan = null;
       handler._player = incoming;
+      _setStatus(
+        plan.beatMatched ? AutoMixStatus.mixing : AutoMixStatus.crossfading,
+      );
+      if (!identical(outgoing, original)) {
+        unawaited(handler._disposeDeck(original));
+      }
       handler._index = _nextIndex;
       handler._playRequestGeneration++;
       handler._recordPlayHistory(_nextIndex);
@@ -234,6 +311,10 @@ class _MusicAutoMix {
             if (clock.elapsed >= plan.duration && _outgoing != null) {
               _outgoing = null;
               await handler._disposeDeck(outgoing);
+              final tail = _effectTail;
+              _effectTail = null;
+              await tail?.dispose();
+              _setStatus(AutoMixStatus.idle);
             }
             if (levels.complete) {
               _fadeTimer?.cancel();
@@ -263,15 +344,21 @@ class _MusicAutoMix {
     _generation++;
     _cancelling++;
     analyzer.cancel();
+    renderer.cancel();
+    _setStatus(AutoMixStatus.idle);
     _startTimer?.cancel();
     _startTimer = null;
     _fadeTimer?.cancel();
     _fadeTimer = null;
     final prepared = _prepared;
     final outgoing = _outgoing;
+    final effectPrepared = _effectPrepared;
+    final effectTail = _effectTail;
     final restore = outgoing != null || rate != 1;
     _prepared = null;
     _outgoing = null;
+    _effectPrepared = null;
+    _effectTail = null;
     _plan = null;
     _next = null;
     _nextPath = null;
@@ -283,6 +370,8 @@ class _MusicAutoMix {
       await _fadeWrite;
       if (prepared != null) await handler._disposeDeck(prepared);
       if (outgoing != null) await handler._disposeDeck(outgoing);
+      if (effectPrepared != null) await handler._disposeDeck(effectPrepared);
+      await effectTail?.dispose();
       if (restore && !handler._disposed) {
         await handler._player.setPlaybackRate(1);
         await handler._player.setVolume(handler._normalizationVolume);
@@ -300,5 +389,6 @@ class _MusicAutoMix {
   Future<void> dispose() async {
     await cancel();
     analyzer.dispose();
+    renderer.dispose();
   }
 }

@@ -12,6 +12,7 @@ import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/mornye_volume_control.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/discord_presence_settings.dart';
+import 'package:spotiflac_android/widgets/automix_settings.dart';
 
 class PlaybackSettingsPage extends ConsumerStatefulWidget {
   const PlaybackSettingsPage({super.key});
@@ -114,6 +115,14 @@ class _PlaybackSettingsPageState extends ConsumerState<PlaybackSettingsPage> {
               ],
             ),
           ),
+          if (settings.autoMix) ...[
+            SliverToBoxAdapter(
+              child: SettingsSectionHeader(
+                title: context.l10n.autoMixSettingsTitle,
+              ),
+            ),
+            const SliverToBoxAdapter(child: AutoMixSettings()),
+          ],
           SliverToBoxAdapter(
             child: SettingsSectionHeader(title: context.l10n.motionArtwork),
           ),

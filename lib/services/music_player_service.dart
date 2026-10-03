@@ -23,6 +23,9 @@ import 'package:spotiflac_android/services/playback_normalization.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/services/automix_analysis.dart';
 import 'package:spotiflac_android/services/automix_analyzer.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
+import 'package:spotiflac_android/services/automix_effect_renderer.dart';
+import 'package:spotiflac_android/services/automix_status.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/utils/playback_artwork.dart';
@@ -48,6 +51,7 @@ void updateMusicPlayerStrings({
 
 bool _playbackNormalizationEnabled = false;
 bool _autoMixEnabled = false;
+AutoMixOptions _autoMixOptions = const AutoMixOptions();
 bool _usbBitPerfectEnabled = false;
 bool _usbDirectEnabled = false;
 bool _usbDopEnabled = false;
@@ -121,6 +125,13 @@ void setPlaybackNormalizationEnabled(bool enabled) {
 void setAutoMixEnabled(bool enabled) {
   if (_autoMixEnabled == enabled) return;
   _autoMixEnabled = enabled;
+  final handler = _activeMusicPlayerHandler;
+  if (handler != null) unawaited(handler._autoMix.cancel());
+}
+
+void setAutoMixOptions(AutoMixOptions options) {
+  if (_autoMixOptions == options) return;
+  _autoMixOptions = options;
   final handler = _activeMusicPlayerHandler;
   if (handler != null) unawaited(handler._autoMix.cancel());
 }
@@ -471,9 +482,14 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   MusicPlayerHandler({
     AutoMixAnalyzer? autoMixAnalyzer,
+    AutoMixEffectRenderer? autoMixEffectRenderer,
     AutoplayLibraryLoader? autoplayLibraryLoader,
   }) {
-    _autoMix = _MusicAutoMix(this, autoMixAnalyzer ?? AutoMixAnalyzer());
+    _autoMix = _MusicAutoMix(
+      this,
+      autoMixAnalyzer ?? AutoMixAnalyzer(),
+      autoMixEffectRenderer ?? AutoMixEffectRenderer(),
+    );
     _autoplay = _MusicAutoplay(
       this,
       autoplayLibraryLoader ?? _loadAutoplayLibrary,
@@ -2150,6 +2166,7 @@ class MusicPlayerHandler extends BaseAudioHandler
     _autoplay.reset();
     _disposed = true;
     if (identical(_activeMusicPlayerHandler, this)) {
+      autoMixStatus.value = AutoMixStatus.idle;
       _activeMusicPlayerHandler = null;
     }
     cancelSleepTimer();

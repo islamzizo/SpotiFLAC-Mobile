@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'package:spotiflac_android/models/automix_options.dart';
 
 /// A local beat grid, measured in seconds within the decoded audio window.
 class AutoMixBeatGrid {
@@ -190,16 +191,24 @@ class AutoMixPlan {
     AutoMixBeatGrid? outro,
     AutoMixBeatGrid? intro,
     double outroOffset = 0,
+    AutoMixOptions options = const AutoMixOptions(),
   }) {
     final end = outgoingDuration.inMicroseconds / 1e6;
     final nextLength = incomingDuration.inMicroseconds / 1e6;
     if (end < 20 || nextLength < 20) return null;
-    var fade = 5.0;
+    final manualDuration = options.safeDurationSeconds;
+    final maximum = math.min(60.0, math.min(end / 2, nextLength / 2));
+    var fade = (manualDuration == 0 ? 5.0 : manualDuration.toDouble()).clamp(
+      3.0,
+      maximum,
+    );
     var start = end - fade;
     var incomingStart = 0.0;
     var rate = 1.0;
     var matched = false;
-    if (outro?.reliable == true && intro?.reliable == true) {
+    if (options.effect != AutoMixEffect.crossfade &&
+        outro?.reliable == true &&
+        intro?.reliable == true) {
       final outgoing = outro!;
       final incoming = intro!;
       final candidates =
@@ -214,7 +223,9 @@ class AutoMixPlan {
       // Never stretch wildly or discard a long musical intro to force a mix.
       if ((candidate - 1).abs() <= 0.08 && firstBeat <= 3) {
         rate = candidate;
-        fade = (8 * outgoing.period).clamp(3.0, 8.0);
+        if (manualDuration == 0) {
+          fade = (8 * outgoing.period).clamp(3.0, math.min(8.0, maximum));
+        }
         final phase = outroOffset + outgoing.phase;
         start =
             phase +

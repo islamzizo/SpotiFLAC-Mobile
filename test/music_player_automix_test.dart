@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -11,6 +12,28 @@ import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
+import 'package:spotiflac_android/services/automix_effect_renderer.dart';
+import 'package:spotiflac_android/services/automix_status.dart';
+
+class _EffectRenderer extends AutoMixEffectRenderer {
+  final tails = <RenderedMixTail>[];
+  bool fail = false;
+
+  @override
+  Future<RenderedMixTail?> render(
+    String path, {
+    required Duration start,
+    required Duration duration,
+    required AutoMixOptions options,
+  }) async {
+    if (fail) return null;
+    final work = await Directory.systemTemp.createTemp('fake-mix-tail-');
+    final tail = RenderedMixTail(work, '${work.path}/tail.wav');
+    tails.add(tail);
+    return tail;
+  }
+}
 
 class _Analyzer extends AutoMixAnalyzer {
   final calls = <String>[];
@@ -142,18 +165,22 @@ void main() {
   SharedPreferences.setMockInitialValues({});
   late _AudioNative native;
   late _Analyzer analyzer;
+  late _EffectRenderer effectRenderer;
   late MusicPlayerHandler handler;
   late AutoplayLibraryLoader autoplayLoader;
 
   setUp(() {
     setAutoMixEnabled(false);
+    setAutoMixOptions(const AutoMixOptions());
     setUsbBitPerfectEnabled(false);
     setAutoplayEnabled(false);
     native = _AudioNative()..install();
     analyzer = _Analyzer();
+    effectRenderer = _EffectRenderer();
     autoplayLoader = (_) async => _tracks;
     handler = MusicPlayerHandler(
       autoMixAnalyzer: analyzer,
+      autoMixEffectRenderer: effectRenderer,
       autoplayLibraryLoader: (seed) => autoplayLoader(seed),
     );
   });
@@ -171,6 +198,10 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 30));
     expect(native.live, isEmpty);
     expect(native.playing, isEmpty);
+    expect(autoMixStatus.value, AutoMixStatus.idle);
+    for (final tail in effectRenderer.tails) {
+      expect(await tail.directory.exists(), isFalse);
+    }
   });
 
   test(
@@ -1227,6 +1258,7 @@ void main() {
     'pause during overlap stops both decks and restores incoming gain',
     () async {
       final incoming = await startMix();
+      expect(autoMixStatus.value, AutoMixStatus.crossfading);
       await handler.pause();
       expect(native.live, {incoming});
       expect(native.playing, isEmpty);
@@ -1240,8 +1272,10 @@ void main() {
     () async {
       analyzer.matchBeats = true;
       final incoming = await startMix(startPosition: 55670);
+      expect(autoMixStatus.value, AutoMixStatus.mixing);
       expect(handler.playbackState.value.speed, closeTo(120 / 124, 0.0001));
       await Future<void>.delayed(const Duration(milliseconds: 4200));
+      expect(autoMixStatus.value, AutoMixStatus.idle);
       expect(native.live, {incoming});
       expect(native.lastVolume(incoming), closeTo(1, 0.0001));
       await Future<void>.delayed(const Duration(seconds: 8));
@@ -1266,6 +1300,39 @@ void main() {
       expect(native.lastVolume(incoming), 1);
     },
   );
+
+  test(
+    'rendered effect replaces outgoing deck and pause removes its temporary tail',
+    () async {
+      setAutoMixOptions(const AutoMixOptions(effect: AutoMixEffect.echo));
+      await prepare();
+      await _until(() => native.live.length == 3);
+      final incoming = native.sources.entries
+          .singleWhere((entry) => entry.value == '/two.flac')
+          .key;
+      final effect = native.sources.entries
+          .singleWhere((entry) => entry.value.endsWith('/tail.wav'))
+          .key;
+      native.positions['music-player'] = 55000;
+      await _until(() => handler.mediaItem.value?.id == 'two');
+      await _until(() => !native.live.contains('music-player'));
+      expect(native.playing, {incoming, effect});
+      expect(autoMixStatus.value, AutoMixStatus.crossfading);
+      await handler.pause();
+      expect(native.live, {incoming});
+      expect(await effectRenderer.tails.single.directory.exists(), isFalse);
+    },
+  );
+
+  test('effect rendering failure retains ordinary crossfade', () async {
+    effectRenderer.fail = true;
+    setAutoMixOptions(
+      const AutoMixOptions(effect: AutoMixEffect.pitch, pitchSemitones: 2),
+    );
+    final incoming = await startMix();
+    expect(native.playing, {'music-player', incoming});
+    expect(effectRenderer.tails, isEmpty);
+  });
 
   test(
     'turning AutoMix off releases the standby player without changing song',

@@ -25,6 +25,24 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   embedReplayGain: json['embedReplayGain'] as bool? ?? false,
   playbackNormalization: json['playbackNormalization'] as bool? ?? false,
   autoMix: json['autoMix'] as bool? ?? false,
+  autoMixDuration: json['autoMixDuration'] == null
+      ? 0
+      : autoMixDurationFromJson(json['autoMixDuration']),
+  autoMixEffect:
+      $enumDecodeNullable(
+        _$AutoMixEffectEnumMap,
+        json['autoMixEffect'],
+        unknownValue: AutoMixEffect.auto,
+      ) ??
+      AutoMixEffect.auto,
+  autoMixSpeed: json['autoMixSpeed'] == null
+      ? 1
+      : autoMixSpeedFromJson(json['autoMixSpeed']),
+  autoMixPitch: json['autoMixPitch'] == null
+      ? 0
+      : autoMixPitchFromJson(json['autoMixPitch']),
+  autoMixEcho: json['autoMixEcho'] as bool? ?? false,
+  autoMixLowPass: json['autoMixLowPass'] as bool? ?? false,
   discordRichPresenceEnabled:
       json['discordRichPresenceEnabled'] as bool? ?? false,
   usbBitPerfect: json['usbBitPerfect'] as bool? ?? false,
@@ -138,6 +156,12 @@ Map<String, dynamic> _$AppSettingsToJson(
   'embedReplayGain': instance.embedReplayGain,
   'playbackNormalization': instance.playbackNormalization,
   'autoMix': instance.autoMix,
+  'autoMixDuration': instance.autoMixDuration,
+  'autoMixEffect': _$AutoMixEffectEnumMap[instance.autoMixEffect]!,
+  'autoMixSpeed': instance.autoMixSpeed,
+  'autoMixPitch': instance.autoMixPitch,
+  'autoMixEcho': instance.autoMixEcho,
+  'autoMixLowPass': instance.autoMixLowPass,
   'discordRichPresenceEnabled': instance.discordRichPresenceEnabled,
   'usbBitPerfect': instance.usbBitPerfect,
   'usbDirect': instance.usbDirect,
@@ -209,4 +233,13 @@ Map<String, dynamic> _$AppSettingsToJson(
   'playerMode': instance.playerMode,
   'playerShowPronunciation': instance.playerShowPronunciation,
   'playerShowTranslation': instance.playerShowTranslation,
+};
+
+const _$AutoMixEffectEnumMap = {
+  AutoMixEffect.auto: 'auto',
+  AutoMixEffect.crossfade: 'crossfade',
+  AutoMixEffect.muffled: 'muffled',
+  AutoMixEffect.echo: 'echo',
+  AutoMixEffect.pitch: 'pitch',
+  AutoMixEffect.custom: 'custom',
 };

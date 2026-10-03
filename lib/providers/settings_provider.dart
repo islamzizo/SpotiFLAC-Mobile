@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:spotiflac_android/models/settings.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
@@ -569,6 +570,41 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   void setAutoMix(bool enabled) {
     state = state.copyWith(autoMix: enabled);
+    _saveSettings();
+  }
+
+  void setAutoMixDuration(int seconds) {
+    state = state.copyWith(autoMixDuration: autoMixDurationFromJson(seconds));
+    _saveSettings();
+  }
+
+  void setAutoMixEffect(AutoMixEffect effect) {
+    state = state.copyWith(
+      autoMixEffect: effect,
+      autoMixPitch: effect == AutoMixEffect.pitch && state.autoMixPitch == 0
+          ? 2
+          : state.autoMixPitch,
+    );
+    _saveSettings();
+  }
+
+  void setAutoMixSpeed(double speed) {
+    state = state.copyWith(autoMixSpeed: autoMixSpeedFromJson(speed));
+    _saveSettings();
+  }
+
+  void setAutoMixPitch(double semitones) {
+    state = state.copyWith(autoMixPitch: autoMixPitchFromJson(semitones));
+    _saveSettings();
+  }
+
+  void setAutoMixEcho(bool enabled) {
+    state = state.copyWith(autoMixEcho: enabled);
+    _saveSettings();
+  }
+
+  void setAutoMixLowPass(bool enabled) {
+    state = state.copyWith(autoMixLowPass: enabled);
     _saveSettings();
   }
 

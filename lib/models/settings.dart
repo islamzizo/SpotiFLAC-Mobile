@@ -1,4 +1,5 @@
 import 'package:json_annotation/json_annotation.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 
 part 'settings.g.dart';
@@ -34,6 +35,24 @@ class AppSettings {
   // Apply ReplayGain/R128 tags as volume normalization in the built-in player.
   final bool playbackNormalization;
   final bool autoMix;
+  @JsonKey(fromJson: autoMixDurationFromJson)
+  final int autoMixDuration;
+  @JsonKey(unknownEnumValue: AutoMixEffect.auto)
+  final AutoMixEffect autoMixEffect;
+  @JsonKey(fromJson: autoMixSpeedFromJson)
+  final double autoMixSpeed;
+  @JsonKey(fromJson: autoMixPitchFromJson)
+  final double autoMixPitch;
+  final bool autoMixEcho;
+  final bool autoMixLowPass;
+  AutoMixOptions get autoMixOptions => AutoMixOptions(
+    durationSeconds: autoMixDuration,
+    effect: autoMixEffect,
+    speed: autoMixSpeed,
+    pitchSemitones: autoMixPitch,
+    echo: autoMixEcho,
+    lowPass: autoMixLowPass,
+  );
   final bool discordRichPresenceEnabled;
   final bool usbBitPerfect;
   final bool usbDirect;
@@ -158,6 +177,12 @@ class AppSettings {
     this.embedReplayGain = false,
     this.playbackNormalization = false,
     this.autoMix = false,
+    this.autoMixDuration = 0,
+    this.autoMixEffect = AutoMixEffect.auto,
+    this.autoMixSpeed = 1,
+    this.autoMixPitch = 0,
+    this.autoMixEcho = false,
+    this.autoMixLowPass = false,
     this.discordRichPresenceEnabled = false,
     this.usbBitPerfect = false,
     this.usbDirect = false,
@@ -257,6 +282,12 @@ class AppSettings {
     bool? embedReplayGain,
     bool? playbackNormalization,
     bool? autoMix,
+    int? autoMixDuration,
+    AutoMixEffect? autoMixEffect,
+    double? autoMixSpeed,
+    double? autoMixPitch,
+    bool? autoMixEcho,
+    bool? autoMixLowPass,
     bool? discordRichPresenceEnabled,
     bool? usbBitPerfect,
     bool? usbDirect,
@@ -353,6 +384,12 @@ class AppSettings {
       playbackNormalization:
           playbackNormalization ?? this.playbackNormalization,
       autoMix: autoMix ?? this.autoMix,
+      autoMixDuration: autoMixDuration ?? this.autoMixDuration,
+      autoMixEffect: autoMixEffect ?? this.autoMixEffect,
+      autoMixSpeed: autoMixSpeed ?? this.autoMixSpeed,
+      autoMixPitch: autoMixPitch ?? this.autoMixPitch,
+      autoMixEcho: autoMixEcho ?? this.autoMixEcho,
+      autoMixLowPass: autoMixLowPass ?? this.autoMixLowPass,
       discordRichPresenceEnabled:
           discordRichPresenceEnabled ?? this.discordRichPresenceEnabled,
       usbBitPerfect: usbBitPerfect ?? this.usbBitPerfect,
