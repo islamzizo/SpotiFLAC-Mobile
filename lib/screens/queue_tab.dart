@@ -211,6 +211,7 @@ DownloadHistoryItem? _historyItemForCompletionBridge(
 
 class QueueTab extends ConsumerStatefulWidget {
   final String? librarySection;
+  final bool isTabActive;
   final PageController? parentPageController;
   final int parentPageIndex;
   final int? nextPageIndex;
@@ -218,6 +219,7 @@ class QueueTab extends ConsumerStatefulWidget {
   const QueueTab({
     super.key,
     this.librarySection,
+    this.isTabActive = true,
     this.parentPageController,
     this.parentPageIndex = 1,
     this.nextPageIndex,
@@ -364,7 +366,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   /// configured, jump the filter pager to it.
   void _applyDefaultLibraryViewOnTabVisible() {
     if (widget.librarySection != null) return;
-    final isVisible = TickerMode.valuesOf(context).enabled;
+    // Route transitions also disable TickerMode. Only a shell tab change
+    // should reset the user's current album/single view.
+    final isVisible = widget.isTabActive;
     final becameVisible = isVisible && !_wasTabVisible;
     _wasTabVisible = isVisible;
     if (!becameVisible) return;

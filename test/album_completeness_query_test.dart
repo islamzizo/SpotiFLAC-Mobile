@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -92,7 +93,8 @@ print(json.dumps([dict(row) for row in db.execute(data['sql'], data['args'])]))
 
 class _Settings extends SettingsNotifier {
   @override
-  AppSettings build() => const AppSettings(localLibraryEnabled: true);
+  AppSettings build() =>
+      const AppSettings(localLibraryEnabled: true, defaultLibraryView: 'all');
 
   @override
   void setHistoryFilterMode(String mode) {
@@ -287,6 +289,8 @@ void main() {
       tester.view.physicalSize = const Size(800, 1400);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
+      final tabActive = ValueNotifier(true);
+      addTearDown(tabActive.dispose);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -302,7 +306,15 @@ void main() {
             theme: AppTheme.light(),
             localizationsDelegates: AppLocalizations.localizationsDelegates,
             supportedLocales: AppLocalizations.supportedLocales,
-            home: const Scaffold(body: QueueTab()),
+            home: ValueListenableBuilder<bool>(
+              valueListenable: tabActive,
+              builder: (_, active, _) => Scaffold(
+                body: TickerMode(
+                  enabled: active,
+                  child: QueueTab(isTabActive: active),
+                ),
+              ),
+            ),
           ),
         ),
       );
@@ -327,6 +339,25 @@ void main() {
       );
       expect(container.read(settingsProvider).historyFilterMode, 'albums');
 
+      // Pushing an album/detail route disables the underlying route's ticker.
+      // Popping it must retain Albums rather than reapply the All default.
+      final navigator = Navigator.of(tester.element(find.byType(QueueTab)));
+      unawaited(
+        navigator.push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => const Scaffold(body: Text('Album details')),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Album details'), findsOneWidget);
+      navigator.pop();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(container.read(settingsProvider).historyFilterMode, 'albums');
+      await _waitFor(tester, find.text('1/12'));
+
       await tester.enterText(find.byType(TextField), 'one-track');
       await tester.pump(const Duration(milliseconds: 400));
       await _waitFor(tester, find.text('1 album'));
@@ -350,6 +381,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
       await _waitFor(tester, find.text('complete'));
       expect(find.text('1/12'), findsNothing);
+      expect(container.read(settingsProvider).historyFilterMode, 'albums');
+      // An actual shell-tab switch still applies the configured All default.
+      tabActive.value = false;
+      await tester.pump();
+      tabActive.value = true;
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(container.read(settingsProvider).historyFilterMode, 'all');
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
       // Let any already-dispatched SQLite queries finish after provider disposal.
