@@ -161,8 +161,8 @@ impl HiResCheckResult {
     }
 }
 
-/// One channel's decoded segment. Channels are analyzed separately to avoid
-/// phase cancellation, keeping memory bounded to one channel at a time.
+/// Reference decoder retained for streaming parity tests.
+#[cfg(test)]
 #[derive(Default)]
 struct Window {
     signal: Vec<f32>,
@@ -171,6 +171,36 @@ struct Window {
     /// This channel's raw integer samples, for the upsampling-artifact
     /// tests; empty for float PCM.
     samples: Vec<i32>,
+}
+
+struct ChannelAnalysis {
+    stft: StftAccumulator,
+    integers: IntegerEvidence,
+    count: usize,
+    non_silent: bool,
+}
+
+impl ChannelAnalysis {
+    fn push(
+        &mut self,
+        sample: f32,
+        integer: Option<i32>,
+        plan: &mut StftPlan,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.count += 1;
+        self.non_silent |= f64::from(sample.abs()) > 1e-9;
+        if let Some(integer) = integer {
+            self.integers.push(integer);
+        }
+        self.stft.push(sample, plan, check)
+    }
+}
+
+struct WindowAnalysis {
+    channels: Vec<ChannelAnalysis>,
+    #[cfg(test)]
+    decoded_blocks: usize,
 }
 
 /// Analyses one file and returns a populated result. Only a short segment from
@@ -195,7 +225,7 @@ pub fn check_file(
     }
     check()?;
 
-    let source = Source::open(&mut file)?;
+    let mut source = Source::open(&mut file)?;
     let sr = source.sample_rate();
     if sr == 0 {
         return Err("invalid declared sample rate 0".to_string().into());
@@ -213,8 +243,6 @@ pub fn check_file(
     let window_frames = (analyzed_duration * f64::from(sr)) as u64;
 
     let declared_bits = source.declared_bits();
-    let channels = source.channel_count();
-    drop(source);
 
     let mut result = HiResCheckResult {
         file_path: file_path.to_string(),
@@ -239,27 +267,26 @@ pub fn check_file(
     let mut or_bits = 0;
     let mut common_artifact: Option<&str> = None;
     let mut all_floors_at_16bit = true;
-    for channel in 0..channels {
+    let mut plan = StftPlan::new(n_fft, sr);
+    let analysis = source
+        .analyze_window(start_frame, window_frames, &mut plan, check)
+        .map_err(|e| HiResCheckError::Failed(format!("could not decode audio: {e}")))?;
+    for channel in analysis.channels {
         check()?;
-        file.seek(SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-        let mut source = Source::open(&mut file)?;
-        let window = source
-            .read_window(start_frame, window_frames, channel, check)
-            .map_err(|e| HiResCheckError::Failed(format!("could not decode audio: {e}")))?;
-        if window.signal.is_empty() {
+        if channel.count == 0 {
             return Err("decoded audio segment is empty".to_string().into());
         }
-        or_bits |= window.or_bits;
+        or_bits |= channel.integers.or_bits;
         result.analyzed_duration_s = result
             .analyzed_duration_s
-            .min(window.signal.len() as f64 / f64::from(sr));
-        if !window.signal.iter().any(|v| f64::from(v.abs()) > 1e-9) {
+            .min(channel.count as f64 / f64::from(sr));
+        if !channel.non_silent {
             continue;
         }
-        let stats = analyze_stft(&window.signal, n_fft, sr, check)?;
+        let stats = channel.stft.finish(&plan);
         all_floors_at_16bit &= classify_noise_floor(stats.quiet_floor_var, 1).0 == FLOOR_AT_16BIT;
         if claims_by_rate {
-            let artifact = detect_integer_upsampling(&window.samples, window.or_bits, sr);
+            let artifact = channel.integers.artifact();
             // A pattern in one channel must not implicate independent,
             // full-resolution content in another channel.
             common_artifact = Some(match common_artifact {
@@ -472,6 +499,7 @@ impl<'a> Source<'a> {
         }
     }
 
+    #[cfg(test)]
     fn read_window(
         &mut self,
         start_frame: u64,
@@ -484,12 +512,85 @@ impl<'a> Source<'a> {
             Source::Wav(wav) => wav.read_window(start_frame, frames, channel, check),
         }
     }
+
+    fn analyze_window(
+        &mut self,
+        start_frame: u64,
+        frames: u64,
+        plan: &mut StftPlan,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<WindowAnalysis, String> {
+        let sample_rate = self.sample_rate();
+        let mut analysis = WindowAnalysis {
+            channels: (0..self.channel_count())
+                .map(|_| ChannelAnalysis {
+                    stft: StftAccumulator::new(plan),
+                    integers: IntegerEvidence::new(sample_rate),
+                    count: 0,
+                    non_silent: false,
+                })
+                .collect(),
+            #[cfg(test)]
+            decoded_blocks: 0,
+        };
+        match self {
+            Source::Flac(reader) => {
+                let scale = 1.0 / 2f64.powi(reader.streaminfo().bits_per_sample as i32 - 1);
+                let end = start_frame + frames;
+                let mut blocks = reader.blocks();
+                let mut buffer = Vec::new();
+                let mut decoded = 0_u64;
+                while analysis
+                    .channels
+                    .first()
+                    .is_some_and(|channel| (channel.count as u64) < frames)
+                {
+                    if decoded.is_multiple_of(64) {
+                        check()?;
+                    }
+                    decoded += 1;
+                    let block = match blocks.read_next_or_eof(buffer) {
+                        Ok(Some(block)) => block,
+                        Ok(None) => break,
+                        Err(_) if analysis.channels[0].count > 0 => break,
+                        Err(error) => return Err(error.to_string()),
+                    };
+                    #[cfg(test)]
+                    {
+                        analysis.decoded_blocks += 1;
+                    }
+                    let first = block.time();
+                    let n = u64::from(block.duration());
+                    if first + n > start_frame {
+                        let from = start_frame.saturating_sub(first) as usize;
+                        let to = n.min(end.saturating_sub(first)) as usize;
+                        for (index, channel) in analysis.channels.iter_mut().enumerate() {
+                            for &value in &block.channel(index as u32)[from..to] {
+                                channel.push(
+                                    (f64::from(value) * scale) as f32,
+                                    Some(value),
+                                    plan,
+                                    check,
+                                )?;
+                            }
+                        }
+                    }
+                    buffer = block.into_buffer();
+                }
+            }
+            Source::Wav(wav) => {
+                wav.analyze_window(start_frame, frames, &mut analysis, plan, check)?
+            }
+        }
+        Ok(analysis)
+    }
 }
 
 /// Decodes [start_frame, start_frame + frames). claxon hands back samples
 /// right-justified with wasted bits already shifted back in and inter-channel
 /// decorrelation undone, so each value is the stored sample. It cannot seek,
 /// so the frames before the window are decoded and skipped.
+#[cfg(test)]
 fn read_flac_window(
     reader: &mut claxon::FlacReader<BufReader<&mut File>>,
     start_frame: u64,
@@ -637,6 +738,7 @@ impl<'a> WavSource<'a> {
         u64::from(self.channels * self.container_bits / 8)
     }
 
+    #[cfg(test)]
     fn read_window(
         &mut self,
         start_frame: u64,
@@ -698,5 +800,58 @@ impl<'a> WavSource<'a> {
             }
         }
         Ok(out)
+    }
+
+    fn analyze_window(
+        &mut self,
+        start_frame: u64,
+        frames: u64,
+        analysis: &mut WindowAnalysis,
+        plan: &mut StftPlan,
+        check: &dyn Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let total = self.data_size / self.frame_bytes();
+        let frames = frames.min(total.saturating_sub(start_frame));
+        let frame_bytes = self.frame_bytes() as usize;
+        self.file
+            .seek(SeekFrom::Start(
+                self.data_offset + start_frame * frame_bytes as u64,
+            ))
+            .map_err(|e| e.to_string())?;
+        let bytes_per_sample = (self.container_bits / 8) as usize;
+        let scale = 1.0 / 2f64.powi(self.container_bits as i32 - 1);
+        let mut reader = BufReader::with_capacity(1 << 16, &mut *self.file);
+        let mut frame = vec![0; frame_bytes];
+        for index in 0..frames {
+            if index.is_multiple_of(65_536) {
+                check()?;
+            }
+            if reader.read_exact(&mut frame).is_err() {
+                break;
+            }
+            for (channel, bytes) in analysis
+                .channels
+                .iter_mut()
+                .zip(frame.chunks_exact(bytes_per_sample))
+            {
+                if self.is_float {
+                    let value = if self.container_bits == 32 {
+                        f64::from(f32::from_le_bytes(bytes.try_into().expect("32-bit float")))
+                    } else {
+                        f64::from_le_bytes(bytes.try_into().expect("64-bit float"))
+                    };
+                    channel.push(value as f32, None, plan, check)?;
+                } else {
+                    let value = match self.container_bits {
+                        8 => i32::from(bytes[0]) - 128,
+                        16 => i32::from(i16::from_le_bytes(bytes.try_into().expect("16-bit PCM"))),
+                        24 => i32::from_le_bytes([0, bytes[0], bytes[1], bytes[2]]) >> 8,
+                        _ => i32::from_le_bytes(bytes.try_into().expect("32-bit PCM")),
+                    };
+                    channel.push((f64::from(value) * scale) as f32, Some(value), plan, check)?;
+                }
+            }
+        }
+        Ok(())
     }
 }

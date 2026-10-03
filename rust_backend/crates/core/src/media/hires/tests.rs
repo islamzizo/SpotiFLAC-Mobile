@@ -439,6 +439,115 @@ fn write_stereo_wav(path: &Path, left: &[i32], right: &[i32], sr: u32) {
     std::fs::write(path, bytes).expect("stereo header");
 }
 
+fn assert_streamed_window_matches_reference(path: &Path, start: u64, frames: u64) -> usize {
+    let mut file = File::open(path).unwrap();
+    let mut source = Source::open(&mut file).unwrap();
+    let rate = source.sample_rate();
+    let mut plan = StftPlan::new(1024, rate);
+    let streamed = source
+        .analyze_window(start, frames, &mut plan, &|| Ok(()))
+        .unwrap();
+    for (index, channel) in streamed.channels.into_iter().enumerate() {
+        let mut file = File::open(path).unwrap();
+        let mut reference = Source::open(&mut file).unwrap();
+        let window = reference
+            .read_window(start, frames, index as u32, &|| Ok(()))
+            .unwrap();
+        assert_eq!(channel.count, window.signal.len());
+        assert_eq!(
+            channel.non_silent,
+            window
+                .signal
+                .iter()
+                .any(|sample| f64::from(sample.abs()) > 1e-9)
+        );
+        assert_eq!(channel.integers.or_bits, window.or_bits);
+        assert_eq!(
+            channel.integers.artifact(),
+            evidence::detect_integer_upsampling(&window.samples, window.or_bits, rate)
+        );
+        let expected = evidence::analyze_stft(&window.signal, 1024, rate, &|| Ok(())).unwrap();
+        let actual = channel.stft.finish(&plan);
+        assert_eq!(actual.avg_magnitude, expected.avg_magnitude);
+        assert_eq!(
+            actual.quiet_floor_var.to_bits(),
+            expected.quiet_floor_var.to_bits()
+        );
+        assert_eq!(actual.music_band_spreads, expected.music_band_spreads);
+    }
+    streamed.decoded_blocks
+}
+
+#[test]
+fn one_flac_decode_pass_serves_all_eight_channels_with_exact_window_evidence() {
+    let dir = TempDir::new("streamed-flac");
+    let path = dir.file("eight-channels.flac");
+    let samples = pcm_using_bits(16, 24, 4096 * 6, 29);
+    write_flac(&path, &samples, 96_000, 24, 8);
+    // Three prefix blocks plus the end of the sampled window: four decoded
+    // blocks total, rather than four separately for every channel.
+    assert_eq!(
+        assert_streamed_window_matches_reference(&path, 8500, 5000),
+        4
+    );
+    assert_eq!(assert_streamed_window_matches_reference(&path, 0, 700), 1);
+    assert_eq!(
+        assert_streamed_window_matches_reference(&path, 20_000, 8000),
+        6
+    );
+}
+
+#[test]
+fn streaming_wav_preserves_independent_antiphase_channels_and_partial_windows() {
+    let dir = TempDir::new("streamed-wav");
+    let left = quantize(&full_band_noise(20_003, 23), 24);
+    let right: Vec<i32> = left.iter().map(|sample| -*sample).collect();
+    let path = dir.file("antiphase.wav");
+    write_stereo_wav(&path, &left, &right, 96_000);
+    assert_eq!(
+        assert_streamed_window_matches_reference(&path, 17, 13_013),
+        0
+    );
+    assert_eq!(
+        assert_streamed_window_matches_reference(&path, 18_000, 6000),
+        0
+    );
+}
+
+#[test]
+fn streaming_wav_matches_all_integer_and_float_sample_encodings() {
+    let dir = TempDir::new("streamed-encodings");
+    for bits in [8, 16, 24, 32] {
+        let path = dir.file(&format!("integer-{bits}.wav"));
+        let samples: Vec<i32> = (0..4099).map(|i| (i * 37 % 127) - 63).collect();
+        write_wav(&path, &samples, 96_000, bits);
+        assert_streamed_window_matches_reference(&path, 31, 3500);
+    }
+    for bits in [32, 64] {
+        let path = dir.file(&format!("float-{bits}.wav"));
+        write_wav(&path, &[0], 96_000, 32);
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.truncate(44);
+        bytes[20..22].copy_from_slice(&3u16.to_le_bytes());
+        bytes[28..32].copy_from_slice(&(96_000_u32 * bits / 8).to_le_bytes());
+        bytes[32..34].copy_from_slice(&((bits / 8) as u16).to_le_bytes());
+        bytes[34..36].copy_from_slice(&(bits as u16).to_le_bytes());
+        for i in 0..4099 {
+            let value = ((i * 37 % 127) as f64 - 63.0) / 128.0;
+            if bits == 32 {
+                bytes.extend_from_slice(&(value as f32).to_le_bytes());
+            } else {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+        let data_size = (bytes.len() - 44) as u32;
+        bytes[4..8].copy_from_slice(&(36 + data_size).to_le_bytes());
+        bytes[40..44].copy_from_slice(&data_size.to_le_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        assert_streamed_window_matches_reference(&path, 31, 3500);
+    }
+}
+
 #[test]
 fn antiphase_channels_do_not_cancel_spectral_evidence() {
     let dir = TempDir::new("antiphase");
