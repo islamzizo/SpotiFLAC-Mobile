@@ -157,12 +157,13 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       await _spotifyNavigatorKey.currentState?.push<void>(
         MaterialPageRoute<void>(
           builder: (_) => SpotifyNavigationScope(
-          onViewQueue: _openQueueFromSpotify,
-          child: PlaylistScreen(
-            playlistName: playlist.name,
-            coverUrl: playlist.coverUrl,
-            tracks: tracks.map(_toTrack).toList(growable: false),
-            playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
+            onViewQueue: _openQueueFromSpotify,
+            child: PlaylistScreen(
+              playlistName: playlist.name,
+              coverUrl: playlist.coverUrl,
+              tracks: tracks.map(_toTrack).toList(growable: false),
+              playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
+            ),
           ),
         ),
       );
