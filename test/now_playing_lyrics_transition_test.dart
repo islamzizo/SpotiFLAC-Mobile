@@ -3274,6 +3274,60 @@ void main() {
     }
 
     testWidgets(
+      'simultaneous wrapped lyrics stay inside the viewport ($mornye)',
+      (tester) async {
+        const lead =
+            'The first singer has a long line that wraps across several rows';
+        const guest = 'The second singer starts at exactly the same timestamp';
+        metadataOverrides['lyrics'] =
+            '[00:01.00]v1:$lead\n[00:01.00]v2:$guest\n[00:08.00]Next';
+        final playback = StreamController<PlaybackState>.broadcast();
+        addTearDown(playback.close);
+        await pumpNowPlaying(
+          tester,
+          theme: mornye ? MornyeTheme.build(Brightness.dark) : null,
+          size: const Size(390, 1100),
+          playbackEvents: playback.stream,
+        );
+        mediaItems.add(item('first'));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          mornye
+              ? find.byIcon(CupertinoIcons.quote_bubble)
+              : find.byKey(const ValueKey('material-lyrics-toggle')),
+        );
+        await tester.pumpAndSettle();
+        playback.add(
+          PlaybackState(
+            processingState: AudioProcessingState.ready,
+            playing: false,
+            updatePosition: const Duration(seconds: 2),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final scrollable = find
+            .ancestor(of: find.text(lead), matching: find.byType(Scrollable))
+            .first;
+        final viewport = tester.getRect(scrollable);
+        for (final text in [lead, guest]) {
+          final bounds = tester.getRect(find.text(text));
+          expect(bounds.top, greaterThanOrEqualTo(viewport.top));
+          expect(bounds.bottom, lessThanOrEqualTo(viewport.bottom));
+          final opacity = tester.widget<AnimatedOpacity>(
+            find
+                .ancestor(
+                  of: find.text(text),
+                  matching: find.byType(AnimatedOpacity),
+                )
+                .first,
+          );
+          expect(opacity.opacity, 1);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
       'singers keep their side before and during overlapping vocals ($mornye)',
       (tester) async {
         metadataOverrides['lyrics'] =

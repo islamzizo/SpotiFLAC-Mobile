@@ -3,6 +3,43 @@ import 'package:spotiflac_android/utils/lyrics_parser.dart';
 import 'package:spotiflac_android/utils/lyrics_timeline.dart';
 
 void main() {
+  test('simultaneous untimed singers share highlighting and scroll focus', () {
+    final lines = LyricsParser.parse('''
+[00:01.00]v1:Lead
+[00:01.00]v2:Guest
+[00:05.00]Next
+''').lines;
+    final layout = LyricDisplayLayout(lines);
+    expect(layout.focusForLine, [0, 0, 2]);
+    for (final seconds in [1, 2, 4]) {
+      final position = Duration(seconds: seconds);
+      expect(
+        activeLyricIndices(
+          lines,
+          position,
+          LyricsParser.activeIndex(lines, position),
+        ),
+        {0, 1},
+      );
+    }
+    expect(activeLyricIndices(lines, const Duration(seconds: 5), 2), {2});
+  });
+
+  test(
+    'simultaneous timed singers retain individual ends and shared focus',
+    () {
+      final lines = LyricsParser.parse('''
+[00:01.00]v1:<00:01.00>Lead<00:05.00>
+[00:01.00]v2:<00:01.00>Guest<00:03.00>
+[00:06.00]Next
+''').lines;
+      expect(LyricDisplayLayout(lines).focusForLine, [0, 0, 2]);
+      expect(activeLyricIndices(lines, const Duration(seconds: 2), 1), {0, 1});
+      expect(activeLyricIndices(lines, const Duration(seconds: 4), 1), {0});
+      expect(activeLyricIndices(lines, const Duration(seconds: 5), 1), isEmpty);
+    },
+  );
+
   test('backing stays under its lead without changing the timing order', () {
     final lines = LyricsParser.parse('''
 [00:01.00]v1:<00:01.00>Lead<00:06.00>

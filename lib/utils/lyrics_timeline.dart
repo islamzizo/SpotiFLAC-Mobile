@@ -42,10 +42,16 @@ class LyricDisplayLayout {
       rowForLine[lineOrder[row]] = row;
     }
     var latestLead = 0;
+    Duration? latestLeadStart;
     for (var i = 0; i < lines.length; i++) {
-      if (!lines[i].isBackground) latestLead = i;
+      if (!lines[i].isBackground && lines[i].time != latestLeadStart) {
+        latestLead = i;
+        latestLeadStart = lines[i].time;
+      }
+      // Simultaneous leads share the first row as their scroll anchor, so the
+      // earlier singer cannot be pushed above the viewport while still singing.
       // A delayed echo must not scroll backwards after the next lead starts.
-      focusForLine[i] = leadForLine[i] > latestLead
+      focusForLine[i] = lines[i].isBackground && leadForLine[i] > latestLead
           ? leadForLine[i]
           : latestLead;
     }
@@ -68,7 +74,11 @@ Set<int> activeLyricIndices(
         line.end != null;
     // Known ends also apply to the most recently started singer, so a short
     // reply does not stay lit over a longer lead vocal.
-    if (timedVoice ? line.end! > position : i == currentIndex) active.add(i);
+    final simultaneous =
+        line.text.isNotEmpty && line.time == lines[currentIndex].time;
+    if (timedVoice ? line.end! > position : i == currentIndex || simultaneous) {
+      active.add(i);
+    }
   }
   return active;
 }
