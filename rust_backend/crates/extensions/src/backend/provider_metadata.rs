@@ -17,11 +17,10 @@ impl Backend {
             .find_url_handler(url)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("no extension found to handle URL: {url}"))?;
-        let raw = self
+        let value = self
             .manager
-            .provider_call(&id, "handleUrl", &json!([url]).to_string(), None, 30_000)
+            .provider_call_value(&id, "handleUrl", &json!([url]).to_string(), None, 30_000)
             .map_err(|error| error.to_string())?;
-        let value: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
         let mut result = strings(
             &value,
             &[
@@ -125,9 +124,9 @@ impl Backend {
     ) -> Result<String, String> {
         let _operation = self.enter()?;
         let options = serde_json::from_str::<Map<String, Value>>(options_json).unwrap_or_default();
-        let raw = self
+        let values = self
             .manager
-            .provider_call(
+            .provider_call_value(
                 id,
                 "customSearch",
                 &json!([query, options]).to_string(),
@@ -135,7 +134,7 @@ impl Backend {
                 30_000,
             )
             .map_err(|error| error.to_string())?;
-        let values: Vec<Value> = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+        let values = values.as_array().expect("validated custom search array");
         let normalized = values
             .iter()
             .map(|value| {
@@ -207,9 +206,9 @@ impl Backend {
         arguments: &str,
         check: &Check<'_>,
     ) -> Result<Value, ResolverError> {
-        self.metadata_provider_work(check, |lease| {
+        self.metadata_provider_work_result(check, |lease| {
             self.manager
-                .provider_call(id, method, arguments, Some(lease), 30_000)
+                .provider_call_value(id, method, arguments, Some(lease), 30_000)
         })
     }
 
@@ -222,7 +221,7 @@ impl Backend {
         serde_json::from_str(&result).map_err(|error| ResolverError::Failed(error.to_string()))
     }
 
-    fn metadata_provider_work_result<T: Send>(
+    pub(super) fn metadata_provider_work_result<T: Send>(
         &self,
         check: &Check<'_>,
         work: impl FnOnce(Arc<RequestLease>) -> Result<T, ManagerError> + Send,

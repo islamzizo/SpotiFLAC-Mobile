@@ -227,8 +227,8 @@ impl Backend {
             check()?;
             let query = request.query();
             if !query.is_empty() {
-                let tracks = self.metadata_provider_work(&check, |lease| {
-                    self.manager.search_metadata_providers_with_lease(
+                let tracks = self.metadata_provider_work_result(&check, |lease| {
+                    self.manager.search_metadata_providers_value_with_lease(
                         &query,
                         5,
                         true,
