@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/network_library_scanner.dart';
 import 'package:spotiflac_android/services/network_storage_service.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
+import 'package:spotiflac_android/utils/logger.dart';
 
 class _Storage extends NetworkStorageService {
   _Storage(this.tree, {this.failedFolder});
@@ -119,6 +120,7 @@ void main() {
   test(
     'failed folders and tags report partial results instead of deleting old rows',
     () async {
+      LogBuffer().clear();
       final storage = _Storage({
         '': [
           const NetworkEntry('offline/', 'Offline', directory: true),
@@ -140,6 +142,13 @@ void main() {
       expect(scan.errorCount, 2);
       expect(scan.expectedCount, 1);
       expect((await scan.rows().toList()).single['trackName'], 'Valid');
+      final errors = LogBuffer().entries.where(
+        (entry) => entry.level == 'ERROR',
+      );
+      expect(errors, hasLength(2));
+      expect(errors.any((entry) => entry.message.contains('bad.flac')), isTrue);
+      expect(errors.any((entry) => entry.message.contains('offline/')), isTrue);
+      expect(errors.first.error, contains('Network tags unavailable'));
     },
   );
 

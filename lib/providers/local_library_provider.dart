@@ -856,10 +856,15 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         );
         await _pruneLibraryCoverCache();
 
-        _log.i(
-          'Full scan complete: ${state.totalCount} tracks found, '
-          '$skippedDownloads already in downloads',
-        );
+        final summary =
+            'Full scan complete: ${state.totalCount} tracks found, '
+            '$skippedDownloads already in downloads, '
+            '${state.scanErrorCount} errors';
+        if (state.scanErrorCount > 0) {
+          _log.e(summary);
+        } else {
+          _log.i(summary);
+        }
         await _showScanCompleteNotification(
           totalTracks: state.totalCount,
           excludedDownloadedCount: skippedDownloads,
@@ -1028,11 +1033,16 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           excludedDownloadedCount: skippedDownloads,
         );
 
-        _log.i(
-          'Incremental scan complete: ${state.totalCount} total tracks '
-          '(${scannedList.length} new/updated, $skippedCount unchanged, '
-          '${deletedPaths.length} removed, $skippedDownloads already in downloads)',
-        );
+        final summary =
+            'Incremental scan complete: ${state.totalCount} total tracks '
+            '(${scannedList.length} new/updated, $skippedCount unchanged, '
+            '${deletedPaths.length} removed, $skippedDownloads already in downloads, '
+            '${state.scanErrorCount} errors)';
+        if (state.scanErrorCount > 0) {
+          _log.e(summary);
+        } else {
+          _log.i(summary);
+        }
         await _showScanCompleteNotification(
           totalTracks: state.totalCount,
           excludedDownloadedCount: skippedDownloads,

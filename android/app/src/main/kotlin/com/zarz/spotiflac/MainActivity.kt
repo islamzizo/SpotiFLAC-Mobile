@@ -885,6 +885,18 @@ class MainActivity: FlutterFragmentActivity() {
         channel.invokeMethod("extensionSessionGrantCompleted", payload)
     }
 
+    internal fun reportLibraryScanError(path: String, operation: String, message: String) {
+        android.util.Log.e("SpotiFLAC", "Library scan: $operation [$path]: $message")
+        val payload = mapOf(
+            "path" to path,
+            "operation" to operation,
+            "message" to message,
+        )
+        runOnUiThread {
+            backendChannel?.invokeMethod("libraryScanError", payload)
+        }
+    }
+
     /**
      * Opens a short-lived descriptor lease for zero-copy SAF playback. The
      * returned proc path identifies the lease. The Android audio plugin must

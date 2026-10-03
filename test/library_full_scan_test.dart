@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/utils/logger.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +22,43 @@ void main() {
     messenger.setMockMethodCallHandler(backend, null);
     messenger.setMockMethodCallHandler(paths, null);
     await root.delete(recursive: true);
+  });
+
+  test('SAF scan failures reach Logs even with logging disabled', () async {
+    final previousLogging = LogBuffer.loggingEnabled;
+    LogBuffer.loggingEnabled = false;
+    addTearDown(() => LogBuffer.loggingEnabled = previousLogging);
+    LogBuffer().clear();
+    messenger.setMockMethodCallHandler(backend, (call) async {
+      if (call.method != 'scanSafTreeToNDJSONFile') return null;
+      final delivered = Completer<void>();
+      messenger.handlePlatformMessage(
+        backend.name,
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('libraryScanError', {
+            'path': 'content://library/document/unreadable.flac',
+            'operation': 'Read metadata',
+            'message': 'Invalid audio header',
+          }),
+        ),
+        (_) => delivered.complete(),
+      );
+      await delivered.future;
+      final output = File((call.arguments as Map)['output_path'] as String);
+      await output.writeAsString('');
+      return {'path': output.path, 'count': 0, 'error_count': 1};
+    });
+
+    final scan = await PlatformBridge.scanSafTreeToNDJSONFile(
+      'content://library/tree/music',
+    );
+    expect(scan.errorCount, 1);
+    final error = LogBuffer().entries.single;
+    expect(error.level, 'ERROR');
+    expect(error.tag, 'LocalLibrary');
+    expect(error.message, contains('unreadable.flac'));
+    expect(error.message, contains('Read metadata'));
+    expect(error.message, contains('Invalid audio header'));
   });
 
   for (final saf in [false, true]) {

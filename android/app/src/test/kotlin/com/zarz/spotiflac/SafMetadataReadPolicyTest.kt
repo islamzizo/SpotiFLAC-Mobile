@@ -8,6 +8,29 @@ import org.junit.Test
 import java.io.File
 
 class SafMetadataReadPolicyTest {
+    @Test fun exhaustedReadsReportTheFailureOnce() {
+        val failures = mutableListOf<String?>()
+        val result = readSafMetadataWithFallback<String>(
+            directRead = { throw java.io.IOException("Invalid audio header") },
+            fallbackRead = { null },
+            retryDirectOnFailure = true,
+            onFailure = { failures.add(it?.message) },
+        )
+        assertNull(result)
+        assertEquals(listOf("Invalid audio header"), failures)
+    }
+
+    @Test fun recoveredReadsDoNotReportAScanError() {
+        var failures = 0
+        val result = readSafMetadataWithFallback(
+            directRead = { throw SecurityException("Descriptor unavailable") },
+            fallbackRead = { "valid metadata" },
+            onFailure = { failures++ },
+        )
+        assertEquals("valid metadata", result)
+        assertEquals(0, failures)
+    }
+
     @Test fun rejectsTemporaryWorkspaceMetadataAndRetriesDescriptorOnce() {
         val guessed = mapOf(
             "metadataFromFilename" to true,

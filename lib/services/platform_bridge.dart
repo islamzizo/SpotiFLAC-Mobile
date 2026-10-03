@@ -259,6 +259,15 @@ class PlatformBridge {
     _backendEventHandlerInstalled = true;
     _channel.setMethodCallHandler((call) async {
       switch (call.method) {
+        case 'libraryScanError':
+          final args = call.arguments;
+          if (args is Map) {
+            final path = args['path']?.toString() ?? '';
+            final operation = args['operation']?.toString() ?? 'scan';
+            final message = args['message']?.toString() ?? 'Unknown error';
+            AppLogger('LocalLibrary').e('$operation [$path]: $message');
+          }
+          return null;
         case 'extensionSessionGrantCompleted':
           final args = call.arguments;
           if (args is Map) {
@@ -2243,6 +2252,7 @@ class PlatformBridge {
     bool Function()? isCancelled,
   }) async {
     // Stable support-directory path lets native SAF scans resume after process death.
+    _ensureBackendEventHandler();
     final scanDir = await getApplicationSupportDirectory();
     await scanDir.create(recursive: true);
     final identity = jsonEncode(<String, dynamic>{
@@ -2326,6 +2336,7 @@ class PlatformBridge {
     String treeUri,
     Map<String, int> existingFiles,
   ) async {
+    _ensureBackendEventHandler();
     final result = await _channel.invokeMethod('scanSafTreeIncremental', {
       'tree_uri': treeUri,
       'existing_files': jsonEncode(existingFiles),
@@ -2337,6 +2348,7 @@ class PlatformBridge {
     String treeUri,
     String snapshotPath,
   ) async {
+    _ensureBackendEventHandler();
     final result = await _channel.invokeMethod(
       'scanSafTreeIncrementalFromSnapshot',
       {'tree_uri': treeUri, 'snapshot_path': snapshotPath},

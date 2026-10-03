@@ -7,6 +7,9 @@ import 'package:spotiflac_android/services/network_metadata_service.dart';
 import 'package:spotiflac_android/services/network_storage_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
+import 'package:spotiflac_android/utils/logger.dart';
+
+final _log = AppLogger('LocalLibrary');
 
 /// A single tag read at a time; only NDJSON and artwork are stored locally.
 /// Failed listings never count as empty directories. Partial scans retain old
@@ -81,8 +84,9 @@ class NetworkLibraryScanner {
           entries = folder == root
               ? first
               : await _storage.list(connection, folder);
-        } catch (_) {
+        } catch (error) {
           errors++;
+          _log.e('Network folder listing failed [$folder]', error);
           onProgress(processed, errors, folder);
           continue;
         }
@@ -103,7 +107,9 @@ class NetworkLibraryScanner {
           try {
             final tags = await _readMetadata(trackSource);
             if (tags['error'] != null || tags['metadataFromFilename'] == true) {
-              throw StateError('Network tags unavailable');
+              throw StateError(
+                tags['error']?.toString() ?? 'Network tags unavailable',
+              );
             }
             final id = 'network_${sha256.convert(utf8.encode(trackSource))}';
             String? coverPath;
@@ -129,10 +135,11 @@ class NetworkLibraryScanner {
               ..['coverPath'] = coverPath;
             await output.writeString('${jsonEncode(row)}\n');
             written++;
-          } catch (_) {
+          } catch (error) {
             // Cancellation must abort the whole staging operation.
             await checkpoint();
             errors++;
+            _log.e('Network track scan failed [$trackSource]', error);
           }
           processed++;
           onProgress(processed, errors, entry.name);

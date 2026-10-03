@@ -36,6 +36,7 @@ import org.json.JSONTokener
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.Locale
 
@@ -274,6 +275,7 @@ private fun MainActivity.readMetadataFromUri(
     fallbackExt: String? = null,
     acceptRead: (JSONObject) -> Boolean = { true },
     retryDirectOnFailure: Boolean = false,
+    onFailure: (String) -> Unit = {},
     read: (String, String) -> JSONObject?,
 ): JSONObject? {
     val displayName = buildUriDisplayName(uri, displayNameHint, fallbackExt)
@@ -294,6 +296,9 @@ private fun MainActivity.readMetadataFromUri(
         },
         accept = acceptRead,
         retryDirectOnFailure = retryDirectOnFailure,
+        onFailure = { error ->
+            onFailure(error?.message ?: "No readable audio metadata for $displayName")
+        },
     )
 }
 
@@ -302,19 +307,18 @@ internal fun MainActivity.readAudioMetadataFromUri(
     displayNameHint: String? = null,
     fallbackExt: String? = null,
     coverCacheKey: String = "",
+    onFailure: (String) -> Unit = {},
 ): JSONObject? = readMetadataFromUri(
     uri, displayNameHint, fallbackExt,
     acceptRead = {
         val fromFilename = it.optBoolean("metadataFromFilename", false)
         if (fromFilename) {
-            android.util.Log.w(
-                "SpotiFLAC",
-                "SAF metadata tags unreadable; ignoring filename-derived metadata",
-            )
+            throw IOException("Audio tags unreadable; only filename-derived metadata available")
         }
         !fromFilename
     },
     retryDirectOnFailure = true,
+    onFailure = onFailure,
 ) { path, name ->
     if (name.endsWith(".dsf", true) || name.endsWith(".dff", true) || name.endsWith(".wv", true)) {
         DsdSource.open(path)?.use { source ->
@@ -334,7 +338,8 @@ internal fun MainActivity.readAudioMetadataFromUri(
     val obj = JSONObject(coreBackend.readAudioMetadata(
         path, name, coverCacheKey,
     ))
-    obj.takeUnless { it.has("error") }
+    if (obj.has("error")) throw IOException(obj.optString("error", "Audio metadata read failed"))
+    obj
 }
 
 /** The Hi-Res check reads only a window from the middle of the file, so a

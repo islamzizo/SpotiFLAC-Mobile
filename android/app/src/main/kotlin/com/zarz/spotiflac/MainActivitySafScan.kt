@@ -956,10 +956,7 @@ internal fun MainActivity.scanSafTree(
             if (children == null) {
                 traversalErrors++
                 updateSafScanProgress { it.errorCount = traversalErrors }
-                android.util.Log.w(
-                    "SpotiFLAC",
-                    "SAF scan: failed listing directory $dirUri: ${listing.exceptionOrNull()?.message}",
-                )
+                reportLibraryScanError(dirUri, "List folder", listing.exceptionOrNull()?.message ?: "No directory listing")
                 continue
             }
             rememberCueDirectoryListing(dir, children, safChildLookupCache)
@@ -991,10 +988,7 @@ internal fun MainActivity.scanSafTree(
                 } catch (e: Exception) {
                     traversalErrors++
                     updateSafScanProgress { it.errorCount = traversalErrors }
-                    android.util.Log.w(
-                        "SpotiFLAC",
-                        "SAF scan: skipped child under $dirUri: ${e.message}",
-                    )
+                    reportLibraryScanError(child.doc.uri.toString(), "Inspect entry", e.message ?: e.javaClass.simpleName)
                 }
             }
         }
@@ -1100,7 +1094,7 @@ internal fun MainActivity.scanSafTree(
                 tempCuePath = copyUriToTemp(cueDoc.uri, ".cue", cueName)
                 if (tempCuePath == null) {
                     errors++
-                    android.util.Log.w("SpotiFLAC", "SAF scan: failed to copy CUE ${cueDoc.uri}")
+                    reportLibraryScanError(cueUri, "Read CUE", "Failed to copy CUE file")
                     scanned++
                     continue
                 }
@@ -1115,7 +1109,7 @@ internal fun MainActivity.scanSafTree(
                 )
 
                 if (audioDoc == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF scan: no audio file found for CUE $cueName")
+                    reportLibraryScanError(cueUri, "Resolve CUE audio", "No audio file found for $cueName")
                     errors++
                     scanned++
                     continue
@@ -1139,7 +1133,7 @@ internal fun MainActivity.scanSafTree(
 
                 tempAudioPath = copyUriToTemp(audioDoc.uri, fallbackAudioExt)
                 if (tempAudioPath == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF scan: failed to copy audio for CUE $cueName")
+                    reportLibraryScanError(audioDoc.uri.toString(), "Read CUE audio", "Failed to copy audio for $cueName")
                     errors++
                     scanned++
                     continue
@@ -1171,7 +1165,7 @@ internal fun MainActivity.scanSafTree(
 
             } catch (e: Exception) {
                 errors++
-                android.util.Log.w("SpotiFLAC", "SAF scan: error processing CUE $cueName: ${e.message}")
+                reportLibraryScanError(cueUri, "Scan CUE", e.message ?: e.javaClass.simpleName)
             } finally {
                 try { tempCuePath?.let { File(it).delete() } } catch (_: Exception) {}
                 try { tempAudioPath?.let { File(it).delete() } } catch (_: Exception) {}
@@ -1191,6 +1185,7 @@ internal fun MainActivity.scanSafTree(
             val name: String,
             val lastModified: Long,
             val metadata: JSONObject?,
+            val error: String?,
         )
 
         val pendingAudio = mutableListOf<SafAudioEntry>()
@@ -1234,31 +1229,33 @@ internal fun MainActivity.scanSafTree(
                 val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 val fallbackExt = if (ext.isNotBlank()) ".${ext}" else null
                 val coverCacheKey = buildLibraryCoverCacheKey(stableUri, lastModified)
+                var error: String? = null
                 val metadata = try {
                     readAudioMetadataFromUri(
                         doc.uri,
                         name,
                         fallbackExt,
                         coverCacheKey,
+                        onFailure = { error = it },
                     )
                 } catch (e: Exception) {
-                    android.util.Log.w(
-                        "SpotiFLAC",
-                        "SAF scan: metadata read failed for $stableUri: ${e.message}",
-                    )
+                    error = e.message ?: e.javaClass.simpleName
                     null
                 }
-                SafAudioScanOutcome(stableUri, name, lastModified, metadata)
+                SafAudioScanOutcome(stableUri, name, lastModified, metadata, error)
             },
-        ) { _, result ->
+        ) { audio, result ->
             val outcome = result.getOrNull()
             if (outcome == null) {
                 errors++
+                val error = result.exceptionOrNull()
+                reportLibraryScanError(audio.doc.uri.toString(), "Read metadata", error?.message ?: "Metadata task failed")
             } else {
                 updateSafScanProgress { it.currentFile = outcome.name }
                 val metadataObj = outcome.metadata
                 if (metadataObj == null) {
                     errors++
+                    reportLibraryScanError(outcome.uri, "Read metadata", outcome.error ?: "No readable audio metadata for ${outcome.name}")
                 } else {
                     try {
                         metadataObj.put("id", buildStableLibraryId(outcome.uri))
@@ -1268,8 +1265,9 @@ internal fun MainActivity.scanSafTree(
                         // Flush before recording the checkpoint to avoid losing the row.
                         ndjsonWriter?.flush()
                         recordCheckpoint(outcome.uri, outcome.lastModified)
-                    } catch (_: Exception) {
+                    } catch (error: Exception) {
                         errors++
+                        reportLibraryScanError(outcome.uri, "Index track", error.message ?: error.javaClass.simpleName)
                     }
                 }
             }
@@ -1401,10 +1399,7 @@ internal fun MainActivity.scanSafTreeIncremental(
             if (children == null) {
                 traversalErrors++
                 updateSafScanProgress { it.errorCount = traversalErrors }
-                android.util.Log.w(
-                    "SpotiFLAC",
-                    "SAF incremental scan: failed listing directory $dirUri: ${listing.exceptionOrNull()?.message}",
-                )
+                reportLibraryScanError(dirUri, "List folder", listing.exceptionOrNull()?.message ?: "No directory listing")
                 continue
             }
             rememberCueDirectoryListing(dir, children, safChildLookupCache)
@@ -1463,10 +1458,7 @@ internal fun MainActivity.scanSafTreeIncremental(
                 } catch (e: Exception) {
                     traversalErrors++
                     updateSafScanProgress { it.errorCount = traversalErrors }
-                    android.util.Log.w(
-                        "SpotiFLAC",
-                        "SAF incremental scan: skipped child under $dirUri: ${e.message}",
-                    )
+                    reportLibraryScanError(child.doc.uri.toString(), "Inspect entry", e.message ?: e.javaClass.simpleName)
                 }
             }
         }
@@ -1534,7 +1526,7 @@ internal fun MainActivity.scanSafTreeIncremental(
                 tempCuePath = copyUriToTemp(cueDoc.uri, ".cue", cueName)
                 if (tempCuePath == null) {
                     errors++
-                    android.util.Log.w("SpotiFLAC", "SAF incremental scan: failed to copy CUE ${cueDoc.uri}")
+                    reportLibraryScanError(cueDoc.uri.toString(), "Read CUE", "Failed to copy CUE file")
                     scanned++
                     continue
                 }
@@ -1549,7 +1541,7 @@ internal fun MainActivity.scanSafTreeIncremental(
                 )
 
                 if (audioDoc == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF incremental scan: no audio file found for CUE $cueName")
+                    reportLibraryScanError(cueDoc.uri.toString(), "Resolve CUE audio", "No audio file found for $cueName")
                     errors++
                     scanned++
                     continue
@@ -1569,7 +1561,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
                 tempAudioPath = copyUriToTemp(audioDoc.uri, fallbackAudioExt)
                 if (tempAudioPath == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF incremental scan: failed to copy audio for CUE $cueName")
+                    reportLibraryScanError(audioDoc.uri.toString(), "Read CUE audio", "Failed to copy audio for $cueName")
                     errors++
                     scanned++
                     continue
@@ -1602,7 +1594,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
             } catch (e: Exception) {
                 errors++
-                android.util.Log.w("SpotiFLAC", "SAF incremental scan: error processing CUE $cueName: ${e.message}")
+                reportLibraryScanError(cueDoc.uri.toString(), "Scan CUE", e.message ?: e.javaClass.simpleName)
             } finally {
                 try { tempCuePath?.let { File(it).delete() } } catch (_: Exception) {}
                 try { tempAudioPath?.let { File(it).delete() } } catch (_: Exception) {}
@@ -1693,12 +1685,20 @@ internal fun MainActivity.scanSafTreeIncremental(
                     audio.name,
                     fallbackExt,
                     buildLibraryCoverCacheKey(audio.doc.uri.toString(), audio.lastModified),
+                    onFailure = { message ->
+                        reportLibraryScanError(audio.doc.uri.toString(), "Read metadata", message)
+                    },
                 )
             },
         ) { audio, result ->
             updateSafScanProgress { it.currentFile = audio.name }
             // A failed read aborts the incremental scan, as it did when serial.
-            val metadataObj = result.getOrThrow()
+            val metadataObj = try {
+                result.getOrThrow()
+            } catch (error: Exception) {
+                reportLibraryScanError(audio.doc.uri.toString(), "Read metadata", error.message ?: error.javaClass.simpleName)
+                throw error
+            }
             if (metadataObj == null) {
                 errors++
             } else {
@@ -1709,8 +1709,9 @@ internal fun MainActivity.scanSafTreeIncremental(
                     metadataObj.put("fileModTime", audio.lastModified)
                     metadataObj.put("lastModified", audio.lastModified)
                     putFile(metadataObj)
-                } catch (_: Exception) {
+                } catch (error: Exception) {
                     errors++
+                    reportLibraryScanError(audio.doc.uri.toString(), "Index track", error.message ?: error.javaClass.simpleName)
                 }
             }
             scanned++
