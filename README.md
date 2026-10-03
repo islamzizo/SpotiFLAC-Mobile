@@ -67,6 +67,8 @@ Gradle builds the Rust native artifacts automatically. Tool versions are pinned 
 Start with the [Contributing Guide](CONTRIBUTING.md) for the development setup,
 project boundaries, validation commands, and pull request checklist.
 
+For native iOS codec checks, see the [FFmpeg capability probe](scripts/README_ios_ffmpeg_capabilities.md).
+
 ---
 
 ## Related Projects

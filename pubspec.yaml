@@ -68,7 +68,7 @@ dependencies:
   logger: ^2.7.0
 
   # FFmpeg for audio conversion
-  ffmpeg_kit_flutter_new_full: ^2.5.2
+  ffmpeg_kit_flutter_new_audio: 2.5.2
   open_filex: ^4.7.0
 
   video_player: ^2.14.0
