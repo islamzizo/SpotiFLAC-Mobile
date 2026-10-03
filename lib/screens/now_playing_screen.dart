@@ -6,7 +6,8 @@ import 'package:audio_service/audio_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/foundation.dart' show ValueListenable, listEquals;
-import 'package:flutter/rendering.dart' show OverflowBoxFit, ScrollDirection;
+import 'package:flutter/rendering.dart'
+    show OverflowBoxFit, RenderAbstractViewport, ScrollDirection;
 import 'package:flutter/services.dart' show SystemUiOverlayStyle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
@@ -40,6 +41,7 @@ import 'package:spotiflac_android/widgets/expressive_button.dart';
 import 'package:spotiflac_android/widgets/expressive_icon_button.dart';
 import 'package:spotiflac_android/widgets/aligned_lyric_pronunciation.dart';
 import 'package:spotiflac_android/widgets/lyric_supplement_transition.dart';
+import 'package:spotiflac_android/widgets/lyric_scroll_motion.dart';
 import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
 import 'package:spotiflac_android/widgets/audio_output_button.dart';
 import 'package:spotiflac_android/widgets/lyric_gap_indicator.dart';
@@ -3094,7 +3096,7 @@ class _SyncedLyricsView extends ConsumerStatefulWidget {
 }
 
 class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final ScrollController _scroll = ScrollController();
   ProviderSubscription<Duration>? _positionSubscription;
   ProviderSubscription<bool>? _playingSubscription;
@@ -3127,6 +3129,32 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
   List<double>? _layoutRowVisibility;
   List<double>? _targetLineExtents;
   bool _preserveRevealAnchor = false;
+  late final AnimationController _scrollMotion = AnimationController(
+    vsync: this,
+    duration: LyricScrollMotion.duration,
+    value: 1,
+  );
+  double _scrollMotionDistance = 0;
+  int _scrollMotionFocus = 0;
+
+  void _stopScrollMotion() {
+    _scrollMotion.stop();
+    _scrollMotion.value = 1;
+  }
+
+  void _startScrollMotion(int row, double distance) {
+    if (distance.abs() < 0.5 ||
+        widget.seekPreview.value != null ||
+        MediaQuery.disableAnimationsOf(context)) {
+      _stopScrollMotion();
+      return;
+    }
+    setState(() {
+      _scrollMotionDistance = distance;
+      _scrollMotionFocus = row;
+    });
+    _scrollMotion.forward(from: 0);
+  }
 
   void _revealTick() {
     if (mounted) setState(() {});
@@ -3212,6 +3240,7 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
   }
 
   void _resetLineKeys() {
+    _stopScrollMotion();
     _hasStarted = false;
     _lineExtents = null;
     _lineLayoutKey = null;
@@ -3239,7 +3268,10 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
     _positionSubscription = null;
     _playingSubscription = null;
     _loadingSubscription = null;
-    if (!widget.isActive) return;
+    if (!widget.isActive) {
+      _stopScrollMotion();
+      return;
+    }
     _userScrollIdleTimer?.cancel();
     _userScrolling = false;
 
@@ -3400,6 +3432,7 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
     _userScrollIdleTimer?.cancel();
     _scroll.dispose();
     _rowReveal.dispose();
+    _scrollMotion.dispose();
     super.dispose();
   }
 
@@ -3486,6 +3519,7 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
     final duration = immediate || MediaQuery.disableAnimationsOf(context)
         ? Duration.zero
         : Duration(milliseconds: widget.seekPreview.value != null ? 220 : 380);
+    if (duration == Duration.zero) _stopScrollMotion();
     final extents = _targetLineExtents;
     if (context.isMornye && extents != null && row < extents.length) {
       final position = _scroll.position;
@@ -3497,6 +3531,7 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
       if (duration == Duration.zero) {
         _scroll.jumpTo(offset);
       } else {
+        _startScrollMotion(row, offset - position.pixels);
         await _scroll.animateTo(
           offset,
           duration: duration,
@@ -3508,6 +3543,16 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
     if (index < _lineKeys.length) {
       final lineContext = _lineKeys[index].currentContext;
       if (lineContext != null) {
+        final object = lineContext.findRenderObject();
+        final viewport = object == null
+            ? null
+            : RenderAbstractViewport.maybeOf(object);
+        if (duration != Duration.zero && viewport != null) {
+          _startScrollMotion(
+            row,
+            viewport.getOffsetToReveal(object!, 0.5).offset - _scroll.offset,
+          );
+        }
         await Scrollable.ensureVisible(
           lineContext,
           alignment: 0.5,
@@ -3531,6 +3576,7 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
     if (duration == Duration.zero) {
       _scroll.jumpTo(clamped.toDouble());
     } else {
+      _startScrollMotion(row, clamped - position.pixels);
       await _scroll.animateTo(
         clamped.toDouble(),
         duration: duration,
@@ -3602,6 +3648,7 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
             (notification is UserScrollNotification &&
                 notification.direction != ScrollDirection.idle);
         if (dragging) {
+          _stopScrollMotion();
           _userScrolling = true;
           _userScrollIdleTimer?.cancel();
         } else if (notification is ScrollEndNotification && _userScrolling) {
@@ -3880,6 +3927,13 @@ class _SyncedLyricsViewState extends ConsumerState<_SyncedLyricsView>
                 );
               }
 
+              content = LyricScrollMotion(
+                progress: _scrollMotion,
+                distance: _scrollMotionDistance,
+                rowsAfterFocus: row - _scrollMotionFocus,
+                enabled: !isActive,
+                child: content,
+              );
               return _revealRow(
                 index,
                 reveal,
