@@ -37,6 +37,7 @@ void main() {
   late _Player player;
   late List<Map<Object?, Object?>> updates;
   late Map<String, Completer<PlayerWidgetArtwork?>> images;
+  late int installedWidgets;
 
   Future<void> settle() async {
     for (var i = 0; i < 6; i++) {
@@ -53,11 +54,11 @@ void main() {
     extras: const {'source': '/private/music.flac'},
   );
 
-  Future<Object?> command(String action) {
+  Future<Object?> nativeEvent(String method, Object? arguments) {
     final result = Completer<Object?>();
     messenger.handlePlatformMessage(
       channel.name,
-      channel.codec.encodeMethodCall(MethodCall('command', action)),
+      channel.codec.encodeMethodCall(MethodCall(method, arguments)),
       (data) {
         try {
           result.complete(channel.codec.decodeEnvelope(data!));
@@ -69,10 +70,14 @@ void main() {
     return result.future;
   }
 
+  Future<Object?> command(String action) => nativeEvent('command', action);
+
   setUp(() {
     updates = [];
     images = {};
+    installedWidgets = 1;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getInstalledWidgetCount') return installedWidgets;
       if (call.method == 'update') {
         updates.add(Map<Object?, Object?>.from(call.arguments as Map));
       }
@@ -92,6 +97,38 @@ void main() {
     await service.dispose();
     messenger.setMockMethodCallHandler(channel, null);
   });
+
+  test(
+    'no widgets skips artwork and first installed widget loads current cover',
+    () async {
+      installedWidgets = 0;
+      await service.initialize((_) async {});
+      player.mediaItem.add(item('one'));
+      await settle();
+      expect(images, isEmpty);
+      expect(updates.last['title'], 'Track one');
+      final added = nativeEvent('installedWidgetCountChanged', 1);
+      await settle();
+      images[item('one').artUri.toString()]!.complete(
+        PlayerWidgetArtwork(Uint8List.fromList([1]), 0xff223344),
+      );
+      await added;
+      expect(updates.any((update) => update['artwork'] != null), isTrue);
+      final artworkWrites = updates
+          .where((update) => update['artwork'] != null)
+          .length;
+      await player.play();
+      await settle();
+      expect(
+        updates.where((update) => update['artwork'] != null).length,
+        artworkWrites,
+      );
+      await nativeEvent('installedWidgetCountChanged', 0);
+      player.mediaItem.add(item('two'));
+      await settle();
+      expect(images.containsKey(item('two').artUri.toString()), isFalse);
+    },
+  );
 
   test(
     'publishes track and transport changes without position tick writes',
