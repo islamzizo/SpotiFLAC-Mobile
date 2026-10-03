@@ -117,16 +117,29 @@ class NetworkLibraryScanner {
             if (cover != null &&
                 cover.isNotEmpty &&
                 await File(cover).exists()) {
-              final target = File('${covers.path}/$id.image');
-              final staged = File('${target.path}.tmp');
+              // Identical embedded artwork shares an immutable file, including
+              // across albums/sources. Cleanup retains all DB cover references.
+              File? target;
+              File? staged;
               try {
-                await File(cover).copy(staged.path);
-                await staged.rename(target.path);
+                final digest = await sha256.bind(File(cover).openRead()).first;
+                target = File('${covers.path}/network_cover_$digest.image');
+                staged = File(
+                  '${target.path}.${NetworkStorageService.newId()}.tmp',
+                );
+                if (!await target.exists() || await target.length() == 0) {
+                  await File(cover).copy(staged.path);
+                  await staged.rename(target.path);
+                }
                 coverPath = target.path;
               } catch (_) {
-                if (await target.exists()) coverPath = target.path;
+                if (target != null && await target.exists()) {
+                  coverPath = target.path;
+                }
               } finally {
-                if (await staged.exists()) await staged.delete();
+                if (staged != null && await staged.exists()) {
+                  await staged.delete();
+                }
               }
             }
             await checkpoint();

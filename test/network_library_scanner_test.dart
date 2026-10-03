@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/network_library_scanner.dart';
 import 'package:spotiflac_android/services/network_storage_service.dart';
+import 'package:spotiflac_android/services/library_cleanup.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -47,6 +48,58 @@ void main() {
     readMetadata: reader,
     supportDirectory: () async => directory,
     temporaryDirectory: () async => directory,
+  );
+
+  test(
+    'identical artwork shares storage until the last reference is gone',
+    () async {
+      final shared = await File(
+        '${directory.path}/shared.jpg',
+      ).writeAsBytes([1, 2]);
+      final different = await File(
+        '${directory.path}/different.jpg',
+      ).writeAsBytes([3]);
+      final scan =
+          await scanner(
+            _Storage({
+              '': [
+                const NetworkEntry('one.flac', 'one.flac'),
+                const NetworkEntry('two.flac', 'two.flac'),
+                const NetworkEntry('three.flac', 'three.flac'),
+              ],
+            }),
+            (source) async => {
+              'title': 'Track',
+              'cover_path': source.endsWith('three.flac')
+                  ? different.path
+                  : shared.path,
+            },
+          ).scan(
+            NetworkStorageService.source('nas', ''),
+            checkpoint: () async {},
+            onProgress: (_, _, _) {},
+          );
+      final rows = await scan.rows().toList();
+      expect(rows[0]['id'], isNot(rows[1]['id']));
+      expect(rows[0]['coverPath'], rows[1]['coverPath']);
+      expect(rows[0]['coverPath'], isNot(rows[2]['coverPath']));
+      final covers = Directory('${directory.path}/library_covers');
+      expect(await covers.list().length, 2);
+      // Removing one track retains its sibling's shared cover.
+      expect(
+        await pruneUnreferencedLibraryCovers(covers, {
+          for (final row in rows.skip(1)) row['coverPath'] as String,
+        }),
+        0,
+      );
+      expect(
+        await pruneUnreferencedLibraryCovers(covers, {
+          rows[2]['coverPath'] as String,
+        }),
+        1,
+      );
+      expect(await File(rows[2]['coverPath'] as String).readAsBytes(), [3]);
+    },
   );
 
   test(
