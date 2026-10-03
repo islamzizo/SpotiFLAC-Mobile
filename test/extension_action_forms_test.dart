@@ -9,6 +9,7 @@ import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/extension_action_forms.dart';
+import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 
 class _Settings extends SettingsNotifier {
   @override
@@ -126,16 +127,23 @@ void main() {
         final text = tester.widget<CupertinoTextField>(fields.last);
         expect(text.obscureText, isTrue);
         expect(text.enableIMEPersonalizedLearning, isFalse);
-        await tester.tap(find.text('Europe'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Asia'));
-        await tester.pumpAndSettle();
-      } else {
-        await tester.tap(find.byType(DropdownButtonFormField<String>));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Asia').last);
-        await tester.pumpAndSettle();
       }
+      await tester.tap(find.text('Europe'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppBottomSheet), findsOneWidget);
+      expect(find.byType(AppSheetOption), findsNWidgets(2));
+      expect(tester.testTextInput.isVisible, isFalse);
+
+      // Dismissing the picker must leave both the choice and typed fields intact.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Europe'), findsOneWidget);
+      await tester.tap(find.text('Europe'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Asia'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppBottomSheet), findsNothing);
+      expect(find.text('Asia'), findsOneWidget);
       await tester.tap(find.text('Continue'));
       await tester.pumpAndSettle();
       expect(result!['state'], 'active');

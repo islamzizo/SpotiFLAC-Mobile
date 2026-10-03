@@ -205,6 +205,7 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
   }
 
   Future<void> _chooseOption(Map<String, dynamic> field) async {
+    FocusScope.of(context).unfocus();
     final key = field['key'] as String;
     final value = await showAppBottomSheet<String>(
       context: context,
@@ -215,12 +216,15 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             for (final option in (field['options'] as List).cast<String>())
-              AppSheetOption(
-                title: Text(option),
-                trailing: option == _choices[key]
-                    ? const Icon(CupertinoIcons.check_mark)
-                    : null,
-                onTap: () => Navigator.pop(sheetContext, option),
+              Semantics(
+                selected: option == _choices[key],
+                child: AppSheetOption(
+                  title: Text(option),
+                  trailing: option == _choices[key]
+                      ? const Icon(Icons.check)
+                      : null,
+                  onTap: () => Navigator.pop(sheetContext, option),
+                ),
               ),
           ],
         ),
@@ -244,6 +248,10 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
       borderRadius: BorderRadius.circular(12),
       borderSide: BorderSide.none,
     );
+    final themedBorder = theme.inputDecorationTheme.enabledBorder;
+    final materialRadius = themedBorder is OutlineInputBorder
+        ? themedBorder.borderRadius
+        : border.borderRadius;
     final decoration = InputDecoration(
       labelText: label,
       filled: true,
@@ -275,20 +283,31 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
                 ],
               ),
             )
-          : DropdownButtonFormField<String>(
-              initialValue: _choices[key],
-              isExpanded: true,
-              decoration: decoration,
-              items: (field['options'] as List)
-                  .cast<String>()
-                  .map(
-                    (option) =>
-                        DropdownMenuItem(value: option, child: Text(option)),
-                  )
-                  .toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _choices[key] = value);
-              },
+          : Material(
+              color: Colors.transparent,
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: decoration.fillColor,
+                  borderRadius: materialRadius,
+                ),
+                child: InkWell(
+                  borderRadius: materialRadius,
+                  onTap: () => _chooseOption(field),
+                  child: InputDecorator(
+                    decoration: decoration.copyWith(
+                      fillColor: Colors.transparent,
+                      suffixIcon: Icon(
+                        Icons.expand_more,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                    child: Text(
+                      _choices[key]!,
+                      style: theme.textTheme.bodyLarge,
+                    ),
+                  ),
+                ),
+              ),
             );
     } else if (mornye) {
       input = FormField<String>(
@@ -362,7 +381,11 @@ class _AccountFormDialogState extends State<_AccountFormDialog> {
               ),
             ),
           ],
-          Semantics(label: label, child: input),
+          Semantics(
+            label: label,
+            button: field['type'] == 'select' ? true : null,
+            child: input,
+          ),
         ],
       ),
     );
