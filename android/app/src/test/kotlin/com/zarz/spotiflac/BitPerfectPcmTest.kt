@@ -6,6 +6,8 @@ import kotlin.random.Random
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
 import org.junit.Test
 
 class BitPerfectPcmTest {
@@ -35,6 +37,33 @@ class BitPerfectPcmTest {
         assertEquals(Int.MIN_VALUE, result.int)
         assertEquals(0x7fff0000, result.int)
         assertEquals(-65536, result.int)
+    }
+
+    @Test
+    fun reusesWritableDirectCapacityAndResetsBoundsForShorterChunks() {
+        val reusable = ByteBuffer.allocateDirect(32)
+        reusable.position(10)
+        reusable.limit(12)
+        val input = ByteBuffer.wrap(byteArrayOf(1, 0, -1, -1))
+        val result = BitPerfectPcm.convert(input, 16, 16, 24, false, reusable)
+        assertSame(reusable, result)
+        assertArrayEquals(byteArrayOf(0, 1, 0, 0, -1, -1), bytes(result))
+        val shorter = BitPerfectPcm.convert(ByteBuffer.wrap(byteArrayOf(2, 0)), 16, 16, 16, false, result)
+        assertSame(result, shorter)
+        assertArrayEquals(byteArrayOf(2, 0), bytes(shorter))
+    }
+
+    @Test
+    fun growsCapacityAndRejectsReadOnlyOrHeapBuffersForReuse() {
+        val small = ByteBuffer.allocateDirect(2)
+        val grown = BitPerfectPcm.convert(ByteBuffer.wrap(byteArrayOf(1, 0)), 16, 16, 32, false, small)
+        assertNotSame(small, grown)
+        assertArrayEquals(byteArrayOf(0, 0, 1, 0), bytes(grown))
+        for (invalid in listOf(ByteBuffer.allocate(8), ByteBuffer.allocateDirect(8).asReadOnlyBuffer())) {
+            val result = BitPerfectPcm.convert(ByteBuffer.wrap(byteArrayOf(3, 0)), 16, 16, 16, false, invalid)
+            assertNotSame(invalid, result)
+            assertArrayEquals(byteArrayOf(3, 0), bytes(result))
+        }
     }
 
     @Test

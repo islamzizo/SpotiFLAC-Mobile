@@ -104,6 +104,14 @@ impl UsbDirectOutput {
         }
     }
 
+    /// Advisory, frame-aligned capacity before copying a buffer across FFI.
+    pub fn available_bytes(&self) -> Result<u32, UsbAudioError> {
+        #[cfg(target_os = "android")]
+        return self.output.available_bytes().map_err(Into::into);
+        #[cfg(not(target_os = "android"))]
+        unreachable!("Android-only constructor")
+    }
+
     pub fn start(&self) -> Result<(), UsbAudioError> {
         #[cfg(target_os = "android")]
         return self.output.start().map_err(Into::into);

@@ -8,14 +8,17 @@ internal object BitPerfectPcm {
     fun outputBits(sourceBits: Int, supported: List<Int>): Int? =
         supported.filter { it in listOf(16, 24, 32) && it >= sourceBits }.minOrNull()
 
-    fun convert(input: ByteBuffer, inputBits: Int, sourceBits: Int, outputBits: Int, floating: Boolean): ByteBuffer {
+    fun convert(input: ByteBuffer, inputBits: Int, sourceBits: Int, outputBits: Int, floating: Boolean, reuse: ByteBuffer? = null): ByteBuffer {
         require(sourceBits in listOf(16, 24, 32) && outputBits in listOf(16, 24, 32) && outputBits >= sourceBits)
         require(if (floating) inputBits == 32 && sourceBits <= 24 else inputBits >= sourceBits)
         val bytes = inputBits / 8
         require(input.remaining() % bytes == 0)
         input.order(ByteOrder.LITTLE_ENDIAN)
-        val output = ByteBuffer.allocateDirect(input.remaining() / bytes * (outputBits / 8))
-            .order(ByteOrder.LITTLE_ENDIAN)
+        val size = input.remaining() / bytes * (outputBits / 8)
+        val output = (reuse?.takeIf { it.isDirect && !it.isReadOnly && it.capacity() >= size }
+            ?: ByteBuffer.allocateDirect(size)).order(ByteOrder.LITTLE_ENDIAN)
+        output.clear()
+        output.limit(size)
         while (input.hasRemaining()) {
             val sample = if (floating) {
                 val scaled = input.float.toDouble() * (1L shl (sourceBits - 1))

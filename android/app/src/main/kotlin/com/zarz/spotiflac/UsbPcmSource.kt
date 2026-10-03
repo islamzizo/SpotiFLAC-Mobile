@@ -14,6 +14,7 @@ internal class UsbPcmSource(path: String) : Closeable {
     private var codec: MediaCodec? = null
     private val info = MediaCodec.BufferInfo()
     private val raw = ByteBuffer.allocateDirect(256 * 1024)
+    private var converted: ByteBuffer? = null
     private var inputEnded = false
     var ended = false
         private set
@@ -91,7 +92,9 @@ internal class UsbPcmSource(path: String) : Closeable {
         require(frame > 0 && buffer.remaining() % frame == 0)
         val skip = if (timeUs < targetUs) ((targetUs - timeUs) * rate + 999999) / 1000000 else 0
         buffer.position(buffer.position() + minOf(skip, (buffer.remaining() / frame).toLong()).toInt() * frame)
-        return BitPerfectPcm.convert(buffer, inputBits, bits, outputBits, floating)
+        // The playback worker consumes this result before requesting another buffer.
+        return BitPerfectPcm.convert(buffer, inputBits, bits, outputBits, floating, converted)
+            .also { converted = it }
     }
 
     fun read(outputBits: Int): ByteBuffer? {
@@ -147,6 +150,7 @@ internal class UsbPcmSource(path: String) : Closeable {
     override fun close() {
         runCatching { codec?.release() }
         codec = null
+        converted = null
         runCatching { extractor.release() }
     }
 }

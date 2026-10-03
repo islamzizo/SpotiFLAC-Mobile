@@ -38,6 +38,7 @@ internal class UsbDirectPlayback(private val context: Context, private val emit:
     private var pcm: UsbPcmSource? = null
     private var dsd: DsdSource? = null
     private var pending: ByteBuffer? = null
+    private var writeBuffer = ByteArray(0)
     private var playing = false
     private var ended = false
     private var failed = false
@@ -222,9 +223,14 @@ internal class UsbDirectPlayback(private val context: Context, private val emit:
             val buffer = pending ?: return
             val count = minOf(buffer.remaining(), 65536) / frameBytes * frameBytes
             if (count == 0) { pending = null; return@repeat }
-            val data = ByteArray(count)
-            buffer.duplicate().get(data)
-            val written = requireNotNull(output).write(data).toInt()
+            val audio = requireNotNull(output)
+            // There is one producer; the native consumer can only free more room
+            // between this check and write. Wait rather than repeatedly copying
+            // the same pending samples while the ring is full.
+            if (audio.availableBytes().toInt() < count) return
+            if (writeBuffer.size != count) writeBuffer = ByteArray(count)
+            buffer.duplicate().get(writeBuffer)
+            val written = audio.write(writeBuffer).toInt()
             buffer.position(buffer.position() + written)
             writtenFrames += written / frameBytes
             if (buffer.hasRemaining()) return
@@ -321,6 +327,6 @@ internal class UsbDirectPlayback(private val context: Context, private val emit:
         permission?.done?.invoke(mapOf("reason" to "cancelled"), null)
         permission = null
         context.unregisterReceiver(receiver)
-        worker.post { closeSource(); thread.quitSafely() }
+        worker.post { closeSource(); writeBuffer = ByteArray(0); thread.quitSafely() }
     }
 }
