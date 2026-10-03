@@ -22,6 +22,29 @@ bool isForegroundServiceStartNotAllowed(Object error) {
 Object? _decodeJsonInBackground(String json) => jsonDecode(json);
 String _encodeJsonInBackground(Object? value) => jsonEncode(value);
 
+String _encodeBoundedLookupCacheInBackground(Map<String, dynamic> entries) {
+  final result = StringBuffer('{');
+  var bytes = 2; // Opening and closing braces.
+  var count = 0;
+  for (final entry in entries.entries) {
+    final fragment =
+        '${_encodeJsonInBackground(entry.key)}:${_encodeJsonInBackground(entry.value)}';
+    final entryBytes = utf8.encode(fragment).length;
+    final separatorBytes = count == 0 ? 0 : 1;
+    if (entryBytes > PlatformBridge._persistentCacheMaxEntryBytes ||
+        bytes + separatorBytes + entryBytes >
+            PlatformBridge._persistentCacheMaxBytes) {
+      continue;
+    }
+    if (count > 0) result.write(',');
+    result.write(fragment);
+    bytes += separatorBytes + entryBytes;
+    count++;
+  }
+  result.write('}');
+  return result.toString();
+}
+
 Object? _decodeJsonFileInBackground(String path) {
   final contents = File(path).readAsStringSync();
   return contents.isEmpty ? null : jsonDecode(contents);
@@ -142,8 +165,13 @@ bool shouldResetRestoredInstallation({
 class _BridgeCacheEntry {
   final Map<String, dynamic> value;
   final DateTime expiresAt;
+  final int bytes;
 
-  const _BridgeCacheEntry({required this.value, required this.expiresAt});
+  const _BridgeCacheEntry({
+    required this.value,
+    required this.expiresAt,
+    required this.bytes,
+  });
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
@@ -151,8 +179,13 @@ class _BridgeCacheEntry {
 class _BridgeListCacheEntry {
   final List<Map<String, dynamic>> value;
   final DateTime expiresAt;
+  final int bytes;
 
-  const _BridgeListCacheEntry({required this.value, required this.expiresAt});
+  const _BridgeListCacheEntry({
+    required this.value,
+    required this.expiresAt,
+    required this.bytes,
+  });
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
@@ -190,6 +223,12 @@ class PlatformBridge {
   static const _urlHandleCacheTtl = Duration(minutes: 5);
   static const _customSearchCacheTtl = Duration(minutes: 2);
   static const _bridgeCacheMaxEntries = 256;
+  // Bound retained JSON containers as well as strings. Entry counts alone do
+  // not bound album/playlist responses, which can contain thousands of tracks.
+  static const _bridgeCacheMaxEntryBytes = 4 * 1024 * 1024;
+  static const _bridgeCacheMaxBytes = 8 * 1024 * 1024;
+  static const _persistentCacheMaxEntryBytes = 1024 * 1024;
+  static const _persistentCacheMaxBytes = 2 * 1024 * 1024;
   static const _lookupCachePersistDebounce = Duration(milliseconds: 500);
   static const _metadataPersistentCacheKey = 'bridge_metadata_lookup_cache_v1';
   static const _downloadProgressEvents = EventChannel(
@@ -397,20 +436,43 @@ class PlatformBridge {
     Duration ttl,
     String persistentCacheKey,
   ) {
-    _pruneExpiredBridgeCache(cache);
-    while (cache.length >= _bridgeCacheMaxEntries && cache.isNotEmpty) {
-      cache.remove(cache.keys.first);
-    }
-    cache[key] = _BridgeCacheEntry(
-      // Loader results stay private; every caller receives its own deep copy.
-      value: value,
-      expiresAt: DateTime.now().add(ttl),
-    );
+    _putMemoryCachedMap(cache, key, value, ttl);
     _scheduleLookupCachePersist(
       cache,
       persistentCacheKey,
       _lookupCacheGeneration,
     );
+  }
+
+  /// Conservative retained-size estimate, with early exit for oversized JSON.
+  /// Avoids allocating another encoded response just to decide cache admission.
+  static int _payloadBytes(Object? value) {
+    var bytes = 0;
+    void visit(Object? item) {
+      if (bytes > _bridgeCacheMaxEntryBytes) return;
+      if (item is String) {
+        bytes += 32 + item.length * 2;
+      } else if (item is Map) {
+        bytes += 64;
+        for (final entry in item.entries) {
+          bytes += 48;
+          visit(entry.key);
+          visit(entry.value);
+          if (bytes > _bridgeCacheMaxEntryBytes) break;
+        }
+      } else if (item is List) {
+        bytes += 32 + item.length * 8;
+        for (final entry in item) {
+          visit(entry);
+          if (bytes > _bridgeCacheMaxEntryBytes) break;
+        }
+      } else {
+        bytes += 16;
+      }
+    }
+
+    visit(value);
+    return bytes;
   }
 
   static void _pruneExpiredBridgeCache(Map<String, _BridgeCacheEntry> cache) {
@@ -495,6 +557,10 @@ class PlatformBridge {
   ) async {
     final raw = prefs.getString(prefsKey);
     if (raw == null || raw.isEmpty) return;
+    if (raw.length > _persistentCacheMaxBytes) {
+      await prefs.remove(prefsKey);
+      return;
+    }
 
     final decoded = await _decodeJsonStringAsync(raw);
     if (generation != _lookupCacheGeneration) return;
@@ -514,9 +580,17 @@ class PlatformBridge {
       final expiresAt = DateTime.fromMillisecondsSinceEpoch(expiresAtMs);
       if (!expiresAt.isAfter(now)) continue;
 
+      final map = Map<String, dynamic>.from(value);
+      final bytes = _payloadBytes(map) + key.length * 2;
+      if (bytes > _bridgeCacheMaxEntryBytes) continue;
+      if (target.values.fold<int>(0, (sum, item) => sum + item.bytes) + bytes >
+          _bridgeCacheMaxBytes) {
+        break;
+      }
       target[key] = _BridgeCacheEntry(
-        value: Map<String, dynamic>.from(value),
+        value: map,
         expiresAt: expiresAt,
+        bytes: bytes,
       );
     }
   }
@@ -528,16 +602,25 @@ class PlatformBridge {
   ) async {
     try {
       _pruneExpiredBridgeCache(cache);
-      final data = <String, dynamic>{
-        for (final entry in cache.entries)
-          entry.key: {
-            'expires_at': entry.value.expiresAt.millisecondsSinceEpoch,
-            'value': entry.value.value,
-          },
-      };
-      final encoded = data.length >= 32
-          ? await compute(_encodeJsonInBackground, data)
-          : jsonEncode(data);
+      final data = <String, dynamic>{};
+      var bytes = 64;
+      for (final entry in cache.entries.toList().reversed) {
+        final cost = entry.value.bytes + 128;
+        if (cost > _persistentCacheMaxEntryBytes ||
+            bytes + cost > _persistentCacheMaxBytes) {
+          continue;
+        }
+        bytes += cost;
+        data[entry.key] = {
+          'expires_at': entry.value.expiresAt.millisecondsSinceEpoch,
+          'value': entry.value.value,
+        };
+      }
+      // Escaping and multibyte UTF-8 can outgrow the retained-size estimate.
+      // Enforce both encoded limits in the isolate, without UI-side encoding.
+      final encoded = bytes >= _backgroundJsonDecodeThresholdBytes
+          ? await compute(_encodeBoundedLookupCacheInBackground, data)
+          : _encodeBoundedLookupCacheInBackground(data);
       if (generation != _lookupCacheGeneration) return;
       final prefs = await SharedPreferences.getInstance();
       if (generation != _lookupCacheGeneration) return;
@@ -2054,12 +2137,19 @@ class PlatformBridge {
     Duration ttl,
   ) {
     _pruneExpiredBridgeCache(cache);
-    while (cache.length >= _bridgeCacheMaxEntries && cache.isNotEmpty) {
-      cache.remove(cache.keys.first);
+    cache.remove(key);
+    final bytes = _payloadBytes(value) + key.length * 2;
+    if (bytes > _bridgeCacheMaxEntryBytes) return;
+    var retained = cache.values.fold<int>(0, (sum, item) => sum + item.bytes);
+    while (cache.isNotEmpty &&
+        (cache.length >= _bridgeCacheMaxEntries ||
+            retained + bytes > _bridgeCacheMaxBytes)) {
+      retained -= cache.remove(cache.keys.first)!.bytes;
     }
     cache[key] = _BridgeCacheEntry(
       value: value,
       expiresAt: DateTime.now().add(ttl),
+      bytes: bytes,
     );
   }
 
@@ -2084,12 +2174,19 @@ class PlatformBridge {
     Duration ttl,
   ) {
     _pruneExpiredBridgeListCache(cache);
-    while (cache.length >= _bridgeCacheMaxEntries && cache.isNotEmpty) {
-      cache.remove(cache.keys.first);
+    cache.remove(key);
+    final bytes = _payloadBytes(value) + key.length * 2;
+    if (bytes > _bridgeCacheMaxEntryBytes) return;
+    var retained = cache.values.fold<int>(0, (sum, item) => sum + item.bytes);
+    while (cache.isNotEmpty &&
+        (cache.length >= _bridgeCacheMaxEntries ||
+            retained + bytes > _bridgeCacheMaxBytes)) {
+      retained -= cache.remove(cache.keys.first)!.bytes;
     }
     cache[key] = _BridgeListCacheEntry(
       value: value,
       expiresAt: DateTime.now().add(ttl),
+      bytes: bytes,
     );
   }
 

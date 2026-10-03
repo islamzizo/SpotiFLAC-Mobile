@@ -13,6 +13,29 @@ void main() {
 
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
+  test(
+    'oversized custom-search lists are displayed without accumulating',
+    () async {
+      final rows = [
+        {'id': 'large', 'name': 'x' * (3 * 1024 * 1024)},
+      ];
+      final payload = jsonEncode(rows);
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        calls++;
+        return payload;
+      });
+      for (var index = 0; index < 2; index++) {
+        final result = await PlatformBridge.customSearchWithExtension(
+          'oversized-search-test',
+          'large',
+        );
+        expect(result, rows);
+      }
+      expect(calls, 2);
+    },
+  );
+
   for (final format in ['small-json', 'large-json', 'native-list']) {
     test('custom search decodes and caches $format results', () async {
       final rows = List.generate(
