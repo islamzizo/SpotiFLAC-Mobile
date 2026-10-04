@@ -168,6 +168,32 @@ class MusicPlayerController {
     await playAll(media, initialIndex: initialIndex.clamp(0, media.length - 1));
   }
 
+  Future<({LocalLibraryItem item, List<LocalLibraryItem> tracks})?>
+  localAlbumFor(String mediaId) async {
+    final database = _runtime.dependencies.libraryDatabase;
+    final row = await database.getById(mediaId);
+    if (row == null) return null;
+    final item = LocalLibraryItem.fromJson(row);
+    final rows = await database.getQueueLocalAlbumTracksByKey(item.albumKey);
+    final tracks = rows.map(LocalLibraryItem.fromJson).toList(growable: false);
+    return tracks.isEmpty ? null : (item: item, tracks: tracks);
+  }
+
+  Future<bool> shuffleLibrary() async {
+    final rows = await _runtime.dependencies.libraryDatabase.getAll();
+    final media = rows
+        .map(LocalLibraryItem.fromJson)
+        .where((item) => item.filePath.trim().isNotEmpty)
+        .map(playableFromLocal)
+        .toList();
+    if (media.isEmpty) return false;
+    final handler = await _runtime.initialize();
+    media.shuffle();
+    await handler.setShuffleMode(AudioServiceShuffleMode.all);
+    await handler.setQueueAndPlay(media);
+    return true;
+  }
+
   Future<void> play() async => _handler?.play();
   Future<void> pause() async => _handler?.pause();
   Future<void> stop() async => _handler?.stop();
