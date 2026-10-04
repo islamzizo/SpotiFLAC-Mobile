@@ -228,7 +228,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Spotify Account'), findsOneWidget);
+      expect(find.text('Spotify Account'), findsNWidgets(2));
       expect(find.text('Set up your profile'), findsNothing);
       expect(
         find.text('Connect your Spotify account'),
