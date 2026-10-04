@@ -16,8 +16,111 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
 import 'package:spotiflac_android/widgets/lazy_tab_view.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
+import 'package:spotiflac_android/widgets/mornye_context_menu.dart';
 
 void main() {
+  for (final (size, layout) in [
+    for (final layout in ['shelf', 'featured', 'quick-pick', 'quick-pick-menu'])
+      (const Size(430, 932), layout),
+    (const Size(1024, 768), 'featured'),
+  ]) {
+    testWidgets(
+      'Home $layout menu follows its source after scrolling at $size',
+      (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              settingsProvider.overrideWith(_Settings.new),
+              extensionProvider.overrideWith(_Extensions.new),
+              exploreProvider.overrideWith(
+                () => _Explore(
+                  sections: List.generate(
+                    6,
+                    (index) => ExploreSection(
+                      uri: 'example:section:$index',
+                      title: 'Section $index',
+                      isFeatured: layout == 'featured',
+                      isYTMusicQuickPicks: layout.startsWith('quick-pick'),
+                      items: [
+                        ExploreItem(
+                          id: 'track-$index',
+                          uri: 'example:track:$index',
+                          type: 'track',
+                          name: 'Feed track $index',
+                          artists: '',
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              downloadHistoryProvider.overrideWith(_History.new),
+              recentAccessProvider.overrideWith(_Recent.new),
+              trackProvider.overrideWith(_Search.new),
+            ],
+            child: MaterialApp(
+              theme: MornyeTheme.build(Brightness.dark),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: const HomeTab(mode: HomeTabMode.browse),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        for (final index in [0, 5]) {
+          final title = find.text('Feed track $index');
+          if (index > 0) {
+            await tester.scrollUntilVisible(
+              title,
+              300,
+              scrollable: find.byType(Scrollable).first,
+            );
+            await tester.pumpAndSettle();
+          }
+          final card = find
+              .ancestor(
+                of: title,
+                matching: layout.startsWith('quick-pick')
+                    ? find.byType(InkWell)
+                    : find.byType(GestureDetector),
+              )
+              .first;
+          await Scrollable.ensureVisible(tester.element(card), alignment: 0.3);
+          await tester.pumpAndSettle();
+          final control = layout == 'quick-pick-menu'
+              ? find.descendant(of: card, matching: find.byType(IconButton))
+              : card;
+          final anchor = tester.getRect(control);
+          await tester.tap(control);
+          await tester.pumpAndSettle();
+
+          expect(find.text('Download'), findsOneWidget);
+          expect(find.text('Go to Album'), findsOneWidget);
+          final menu = tester.getRect(find.byType(MornyeContextMenu));
+          expect(
+            menu.top,
+            anyOf(
+              closeTo(anchor.bottom + 8, 1),
+              closeTo(anchor.top - menu.height - 8, 1),
+            ),
+          );
+          expect(menu.left, greaterThanOrEqualTo(16));
+          expect(menu.right, lessThanOrEqualTo(size.width - 16));
+          expect(menu.top, greaterThanOrEqualTo(16));
+          expect(menu.bottom, lessThanOrEqualTo(size.height - 16));
+          await tester.tapAt(const Offset(5, 5));
+          await tester.pumpAndSettle();
+          expect(find.byType(MornyeContextMenu), findsNothing);
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'Home keeps its feed while Search retains its query and results',
     (tester) async {
@@ -321,16 +424,21 @@ class _Extensions extends ExtensionNotifier {
 }
 
 class _Explore extends ExploreNotifier {
+  _Explore({List<ExploreSection>? sections})
+    : _sections =
+          sections ??
+          const [
+            ExploreSection(
+              uri: 'example:featured',
+              title: 'Featured albums',
+              items: [],
+            ),
+          ];
+
+  final List<ExploreSection> _sections;
+
   @override
-  ExploreState build() => const ExploreState(
-    sections: [
-      ExploreSection(
-        uri: 'example:featured',
-        title: 'Featured albums',
-        items: [],
-      ),
-    ],
-  );
+  ExploreState build() => ExploreState(sections: _sections);
 }
 
 class _History extends DownloadHistoryNotifier {

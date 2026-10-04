@@ -76,7 +76,7 @@ void main() {
                     items: items,
                     isFeatured: true,
                   ),
-                  onItemTap: (item) => opened = item,
+                  onItemTap: (item, _) => opened = item,
                 ),
               ),
             ),

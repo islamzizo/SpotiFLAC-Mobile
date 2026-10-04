@@ -1488,8 +1488,8 @@ class _QuickPicksPageView extends StatefulWidget {
   final ColorScheme colorScheme;
   final int itemsPerPage;
   final int totalPages;
-  final void Function(ExploreItem) onItemTap;
-  final void Function(ExploreItem) onItemMenu;
+  final void Function(ExploreItem, BuildContext) onItemTap;
+  final void Function(ExploreItem, BuildContext) onItemMenu;
 
   const _QuickPicksPageView({
     required this.section,
@@ -1557,7 +1557,10 @@ class _QuickPicksPageViewState extends State<_QuickPicksPageView> {
                     key: ValueKey(
                       'quick-pick-${item.type}-${item.id}-${item.uri}',
                     ),
-                    child: _buildQuickPickItem(item),
+                    child: Builder(
+                      builder: (itemContext) =>
+                          _buildQuickPickItem(itemContext, item),
+                    ),
                   );
                 }),
               );
@@ -1592,9 +1595,9 @@ class _QuickPicksPageViewState extends State<_QuickPicksPageView> {
     );
   }
 
-  Widget _buildQuickPickItem(ExploreItem item) {
+  Widget _buildQuickPickItem(BuildContext itemContext, ExploreItem item) {
     return InkWell(
-      onTap: () => widget.onItemTap(item),
+      onTap: () => widget.onItemTap(item, itemContext),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Row(
@@ -1662,16 +1665,18 @@ class _QuickPicksPageViewState extends State<_QuickPicksPageView> {
                 ],
               ),
             ),
-            IconButton(
-              tooltip: MaterialLocalizations.of(context).showMenuTooltip,
-              icon: Icon(
-                Icons.more_vert,
-                color: widget.colorScheme.onSurfaceVariant,
-                size: 20,
+            Builder(
+              builder: (buttonContext) => IconButton(
+                tooltip: MaterialLocalizations.of(context).showMenuTooltip,
+                icon: Icon(
+                  Icons.more_vert,
+                  color: widget.colorScheme.onSurfaceVariant,
+                  size: 20,
+                ),
+                onPressed: () => widget.onItemMenu(item, buttonContext),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               ),
-              onPressed: () => widget.onItemMenu(item),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
             ),
           ],
         ),
