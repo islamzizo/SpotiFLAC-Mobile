@@ -473,10 +473,9 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             ),
           ),
           SliverToBoxAdapter(
-            child: FutureBuilder<SpotifyProfile?>(
-              future: _spotifyProfileFuture,
-              builder: (context, snapshot) {
-                final profile = snapshot.data;
+            child: ValueListenableBuilder<SpotifyProfile?>(
+              valueListenable: SpotifyAccountService.instance.profileNotifier,
+              builder: (context, profile, _) {
                 final signedIn = profile != null;
                 return SettingsGroup(
                   margin: margin,
