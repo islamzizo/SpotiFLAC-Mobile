@@ -383,6 +383,7 @@ class SpotifyAccountService {
   }
   Future<void> signOut() async {
     _profileCache = null;
+    profileNotifier.value = null;
     for (final key in [_signedInKey,_spDcKey,_spKeyKey,accessTokenKey,_expiryKey,_playlistsKey,_profileKey]) {
       await _storage.delete(key:key);
     }
