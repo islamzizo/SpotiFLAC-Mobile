@@ -358,6 +358,10 @@ class _HomeTabState extends ConsumerState<HomeTab>
   }
 
   void _onSearchFocusChanged() {
+    // The dedicated Search tab already shows recent items independently of
+    // focus. Let TextField handle its cursor/keyboard without rebuilding the
+    // entire results page each time navigation focuses or unfocuses it.
+    if (widget.mode == HomeTabMode.search) return;
     if (mounted) {
       setState(() {});
     }
@@ -369,7 +373,9 @@ class _HomeTabState extends ConsumerState<HomeTab>
   void _focusSearchFromShell() {
     if (!_showsSearch) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_showsSearch || !TickerMode.valuesOf(context).enabled) {
+      if (!mounted ||
+          !_showsSearch ||
+          !TickerMode.getValuesNotifier(context).value.enabled) {
         return;
       }
       if (_homeScrollController.hasClients) _homeScrollController.jumpTo(0);

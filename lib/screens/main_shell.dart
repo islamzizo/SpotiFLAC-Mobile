@@ -39,6 +39,7 @@ import 'package:spotiflac_android/widgets/update_dialog.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/mini_player.dart';
+import 'package:spotiflac_android/widgets/lazy_tab_view.dart';
 import 'package:spotiflac_android/widgets/expressive_navigation_bar.dart';
 import 'package:spotiflac_android/widgets/mornye_bottom_bar.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
@@ -60,7 +61,7 @@ class _MainShellState extends ConsumerState<MainShell>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   int _currentIndex = 0;
   final _mornyeChrome = MornyeChromeController();
-  // Preserves the PageView element (and its kept-alive tabs) when the body
+  // Preserves the tab view element (and its kept-alive tabs) when the body
   // structure swaps between rail and bottom-bar layouts on rotation.
   final GlobalKey _pageViewKey = GlobalKey();
   late final PageController _pageController;
@@ -644,7 +645,6 @@ class _MainShellState extends ConsumerState<MainShell>
         // The glass pill owns the tab transition. Sliding/fading the whole
         // page at the same time continuously invalidates its live backdrop.
         _tabJumpTransitionController.value = 1;
-        _pageController.jumpToPage(index);
       } else if (isNonAdjacentJump) {
         _pageController.jumpToPage(index);
         _tabJumpTransitionController.forward(from: 0);
@@ -969,7 +969,9 @@ class _MainShellState extends ConsumerState<MainShell>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           setState(() => _currentIndex = maxIndex);
-          _pageController.jumpToPage(maxIndex);
+          if (_pageController.hasClients) {
+            _pageController.jumpToPage(maxIndex);
+          }
         }
       });
     }
@@ -986,38 +988,53 @@ class _MainShellState extends ConsumerState<MainShell>
         MediaQuery.viewInsetsOf(context).bottom == 0 &&
         MediaQuery.textScalerOf(context).scale(15) <= 20;
 
+    Widget observeScroll(Widget child, int index) =>
+        NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (canMinimizeChrome && index == _currentIndex) {
+              return _mornyeChrome.handleScroll(notification);
+            }
+            return false;
+          },
+          child: child,
+        );
+
     final pageView = KeyedSubtree(
       key: _pageViewKey,
-      child: FadeTransition(
-        opacity: _tabJumpOpacity,
-        child: ScaleTransition(
-          scale: _tabJumpScale,
-          child: PageView.builder(
-            controller: _pageController,
-            itemCount: tabs.length,
-            onPageChanged: _onPageChanged,
-            physics: const NeverScrollableScrollPhysics(),
-            // TickerMode mutes animations and lets visibility-aware widgets
-            // (e.g. MotionHeaderBanner) pause when their tab is hidden —
-            // kept-alive pages otherwise keep running offscreen.
-            itemBuilder: (context, index) => _KeepAliveTabPage(
-              key: ValueKey('page-$index'),
-              child: TickerMode(
-                enabled: index == _currentIndex,
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    if (canMinimizeChrome && index == _currentIndex) {
-                      return _mornyeChrome.handleScroll(notification);
-                    }
-                    return false;
-                  },
-                  child: tabs[index],
+      child: context.isMornye
+          ? LazyTabView(
+              index: selectedDestination,
+              preloadKeys: {const ValueKey('tab-search')},
+              children: [
+                for (var index = 0; index < tabs.length; index++)
+                  KeyedSubtree(
+                    key: tabs[index].key,
+                    child: observeScroll(tabs[index], index),
+                  ),
+              ],
+            )
+          : FadeTransition(
+              opacity: _tabJumpOpacity,
+              child: ScaleTransition(
+                scale: _tabJumpScale,
+                child: PageView.builder(
+                  controller: _pageController,
+                  itemCount: tabs.length,
+                  onPageChanged: _onPageChanged,
+                  physics: const NeverScrollableScrollPhysics(),
+                  // TickerMode mutes animations and lets visibility-aware widgets
+                  // (e.g. MotionHeaderBanner) pause when their tab is hidden —
+                  // kept-alive pages otherwise keep running offscreen.
+                  itemBuilder: (context, index) => _KeepAliveTabPage(
+                    key: ValueKey('page-$index'),
+                    child: TickerMode(
+                      enabled: index == _currentIndex,
+                      child: observeScroll(tabs[index], index),
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        ),
-      ),
     );
 
     return SelectionOverlayHost(
@@ -1028,9 +1045,8 @@ class _MainShellState extends ConsumerState<MainShell>
         },
         child: Scaffold(
           extendBody: true,
-          // The page view keeps one element across the rail<->bar structure
-          // swap via _pageViewKey; without it a rotation past the 600dp
-          // breakpoint remounts the PageView and snaps back to the first tab.
+          // The tab view keeps one element across the rail<->bar structure
+          // swap via _pageViewKey so rotation doesn't remount tab navigators.
           body: useNavigationRail
               ? Row(
                   children: [

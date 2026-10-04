@@ -14,6 +14,7 @@ import 'package:spotiflac_android/providers/track_provider.dart';
 import 'package:spotiflac_android/screens/home_tab.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
+import 'package:spotiflac_android/widgets/lazy_tab_view.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 
 void main() {
@@ -50,7 +51,7 @@ void main() {
       await tester.tap(find.text('Open Search'));
       await tester.pumpAndSettle();
       expect(find.text('Search'), findsWidgets);
-      expect(find.text('Featured albums'), findsNothing);
+      expect(find.text('Featured albums').hitTestable(), findsNothing);
       expect(find.text('Recently visited artist'), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'Example');
       expect(
@@ -66,8 +67,8 @@ void main() {
       await tester.tap(find.text('Open Home'));
       await tester.pumpAndSettle();
       expect(find.text('Featured albums'), findsOneWidget);
-      expect(find.byType(TextField), findsNothing);
-      expect(find.text('Found artist'), findsNothing);
+      expect(find.byType(TextField).hitTestable(), findsNothing);
+      expect(find.text('Found artist').hitTestable(), findsNothing);
 
       await tester.tap(find.text('Open Search'));
       await tester.pumpAndSettle();
@@ -81,7 +82,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('Found artist'), findsNothing);
       expect(find.text('Recently visited artist'), findsOneWidget);
-      expect(find.text('Featured albums'), findsNothing);
+      expect(find.text('Featured albums').hitTestable(), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -172,7 +173,7 @@ void main() {
             of: find.byType(AppSearchField),
             matching: find.byType(BackdropFilter),
           ),
-          findsOneWidget,
+          findsNothing,
         );
         await tester.enterText(find.byType(TextField), 'Example');
         await tester.testTextInput.receiveAction(TextInputAction.search);
@@ -263,14 +264,16 @@ class _TabsState extends State<_Tabs> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    body: IndexedStack(
+    body: LazyTabView(
       index: _index,
       children: [
         TickerMode(
+          key: const ValueKey('home'),
           enabled: _index == 0,
           child: const HomeTab(mode: HomeTabMode.browse),
         ),
         TickerMode(
+          key: const ValueKey('search'),
           enabled: _index == 1,
           child: const HomeTab(mode: HomeTabMode.search),
         ),
