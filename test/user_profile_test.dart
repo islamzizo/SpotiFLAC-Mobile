@@ -233,6 +233,15 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      // Settings loads the real service asynchronously on startup. Set the
+      // test profile after that initial load so the UI assertion is deterministic.
+      SpotifyAccountService.instance.profileNotifier.value =
+          const SpotifyProfile(
+            id: 'spotify-test',
+            displayName: 'Listener',
+          );
+      await tester.pump();
+
       final card = find.ancestor(
         of: find.text('Listener'),
         matching: find.byType(SettingsGroup),
