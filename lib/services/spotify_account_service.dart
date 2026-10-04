@@ -42,6 +42,37 @@ class SpotifyPlaylist {
   }
 }
 
+class SpotifyProfile {
+  const SpotifyProfile({
+    required this.id,
+    required this.displayName,
+    this.imageUrl,
+  });
+
+  final String id;
+  final String displayName;
+  final String? imageUrl;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'displayName': displayName,
+    if (imageUrl != null) 'imageUrl': imageUrl,
+  };
+
+  static SpotifyProfile? fromJson(Map<String, dynamic> json) {
+    final id = json['id']?.toString();
+    final displayName = json['displayName']?.toString();
+    if (id == null || id.isEmpty || displayName == null || displayName.isEmpty) {
+      return null;
+    }
+    return SpotifyProfile(
+      id: id,
+      displayName: displayName,
+      imageUrl: json['imageUrl']?.toString(),
+    );
+  }
+}
+
 class SpotifyAccountException implements Exception {
   const SpotifyAccountException(this.message);
   final String message;
@@ -70,6 +101,9 @@ class SpotifyAccountService {
   static const accessTokenKey = 'spotify_web_access_token';
   static const _expiryKey = 'spotify_web_access_token_expires';
   static const _playlistsKey = 'spotify_web_playlists';
+  static const _profileKey = 'spotify_web_profile';
+
+  SpotifyProfile? _profileCache;
 
   final _storage = const FlutterSecureStorage();
   Future<bool> isSignedIn() async => await _storage.read(key: _signedInKey) == 'true';
@@ -84,6 +118,86 @@ class SpotifyAccountService {
     }
     await _storage.delete(key: accessTokenKey);
     await _storage.delete(key: _expiryKey);
+  }
+
+  /// Returns the connected Spotify user's display name and profile image.
+  /// Cached data is returned immediately on later launches.
+  Future<SpotifyProfile?> getProfile({bool refresh = false}) async {
+    if (!refresh && _profileCache != null) return _profileCache;
+
+    SpotifyProfile? storedProfile;
+    if (!refresh) {
+      final raw = await _storage.read(key: _profileKey);
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map) {
+            storedProfile = SpotifyProfile.fromJson(
+              Map<String, dynamic>.from(decoded),
+            );
+            if (storedProfile != null) {
+              _profileCache = storedProfile;
+              return storedProfile;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (!await isSignedIn()) return storedProfile;
+
+    try {
+      final spDc = await _storage.read(key: _spDcKey);
+      if (spDc == null || spDc.isEmpty) return storedProfile;
+      final token = await _validToken(
+        spDc,
+        await _storage.read(key: _spKeyKey) ?? '',
+      );
+      final response = await http.get(
+        Uri.parse('https://api.spotify.com/v1/me'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'User-Agent': _userAgent,
+          'app-platform': 'WebPlayer',
+          'Origin': 'https://open.spotify.com',
+          'Referer': 'https://open.spotify.com/',
+        },
+      );
+      if (response.statusCode != 200) return storedProfile;
+
+      final body = jsonDecode(response.body);
+      if (body is! Map) return storedProfile;
+      final id = body['id']?.toString() ?? '';
+      final displayName = body['display_name']?.toString() ?? '';
+      if (id.isEmpty || displayName.isEmpty) return storedProfile;
+
+      String? imageUrl;
+      final images = body['images'];
+      if (images is List) {
+        for (final image in images) {
+          final url = _map(image)?['url']?.toString();
+          if (url != null && url.isNotEmpty) {
+            imageUrl = url;
+            break;
+          }
+        }
+      }
+
+      final profile = SpotifyProfile(
+        id: id,
+        displayName: displayName,
+        imageUrl: imageUrl,
+      );
+      _profileCache = profile;
+      await _storage.write(
+        key: _profileKey,
+        value: jsonEncode(profile.toJson()),
+      );
+      return profile;
+    } catch (_) {
+      return storedProfile;
+    }
   }
 
   Future<List<SpotifyPlaylist>> getPlaylists() async {
@@ -252,7 +366,8 @@ class SpotifyAccountService {
     return output;
   }
   Future<void> signOut() async {
-    for (final key in [_signedInKey,_spDcKey,_spKeyKey,accessTokenKey,_expiryKey,_playlistsKey]) {
+    _profileCache = null;
+    for (final key in [_signedInKey,_spDcKey,_spKeyKey,accessTokenKey,_expiryKey,_playlistsKey,_profileKey]) {
       await _storage.delete(key:key);
     }
   }
