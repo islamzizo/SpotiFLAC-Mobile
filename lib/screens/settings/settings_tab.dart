@@ -4,8 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/providers/user_profile_provider.dart';
-import 'package:spotiflac_android/screens/settings/profile_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/about_page.dart';
 import 'package:spotiflac_android/screens/settings/app_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/appearance_settings_page.dart';
@@ -22,6 +20,7 @@ import 'package:spotiflac_android/screens/settings/metadata_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/playback_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/settings_search_catalog.dart';
 import 'package:spotiflac_android/screens/spotify_account_screen.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -89,6 +88,20 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   AppLocalizations? _cachedLocalizations;
   List<_Group>? _cachedGroups;
   String _query = '';
+  late Future<SpotifyProfile?> _spotifyProfileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _spotifyProfileFuture = SpotifyAccountService.instance.getProfile();
+  }
+
+  void _reloadSpotifyProfile() {
+    if (!mounted) return;
+    setState(() {
+      _spotifyProfileFuture = SpotifyAccountService.instance.getProfile();
+    });
+  }
 
   @override
   void dispose() {
@@ -460,9 +473,11 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             ),
           ),
           SliverToBoxAdapter(
-            child: Consumer(
-              builder: (context, ref, _) {
-                final profile = ref.watch(userProfileProvider).value;
+            child: FutureBuilder<SpotifyProfile?>(
+              future: _spotifyProfileFuture,
+              builder: (context, snapshot) {
+                final profile = snapshot.data;
+                final signedIn = profile != null;
                 return SettingsGroup(
                   margin: margin,
                   children: [
@@ -471,31 +486,36 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                         horizontal: 20,
                         vertical: 16,
                       ),
-                      leading: ProfileAvatar(
-                        name: profile?.name ?? '',
-                        photoPath: profile?.photoPath,
-                        size: 64,
-                      ),
+                      leading: signedIn
+                          ? SpotifyProfileAvatar(
+                              profile: profile,
+                              size: 64,
+                            )
+                          : const SizedBox.square(
+                              dimension: 64,
+                              child: Icon(Icons.person_outline, size: 40),
+                            ),
                       title: Text(
-                        profile?.name.isNotEmpty == true
-                            ? profile!.name
-                            : context.l10n.profileSetUp,
+                        signedIn
+                            ? profile.displayName
+                            : 'Spotify Account',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      subtitle:
-                          profile?.name.isNotEmpty == true ||
-                              profile?.photoPath?.isNotEmpty == true
-                          ? null
-                          : Text(context.l10n.profileEdit),
+                      subtitle: Text(
+                        signedIn
+                            ? 'Spotify Account'
+                            : 'Connect your Spotify account',
+                      ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: profile == null
-                          ? null
-                          : () => _navigateTo(
-                              context,
-                              ProfileSettingsPage(profile: profile),
-                            ),
+                      onTap: () async {
+                        await _navigateTo(
+                          context,
+                          const SpotifyAccountScreen(),
+                        );
+                        _reloadSpotifyProfile();
+                      },
                     ),
                   ],
                 );
