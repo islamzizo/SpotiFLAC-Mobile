@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:spotiflac_android/services/music_player_service.dart';
+import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 final _log = AppLogger('PreviewPlayer');
@@ -60,11 +60,16 @@ class PreviewPlayerController extends Notifier<PreviewPlayerState> {
     _lifecycleListener = AppLifecycleListener(
       onStateChange: _handleAppLifecycleState,
     );
-    musicPlayerExclusiveAudioHook = () async {
+    final runtime = ref.read(musicPlayerRuntimeProvider);
+    Future<void> stopPreview() async {
       if (state.isActive) await stop();
-    };
+    }
+
+    runtime.exclusiveAudioHook = stopPreview;
     ref.onDispose(() {
-      musicPlayerExclusiveAudioHook = null;
+      if (identical(runtime.exclusiveAudioHook, stopPreview)) {
+        runtime.exclusiveAudioHook = null;
+      }
       _disposePlayer();
     });
     return const PreviewPlayerState();
@@ -168,7 +173,7 @@ class PreviewPlayerController extends Notifier<PreviewPlayerState> {
     if (trimmed.isEmpty) return;
 
     try {
-      await musicPlayerHandler?.pause();
+      await ref.read(musicPlayerRuntimeProvider).handler?.pause();
     } catch (_) {}
 
     state = PreviewPlayerState(

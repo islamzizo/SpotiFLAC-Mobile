@@ -5,7 +5,6 @@ import 'package:spotiflac_android/models/theme_settings.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/theme_provider.dart';
-import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
 
 /// Kept alive by the app shell so notification favorites share the exact
@@ -38,7 +37,8 @@ final playbackNotificationProvider = Provider.autoDispose
       ref.onDispose(() => active = false);
       scheduleMicrotask(() {
         if (!active) return;
-        configurePlaybackNotification(
+        final runtime = ref.read(musicPlayerRuntimeProvider);
+        runtime.configureNotification(
           presentation: PlaybackNotification(
             mornye: mornye,
             mediaId: item?.id,

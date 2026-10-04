@@ -13,6 +13,7 @@ import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/screens/upgrade_intro_screen.dart';
 import 'package:spotiflac_android/services/upgrade_intro_service.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
+import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/providers/playback_notification_provider.dart';
 import 'package:spotiflac_android/providers/repo_provider.dart';
@@ -27,7 +28,6 @@ import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/services/share_intent_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
-import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/listening_statistics.dart';
 import 'package:spotiflac_android/services/discord_presence_service.dart';
 import 'package:spotiflac_android/services/notification_service.dart';
@@ -103,41 +103,19 @@ class _MainShellState extends ConsumerState<MainShell>
     super.didChangeDependencies();
     final l10n = context.l10n;
     NotificationService().updateStrings(l10n);
-    updateMusicPlayerStrings(
+    final playback = ref.read(musicPlayerRuntimeProvider);
+    playback.updateStrings(
       unknownTitle: l10n.unknownTitle,
       unknownArtist: l10n.unknownArtist,
     );
-    setPlaybackNormalizationEnabled(
-      ref.read(settingsProvider).playbackNormalization,
-    );
-    setPlaybackAutomationOptions(
-      enabled: ref.read(settingsProvider).playerMode == 'internal',
-      pauseOnMute: ref.read(settingsProvider).pauseOnMute,
-      playOnHeadphonesConnected: ref
-          .read(settingsProvider)
-          .playOnHeadphonesConnected,
-    );
-    setAutoMixEnabled(ref.read(settingsProvider).autoMix);
-    setAutoMixOptions(ref.read(settingsProvider).autoMixOptions);
+    final settings = ref.read(settingsProvider);
+    playback.configure(settings);
     unawaited(
       DiscordPresenceService.instance.setEnabled(
-        ref.read(settingsProvider).discordRichPresenceEnabled,
+        settings.discordRichPresenceEnabled,
       ),
     );
-    listeningRecorder.setEnabled(
-      ref.read(settingsProvider).listeningStatisticsEnabled,
-    );
-    setUsbBitPerfectEnabled(ref.read(settingsProvider).usbBitPerfect);
-    setUsbOutputOptions(
-      direct: ref.read(settingsProvider).usbDirect,
-      allowDop: ref.read(settingsProvider).usbDsdOverPcm,
-      allowFixedVolume: ref.read(settingsProvider).usbAllowFixedVolume,
-      dapExclusive: ref.read(settingsProvider).dapExclusive,
-    );
-    setAutoplayEnabled(
-      ref.read(settingsProvider).autoplay,
-      includeLocal: ref.read(settingsProvider).localLibraryEnabled,
-    );
+    listeningRecorder.setEnabled(settings.listeningStatisticsEnabled);
     // Deezer & co. localize artist/genre names by IP unless told the app's
     // language (issue #480).
     unawaited(
@@ -184,7 +162,7 @@ class _MainShellState extends ConsumerState<MainShell>
       );
       _initialSafRepairComplete = true;
       if (!mounted) return;
-      unawaited(restorePersistedPlaybackSession());
+      unawaited(ref.read(musicPlayerRuntimeProvider).restoreSession());
       await _checkUpgradeIntro();
       if (!mounted) return;
       _setupShareListener();
@@ -223,7 +201,9 @@ class _MainShellState extends ConsumerState<MainShell>
     if (state == AppLifecycleState.resumed && _initialSafRepairComplete) {
       unawaited(_repairSafAccessIfNeeded());
     } else if (state == AppLifecycleState.paused) {
-      unawaited(persistCurrentPlaybackSession());
+      unawaited(
+        ref.read(musicPlayerRuntimeProvider).handler?.persistCurrentSession(),
+      );
     }
   }
 
@@ -792,27 +772,8 @@ class _MainShellState extends ConsumerState<MainShell>
         shuffleOff: context.l10n.nowPlayingPlayInOrder,
       )),
     );
-    ref.listen(settingsProvider.select((s) => s.playbackNormalization), (
-      _,
-      enabled,
-    ) {
-      setPlaybackNormalizationEnabled(enabled);
-    });
-    ref.listen(settingsProvider.select((s) => s.autoMix), (_, enabled) {
-      setAutoMixEnabled(enabled);
-    });
-    ref.listen(
-      settingsProvider.select(
-        (s) => (s.playerMode, s.pauseOnMute, s.playOnHeadphonesConnected),
-      ),
-      (_, options) => setPlaybackAutomationOptions(
-        enabled: options.$1 == 'internal',
-        pauseOnMute: options.$2,
-        playOnHeadphonesConnected: options.$3,
-      ),
-    );
-    ref.listen(settingsProvider.select((s) => s.autoMixOptions), (_, options) {
-      setAutoMixOptions(options);
+    ref.listen(settingsProvider, (_, settings) {
+      ref.read(musicPlayerRuntimeProvider).configure(settings);
     });
     ref.listen(settingsProvider.select((s) => s.discordRichPresenceEnabled), (
       _,
@@ -823,29 +784,6 @@ class _MainShellState extends ConsumerState<MainShell>
     ref.listen(
       settingsProvider.select((s) => s.listeningStatisticsEnabled),
       (_, enabled) => listeningRecorder.setEnabled(enabled),
-    );
-    ref.listen(settingsProvider.select((s) => s.usbBitPerfect), (_, enabled) {
-      setUsbBitPerfectEnabled(enabled);
-    });
-    ref.listen(
-      settingsProvider.select(
-        (s) => (
-          s.usbDirect,
-          s.usbDsdOverPcm,
-          s.usbAllowFixedVolume,
-          s.dapExclusive,
-        ),
-      ),
-      (_, value) => setUsbOutputOptions(
-        direct: value.$1,
-        allowDop: value.$2,
-        allowFixedVolume: value.$3,
-        dapExclusive: value.$4,
-      ),
-    );
-    ref.listen(
-      settingsProvider.select((s) => (s.autoplay, s.localLibraryEnabled)),
-      (_, value) => setAutoplayEnabled(value.$1, includeLocal: value.$2),
     );
     final queueState = ref.watch(
       downloadQueueProvider.select((s) => s.queuedCount),

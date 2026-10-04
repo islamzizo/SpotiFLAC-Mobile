@@ -34,7 +34,7 @@ class _MusicAutoMix {
   bool _writing = false;
 
   void _setStatus(AutoMixStatus status) {
-    if (identical(_activeMusicPlayerHandler, handler)) {
+    if (identical(musicPlayerRuntime.handler, handler)) {
       autoMixStatus.value = status;
     }
   }
@@ -49,8 +49,8 @@ class _MusicAutoMix {
   };
 
   bool get _canMix =>
-      _autoMixEnabled &&
-      !_usbBitPerfectEnabled &&
+      handler._settings.autoMix &&
+      !handler._settings.usbBitPerfect &&
       !handler._player.isDirect &&
       !handler._disposed &&
       handler._sourceReady &&
@@ -109,7 +109,7 @@ class _MusicAutoMix {
     MusicPlaybackDeck? deck;
     MusicPlaybackDeck? effectDeck;
     RenderedMixTail? effectTail;
-    final options = _autoMixOptions;
+    final options = handler._settings.autoMixOptions;
     try {
       if (nextIndex < 0 || nextIndex == index || index < 0) return;
       final current = handler._media[index];
@@ -121,9 +121,8 @@ class _MusicAutoMix {
       final nextPath = await handler._resolveSource(next);
       if (nextPath == null || !_current(generation)) return;
       pins.add(nextPath);
-      deck = MusicPlaybackDeck(
-        playerId:
-            'music-mix-$generation-${DateTime.now().microsecondsSinceEpoch}',
+      deck = handler._dependencies.createDeck(
+        'music-mix-$generation-${DateTime.now().microsecondsSinceEpoch}',
       );
       handler._listenToPlayer(deck);
       await deck.setReleaseMode(ReleaseMode.stop);
@@ -167,9 +166,8 @@ class _MusicAutoMix {
         );
         if (!_current(generation)) return;
         if (effectTail != null) {
-          effectDeck = MusicPlaybackDeck(
-            playerId:
-                'music-effect-$generation-${DateTime.now().microsecondsSinceEpoch}',
+          effectDeck = handler._dependencies.createDeck(
+            'music-effect-$generation-${DateTime.now().microsecondsSinceEpoch}',
           );
           handler._listenToPlayer(effectDeck);
           try {
@@ -290,8 +288,11 @@ class _MusicAutoMix {
       handler._pendingRestorePosition = null;
       rate = plan.rate;
       handler.mediaItem.add(
-        next
-            .toMediaItem(resolvedSource: next.isContentUri ? _nextPath : null)
+        handler
+            ._toMediaItem(
+              next,
+              resolvedSource: next.isContentUri ? _nextPath : null,
+            )
             .copyWith(duration: _nextDuration),
       );
       handler._broadcastPosition(plan.incomingStart, force: true);

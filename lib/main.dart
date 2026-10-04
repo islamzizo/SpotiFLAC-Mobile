@@ -79,6 +79,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       await _prepareAndroidInstallationState(prefs);
       final bootstrapSettings = loadBootstrapSettings(prefs);
+      musicPlayerRuntime.configure(bootstrapSettings);
       final bootstrapTheme = loadBootstrapThemeSettings(prefs);
       final initialSafAccessLost = await _detectInitialSafAccessLoss(
         bootstrapSettings,

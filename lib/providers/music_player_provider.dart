@@ -6,8 +6,12 @@ import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 
+final musicPlayerRuntimeProvider = Provider<MusicPlayerRuntime>(
+  (ref) => musicPlayerRuntime,
+);
+
 final currentMediaItemProvider = StreamProvider<MediaItem?>((ref) {
-  return musicPlayerMediaItemEvents();
+  return ref.watch(musicPlayerRuntimeProvider).mediaItemEvents();
 });
 
 /// Use the Library's identity for favorites, including restored queues and
@@ -23,7 +27,10 @@ final playerCollectionTrackProvider = FutureProvider.autoDispose
           return UnifiedLibraryItem.fromDownloadHistory(history).toTrack();
         }
       }
-      final database = LibraryDatabase.instance;
+      final database = ref
+          .watch(musicPlayerRuntimeProvider)
+          .dependencies
+          .libraryDatabase;
       final row = await database.getById(item.id);
       if (row != null) {
         return UnifiedLibraryItem.fromLocalLibrary(
@@ -54,7 +61,7 @@ final playerCollectionTrackProvider = FutureProvider.autoDispose
     });
 
 final playbackStateProvider = StreamProvider<PlaybackState>((ref) {
-  return musicPlayerPlaybackStateEvents();
+  return ref.watch(musicPlayerRuntimeProvider).playbackStateEvents();
 });
 
 /// Small derived providers keep position ticks from rebuilding widgets that
@@ -106,19 +113,22 @@ final mediaItemPlaybackUiProvider = Provider.autoDispose
     });
 
 final playQueueProvider = StreamProvider<List<MediaItem>>((ref) {
-  return musicPlayerQueueEvents();
+  return ref.watch(musicPlayerRuntimeProvider).queueEvents();
 });
 
 class MusicPlayerController {
-  const MusicPlayerController();
+  MusicPlayerController({MusicPlayerRuntime? runtime})
+    : _runtime = runtime ?? musicPlayerRuntime;
 
-  MusicPlayerHandler? get _handler => musicPlayerHandler;
+  final MusicPlayerRuntime _runtime;
+
+  MusicPlayerHandler? get _handler => _runtime.handler;
 
   DateTime? get sleepTimerEndsAt => _handler?.sleepTimerEndsAt;
 
   Future<MusicPlayerHandler?> ensureInitialized() async {
     try {
-      return await initMusicPlayer();
+      return await _runtime.initialize();
     } catch (_) {
       return null;
     }
@@ -235,7 +245,8 @@ class MusicPlayerController {
 }
 
 final musicPlayerControllerProvider = Provider<MusicPlayerController>(
-  (ref) => const MusicPlayerController(),
+  (ref) =>
+      MusicPlayerController(runtime: ref.watch(musicPlayerRuntimeProvider)),
 );
 
 PlayableMedia playableFromHistory(DownloadHistoryItem item) {
