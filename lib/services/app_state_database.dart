@@ -316,8 +316,8 @@ class AppStateDatabase {
     final db = await database;
     return db.query(
       _queueTable,
-      where: 'status IN (?, ?, ?)',
-      whereArgs: ['queued', 'downloading', 'finalizing'],
+      where: 'status IN (?, ?, ?, ?)',
+      whereArgs: ['queued', 'downloading', 'finalizing', 'skipped'],
       orderBy: 'created_at ASC, rowid ASC',
     );
   }

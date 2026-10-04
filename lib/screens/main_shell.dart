@@ -35,6 +35,7 @@ import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/services/update_checker.dart';
 import 'package:spotiflac_android/widgets/app_announcement_dialog.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
+import 'package:spotiflac_android/widgets/download_queue_feedback.dart';
 import 'package:spotiflac_android/widgets/update_dialog.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
@@ -1054,7 +1055,7 @@ class _MainShellState extends ConsumerState<MainShell>
             ),
     );
 
-    return SelectionOverlayHost(
+    final shell = SelectionOverlayHost(
       child: BackButtonListener(
         onBackButtonPressed: () async {
           await _handleBackPress();
@@ -1197,6 +1198,7 @@ class _MainShellState extends ConsumerState<MainShell>
         ),
       ),
     );
+    return DownloadQueueFeedback(child: shell);
   }
 }
 

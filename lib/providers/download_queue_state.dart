@@ -54,6 +54,7 @@ class DownloadQueueState {
   final String singleFilenameFormat;
   final String audioQuality;
   final bool autoFallback;
+  final DownloadQueueReconnectRetry? reconnectRetry;
 
   const DownloadQueueState({
     this.items = const [],
@@ -66,6 +67,7 @@ class DownloadQueueState {
     this.singleFilenameFormat = '{title} - {artist}',
     this.audioQuality = 'LOSSLESS',
     this.autoFallback = true,
+    this.reconnectRetry,
   });
 
   DownloadQueueState copyWith({
@@ -79,6 +81,7 @@ class DownloadQueueState {
     String? singleFilenameFormat,
     String? audioQuality,
     bool? autoFallback,
+    Object? reconnectRetry = _noChange,
   }) {
     final resolvedItems = items == null
         ? this.items
@@ -100,6 +103,9 @@ class DownloadQueueState {
       singleFilenameFormat: singleFilenameFormat ?? this.singleFilenameFormat,
       audioQuality: audioQuality ?? this.audioQuality,
       autoFallback: autoFallback ?? this.autoFallback,
+      reconnectRetry: identical(reconnectRetry, _noChange)
+          ? this.reconnectRetry
+          : reconnectRetry as DownloadQueueReconnectRetry?,
     );
   }
 
@@ -108,6 +114,14 @@ class DownloadQueueState {
   int get failedCount => items.isEmpty ? 0 : lookup.failedCount;
   int get activeDownloadsCount =>
       items.isEmpty ? 0 : lookup.activeDownloadsCount;
+}
+
+/// A transient queue effect. Consumers listen for new instances so progress
+/// snapshots and mounting a screen cannot replay an earlier retry prompt.
+class DownloadQueueReconnectRetry {
+  const DownloadQueueReconnectRetry(this.failedCount);
+
+  final int failedCount;
 }
 
 /// Precomputed queue indexes and counters.
