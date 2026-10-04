@@ -88,19 +88,17 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   AppLocalizations? _cachedLocalizations;
   List<_Group>? _cachedGroups;
   String _query = '';
-  late Future<SpotifyProfile?> _spotifyProfileFuture;
-
   @override
   void initState() {
     super.initState();
-    _spotifyProfileFuture = SpotifyAccountService.instance.getProfile();
+    if (SpotifyAccountService.instance.profileNotifier.value == null) {
+      SpotifyAccountService.instance.getProfile();
+    }
   }
 
   void _reloadSpotifyProfile() {
     if (!mounted) return;
-    setState(() {
-      _spotifyProfileFuture = SpotifyAccountService.instance.getProfile();
-    });
+    SpotifyAccountService.instance.getProfile();
   }
 
   @override
