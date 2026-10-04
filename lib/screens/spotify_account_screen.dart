@@ -54,8 +54,6 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       final playlists = await _spotify.getPlaylists();
       if (!mounted) return;
       setState(() { _signedIn = signed; _playlists = playlists; });
-      // Refresh the saved Spotify library whenever this screen is opened.
-      if (signed) await _syncPlaylists();
     } catch (error) {
       if (mounted) setState(() => _error = 'Could not load saved Spotify session: $error');
     }
@@ -113,6 +111,12 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
         if (!merged.any((item) => item.id == 'liked-songs')) {
           merged.insert(0, const SpotifyPlaylist(id: 'liked-songs', name: 'Liked Songs', url: 'https://open.spotify.com/collection/tracks'));
         }
+      }
+      await _spotify.savePlaylists(merged);
+      try {
+        await _spotify.syncProfile();
+      } catch (_) {
+        // Keep the cached profile if Spotify is temporarily unavailable.
       }
       if (!mounted) return;
       setState(() { _playlists = merged; _signedIn = true; _loading = false; });
@@ -324,8 +328,12 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
               ),
             ),
           const SizedBox(height: 6),
-          Text(_signedIn ? 'Library syncs automatically when you open this screen.' : 'Uses the Spotify web login session; no developer client ID is required.',
-            textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+          if (!_signedIn)
+            const Text(
+              'Uses the Spotify web login session; no developer client ID is required.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12),
+            ),
         ]),
       ),
     ),
