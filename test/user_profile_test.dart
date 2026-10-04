@@ -207,7 +207,7 @@ void main() {
   });
 
   testWidgets(
-    'profile card stays separate, saves the name, and cancel keeps it',
+    'Spotify account card replaces the local profile card',
     (tester) async {
       tester.view.physicalSize = const Size(393, 852);
       tester.view.devicePixelRatio = 1;
@@ -229,30 +229,12 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final card = find.ancestor(
-        of: find.text('Set up your profile'),
-        matching: find.byType(SettingsGroup),
-      );
-      expect(card, findsOneWidget);
+      expect(find.text('Spotify Account'), findsOneWidget);
+      expect(find.text('Set up your profile'), findsNothing);
       expect(
-        find.descendant(of: card, matching: find.text('Extensions')),
-        findsNothing,
+        find.text('Connect your Spotify account'),
+        findsOneWidget,
       );
-      await tester.tap(find.text('Set up your profile'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Listener');
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(find.text('Listener'), findsOneWidget);
-      expect(container.read(userProfileProvider).value?.name, 'Listener');
-      await tester.tap(find.text('Listener'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Unsaved');
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      expect(find.text('Listener'), findsOneWidget);
-      expect(container.read(userProfileProvider).value?.name, 'Listener');
-      expect(tester.takeException(), isNull);
     },
   );
 
