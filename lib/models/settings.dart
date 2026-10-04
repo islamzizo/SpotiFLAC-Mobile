@@ -34,6 +34,8 @@ class AppSettings {
   final bool embedReplayGain;
   // Apply ReplayGain/R128 tags as volume normalization in the built-in player.
   final bool playbackNormalization;
+  final bool pauseOnMute;
+  final bool playOnHeadphonesConnected;
   final bool autoMix;
   @JsonKey(fromJson: autoMixDurationFromJson)
   final int autoMixDuration;
@@ -176,6 +178,8 @@ class AppSettings {
     this.embedLyrics = true,
     this.embedReplayGain = false,
     this.playbackNormalization = false,
+    this.pauseOnMute = true,
+    this.playOnHeadphonesConnected = false,
     this.autoMix = false,
     this.autoMixDuration = 0,
     this.autoMixEffect = AutoMixEffect.auto,
@@ -281,6 +285,8 @@ class AppSettings {
     bool? embedLyrics,
     bool? embedReplayGain,
     bool? playbackNormalization,
+    bool? pauseOnMute,
+    bool? playOnHeadphonesConnected,
     bool? autoMix,
     int? autoMixDuration,
     AutoMixEffect? autoMixEffect,
@@ -383,6 +389,9 @@ class AppSettings {
       embedReplayGain: embedReplayGain ?? this.embedReplayGain,
       playbackNormalization:
           playbackNormalization ?? this.playbackNormalization,
+      pauseOnMute: pauseOnMute ?? this.pauseOnMute,
+      playOnHeadphonesConnected:
+          playOnHeadphonesConnected ?? this.playOnHeadphonesConnected,
       autoMix: autoMix ?? this.autoMix,
       autoMixDuration: autoMixDuration ?? this.autoMixDuration,
       autoMixEffect: autoMixEffect ?? this.autoMixEffect,

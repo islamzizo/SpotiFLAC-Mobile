@@ -568,6 +568,16 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _saveSettings();
   }
 
+  void setPauseOnMute(bool enabled) {
+    state = state.copyWith(pauseOnMute: enabled);
+    _saveSettings();
+  }
+
+  void setPlayOnHeadphonesConnected(bool enabled) {
+    state = state.copyWith(playOnHeadphonesConnected: enabled);
+    _saveSettings();
+  }
+
   void setAutoMix(bool enabled) {
     state = state.copyWith(autoMix: enabled);
     _saveSettings();

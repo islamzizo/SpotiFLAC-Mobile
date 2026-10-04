@@ -24,6 +24,9 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   embedLyrics: json['embedLyrics'] as bool? ?? true,
   embedReplayGain: json['embedReplayGain'] as bool? ?? false,
   playbackNormalization: json['playbackNormalization'] as bool? ?? false,
+  pauseOnMute: json['pauseOnMute'] as bool? ?? true,
+  playOnHeadphonesConnected:
+      json['playOnHeadphonesConnected'] as bool? ?? false,
   autoMix: json['autoMix'] as bool? ?? false,
   autoMixDuration: json['autoMixDuration'] == null
       ? 0
@@ -155,6 +158,8 @@ Map<String, dynamic> _$AppSettingsToJson(
   'embedLyrics': instance.embedLyrics,
   'embedReplayGain': instance.embedReplayGain,
   'playbackNormalization': instance.playbackNormalization,
+  'pauseOnMute': instance.pauseOnMute,
+  'playOnHeadphonesConnected': instance.playOnHeadphonesConnected,
   'autoMix': instance.autoMix,
   'autoMixDuration': instance.autoMixDuration,
   'autoMixEffect': _$AutoMixEffectEnumMap[instance.autoMixEffect]!,

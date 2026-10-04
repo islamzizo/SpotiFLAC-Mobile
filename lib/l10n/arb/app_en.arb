@@ -7133,6 +7133,11 @@
   "autoMixLowPass": "Muffled filter",
   "autoMixMixing": "Mixing",
   "autoMixCrossfading": "Crossfade",
+  "playbackAutomation": "Automatic playback",
+  "playbackPauseOnMute": "Pause when muted",
+  "playbackPauseOnMuteDescription": "Pause at zero media volume and resume when raised. Manual pauses stay paused. Standard audio output only.",
+  "playbackOnHeadphonesConnected": "Play when headphones connect",
+  "playbackOnHeadphonesConnectedDescription": "Resume the current song when wired or Bluetooth headphones connect. Disconnecting pauses playback. Built-in player only.",
   "optionsEmbeddedCoverSizeOriginal": "Original resolution",
   "@optionsEmbeddedCoverSizeOriginal": {
     "description": "Option that preserves the provider artwork at its original resolution"

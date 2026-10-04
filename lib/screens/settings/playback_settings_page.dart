@@ -124,6 +124,40 @@ class _PlaybackSettingsPageState extends ConsumerState<PlaybackSettingsPage> {
             const SliverToBoxAdapter(child: AutoMixSettings()),
           ],
           SliverToBoxAdapter(
+            child: SettingsSectionHeader(
+              title: context.l10n.playbackAutomation,
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: SettingsGroup(
+              children: [
+                SettingsSwitchItem(
+                  icon: Icons.volume_off_outlined,
+                  title: context.l10n.playbackPauseOnMute,
+                  subtitle: context.l10n.playbackPauseOnMuteDescription,
+                  value: settings.pauseOnMute,
+                  enabled:
+                      settings.playerMode == 'internal' &&
+                      !settings.usbBitPerfect,
+                  onChanged: (value) =>
+                      ref.read(settingsProvider.notifier).setPauseOnMute(value),
+                ),
+                SettingsSwitchItem(
+                  icon: Icons.headphones_outlined,
+                  title: context.l10n.playbackOnHeadphonesConnected,
+                  subtitle:
+                      context.l10n.playbackOnHeadphonesConnectedDescription,
+                  value: settings.playOnHeadphonesConnected,
+                  enabled: settings.playerMode == 'internal',
+                  onChanged: (value) => ref
+                      .read(settingsProvider.notifier)
+                      .setPlayOnHeadphonesConnected(value),
+                  showDivider: false,
+                ),
+              ],
+            ),
+          ),
+          SliverToBoxAdapter(
             child: SettingsSectionHeader(title: context.l10n.motionArtwork),
           ),
           SliverToBoxAdapter(

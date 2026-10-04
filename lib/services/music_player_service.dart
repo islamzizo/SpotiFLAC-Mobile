@@ -10,7 +10,11 @@ import 'package:spotiflac_android/services/playback_notification.dart';
 import 'package:spotiflac_android/services/player_widget_service.dart';
 import 'package:spotiflac_android/services/discord_presence_service.dart';
 import 'package:audio_session/audio_session.dart'
-    show AudioSession, AudioSessionConfiguration, AudioInterruptionType;
+    show
+        AudioDevice,
+        AudioSession,
+        AudioSessionConfiguration,
+        AudioInterruptionType;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/services/app_state_database.dart';
@@ -20,6 +24,8 @@ import 'package:spotiflac_android/services/sqlite_helpers.dart'
     show normalizeLookupText;
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/playback_normalization.dart';
+import 'package:spotiflac_android/services/playback_automation.dart';
+import 'package:spotiflac_android/services/system_volume_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/services/automix_analysis.dart';
 import 'package:spotiflac_android/services/automix_analyzer.dart';
@@ -50,6 +56,9 @@ void updateMusicPlayerStrings({
 }
 
 bool _playbackNormalizationEnabled = false;
+bool _playbackAutomationEnabled = true;
+bool _pauseOnMute = false;
+bool _playOnHeadphonesConnected = false;
 bool _autoMixEnabled = false;
 AutoMixOptions _autoMixOptions = const AutoMixOptions();
 bool _usbBitPerfectEnabled = false;
@@ -122,6 +131,17 @@ void setPlaybackNormalizationEnabled(bool enabled) {
   _activeMusicPlayerHandler?.reapplyNormalization();
 }
 
+void setPlaybackAutomationOptions({
+  required bool enabled,
+  required bool pauseOnMute,
+  required bool playOnHeadphonesConnected,
+}) {
+  _playbackAutomationEnabled = enabled;
+  _pauseOnMute = pauseOnMute;
+  _playOnHeadphonesConnected = playOnHeadphonesConnected;
+  _activeMusicPlayerHandler?._refreshPlaybackAutomation();
+}
+
 void setAutoMixEnabled(bool enabled) {
   if (_autoMixEnabled == enabled) return;
   _autoMixEnabled = enabled;
@@ -142,6 +162,7 @@ void setUsbBitPerfectEnabled(bool enabled) {
   final handler = _activeMusicPlayerHandler;
   if (handler != null) unawaited(handler._autoMix.cancel());
   // Apply at the next source boundary; never raise a playing track's volume.
+  handler?._refreshPlaybackAutomation();
 }
 
 void setUsbOutputOptions({
@@ -429,6 +450,11 @@ class MusicPlayerHandler extends BaseAudioHandler
   final _playerSubscriptions =
       <MusicPlaybackDeck, List<StreamSubscription<dynamic>>>{};
   AudioSession? _audioSession;
+  late final PlaybackAutomation _playbackAutomation;
+  StreamSubscription<double>? _automationVolumeSubscription;
+  StreamSubscription<Set<AudioDevice>>? _automationDevicesSubscription;
+  bool _headphoneMonitoringRequested = false;
+  int _headphoneMonitoringRevision = 0;
   final List<PlayableMedia> _media = [];
   final List<MediaItem> _queueItems = [];
   final Map<String, String> _resolvedPathCache = {};
@@ -485,6 +511,18 @@ class MusicPlayerHandler extends BaseAudioHandler
     AutoMixEffectRenderer? autoMixEffectRenderer,
     AutoplayLibraryLoader? autoplayLibraryLoader,
   }) {
+    _playbackAutomation = PlaybackAutomation(
+      isPlaying: () =>
+          _player.state == PlayerState.playing || playbackState.value.playing,
+      canResume: () =>
+          !_disposed &&
+          !_interruptionActive &&
+          _index >= 0 &&
+          _index < _media.length,
+      pause: _pausePlayback,
+      play: play,
+      onError: (error) => _log.w('Automatic playback failed: $error'),
+    );
     _autoMix = _MusicAutoMix(
       this,
       autoMixAnalyzer ?? AutoMixAnalyzer(),
@@ -525,12 +563,18 @@ class MusicPlayerHandler extends BaseAudioHandler
 
     _subscriptions.add(mediaItem.listen((_) => recordListening()));
     _subscriptions.add(playbackState.listen((_) => recordListening()));
+    _subscriptions.add(
+      playbackState.map((state) => state.playing).distinct().listen((playing) {
+        if (playing) unawaited(_playbackAutomation.playbackStarted());
+      }),
+    );
     _listeningTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       unawaited(listeningRecorder.flush());
     });
     _player.setReleaseMode(ReleaseMode.stop);
     unawaited(_player.setAudioContext(_musicAudioContext));
     unawaited(_configureAudioSession());
+    _refreshPlaybackAutomation();
 
     _listenToPlayer(_player);
   }
@@ -549,6 +593,7 @@ class MusicPlayerHandler extends BaseAudioHandler
         if (state == PlayerState.paused && player.needsSourceReload) {
           _userPaused = true;
           _pausedByInterruption = false;
+          _playbackAutomation.cancelPendingActions();
         }
         if (_switchingGeneration != 0 &&
             (state == PlayerState.stopped ||
@@ -598,6 +643,8 @@ class MusicPlayerHandler extends BaseAudioHandler
       final session = await AudioSession.instance;
       _audioSession = session;
       await session.configure(const AudioSessionConfiguration.music());
+      if (_disposed) return;
+      _refreshPlaybackAutomation();
 
       _subscriptions.add(
         session.interruptionEventStream.listen((event) {
@@ -626,7 +673,8 @@ class MusicPlayerHandler extends BaseAudioHandler
             // (duck/pause) interruption.
             _interruptionActive = false;
             if (_pausedByInterruption &&
-                event.type == AudioInterruptionType.pause) {
+                event.type == AudioInterruptionType.pause &&
+                !_playbackAutomation.blocksPlayback) {
               _pausedByInterruption = false;
               unawaited(play());
             } else {
@@ -639,6 +687,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       _subscriptions.add(
         session.becomingNoisyEventStream.listen((_) {
           // Headphones unplugged / output route lost.
+          _pausedByInterruption = false;
           unawaited(_pauseForFocusLoss(reason: 'becoming noisy'));
         }),
       );
@@ -647,23 +696,81 @@ class MusicPlayerHandler extends BaseAudioHandler
     }
   }
 
+  void _refreshPlaybackAutomation() {
+    if (_disposed) return;
+    final pauseOnMute =
+        _playbackAutomationEnabled && _pauseOnMute && !_usbBitPerfectEnabled;
+    final playOnHeadphonesConnected =
+        _playbackAutomationEnabled && _playOnHeadphonesConnected;
+    unawaited(
+      _playbackAutomation.configure(
+        pauseOnMute: pauseOnMute,
+        playOnHeadphonesConnected: playOnHeadphonesConnected,
+      ),
+    );
+    if (pauseOnMute && _automationVolumeSubscription == null) {
+      _automationVolumeSubscription = SystemVolumeService.instance.changes
+          .listen(
+            (volume) => unawaited(_playbackAutomation.volumeChanged(volume)),
+            onError: (Object error) =>
+                _log.w('Could not monitor media volume: $error'),
+          );
+    } else if (!pauseOnMute) {
+      final subscription = _automationVolumeSubscription;
+      _automationVolumeSubscription = null;
+      if (subscription != null) unawaited(subscription.cancel());
+    }
+    final session = _audioSession;
+    if (playOnHeadphonesConnected &&
+        session != null &&
+        !_headphoneMonitoringRequested) {
+      _headphoneMonitoringRequested = true;
+      unawaited(
+        _startHeadphoneMonitoring(session, ++_headphoneMonitoringRevision),
+      );
+    } else if (!playOnHeadphonesConnected) {
+      _headphoneMonitoringRequested = false;
+      _headphoneMonitoringRevision++;
+      final subscription = _automationDevicesSubscription;
+      _automationDevicesSubscription = null;
+      if (subscription != null) unawaited(subscription.cancel());
+    }
+  }
+
+  Future<void> _startHeadphoneMonitoring(
+    AudioSession session,
+    int revision,
+  ) async {
+    try {
+      // Query a fresh baseline. devicesStream can replay an old inventory
+      // after monitoring was disabled, which would look like a new connection.
+      final devices = await session.getDevices();
+      if (_disposed || revision != _headphoneMonitoringRevision) return;
+      unawaited(_playbackAutomation.devicesChanged(devices));
+      _automationDevicesSubscription = session.devicesChangedEventStream
+          .asyncMap((_) => session.getDevices())
+          .listen(
+            (devices) => unawaited(_playbackAutomation.devicesChanged(devices)),
+            onError: (Object error) =>
+                _log.w('Could not monitor headphone connections: $error'),
+          );
+    } catch (error) {
+      _log.w('Could not monitor headphone connections: $error');
+    }
+  }
+
   bool get _shouldIgnoreComplete =>
       _switchingGeneration != 0 || _interruptionActive || _userPaused;
 
   Future<void> _pauseForFocusLoss({required String reason}) async {
     _log.i('Pausing internal player because of $reason');
-    _playRequestGeneration++;
-    _switchingGeneration = 0;
-    await _autoMix.cancel();
+    _playbackAutomation.cancelPendingActions();
     try {
-      await _player.pause();
+      await _pausePlayback();
     } catch (e) {
       _log.w('Failed to pause after audio focus loss: $e');
+      if (!_disposed) _broadcastState(playerState: PlayerState.paused);
     }
-    // Force the UI/notification to reflect the pause even if the engine does
-    // not emit a state-change event on focus loss.
-    _broadcastState(playerState: PlayerState.paused);
-    await _persistSession(position: await _currentPositionForPersist());
   }
 
   void setSleepTimer(Duration duration) {
@@ -1454,6 +1561,7 @@ class MusicPlayerHandler extends BaseAudioHandler
     Duration startPosition = Duration.zero,
   }) async {
     if (_disposed || index < 0 || index >= _media.length) return;
+    _playbackAutomation.cancelPendingActions();
     // A normal track change supersedes a pending restore. A restored start
     // keeps it until the source is actually ready so a transient failure can
     // be retried from the same position.
@@ -1864,6 +1972,7 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   @override
   Future<void> play() async {
+    _playbackAutomation.cancelPendingActions();
     final activeOperation = _activePlayOperation;
     if (activeOperation != null) {
       await activeOperation;
@@ -1906,16 +2015,26 @@ class MusicPlayerHandler extends BaseAudioHandler
       );
       return;
     }
-    await _activateAudioSession();
-    await _claimHardwareMediaButtons();
-    try {
-      await _player.resume();
-    } on PlatformException {
-      if (!_player.needsSourceReload) rethrow;
-      _broadcastState(playerState: PlayerState.paused);
-      return;
-    }
-    _broadcastState(playerState: PlayerState.playing);
+    final generation = _playRequestGeneration;
+    await _serializeSourceChange(() async {
+      if (generation != _playRequestGeneration || _disposed) return;
+      await _activateAudioSession();
+      if (generation != _playRequestGeneration || _disposed) return;
+      await _claimHardwareMediaButtons();
+      if (generation != _playRequestGeneration || _disposed) return;
+      try {
+        await _player.resume();
+      } on PlatformException {
+        if (!_player.needsSourceReload) rethrow;
+        _broadcastState(playerState: PlayerState.paused);
+        return;
+      }
+      if (generation != _playRequestGeneration || _disposed) {
+        await _player.pause();
+        return;
+      }
+      _broadcastState(playerState: PlayerState.playing);
+    });
   }
 
   @override
@@ -1939,10 +2058,15 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   @override
   Future<void> pause() async {
+    _playbackAutomation.cancelPendingActions();
+    _pausedByInterruption = false;
+    await _pausePlayback();
+  }
+
+  Future<void> _pausePlayback() async {
     final generation = ++_playRequestGeneration;
     _switchingGeneration = 0;
     _userPaused = true;
-    _pausedByInterruption = false;
     await _autoMix.cancel();
     await _serializeSourceChange(() async {
       if (generation != _playRequestGeneration || _disposed) return;
@@ -2002,6 +2126,7 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   @override
   Future<void> stop() async {
+    _playbackAutomation.cancelPendingActions();
     _autoplay.reset();
     cancelSleepTimer();
     final generation = ++_playRequestGeneration;
@@ -2174,6 +2299,10 @@ class MusicPlayerHandler extends BaseAudioHandler
     listeningRecorder.update(null, playing: false, ended: true);
     await listeningRecorder.flush();
     _playRequestGeneration++;
+    _headphoneMonitoringRevision++;
+    await _automationVolumeSubscription?.cancel();
+    await _automationDevicesSubscription?.cancel();
+    await _playbackAutomation.dispose();
     await _sourceChangeTail;
     await _autoMix.dispose();
     for (final sub in _subscriptions) {

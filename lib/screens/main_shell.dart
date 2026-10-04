@@ -109,6 +109,13 @@ class _MainShellState extends ConsumerState<MainShell>
     setPlaybackNormalizationEnabled(
       ref.read(settingsProvider).playbackNormalization,
     );
+    setPlaybackAutomationOptions(
+      enabled: ref.read(settingsProvider).playerMode == 'internal',
+      pauseOnMute: ref.read(settingsProvider).pauseOnMute,
+      playOnHeadphonesConnected: ref
+          .read(settingsProvider)
+          .playOnHeadphonesConnected,
+    );
     setAutoMixEnabled(ref.read(settingsProvider).autoMix);
     setAutoMixOptions(ref.read(settingsProvider).autoMixOptions);
     unawaited(
@@ -793,6 +800,16 @@ class _MainShellState extends ConsumerState<MainShell>
     ref.listen(settingsProvider.select((s) => s.autoMix), (_, enabled) {
       setAutoMixEnabled(enabled);
     });
+    ref.listen(
+      settingsProvider.select(
+        (s) => (s.playerMode, s.pauseOnMute, s.playOnHeadphonesConnected),
+      ),
+      (_, options) => setPlaybackAutomationOptions(
+        enabled: options.$1 == 'internal',
+        pauseOnMute: options.$2,
+        playOnHeadphonesConnected: options.$3,
+      ),
+    );
     ref.listen(settingsProvider.select((s) => s.autoMixOptions), (_, options) {
       setAutoMixOptions(options);
     });
