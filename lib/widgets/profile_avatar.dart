@@ -125,7 +125,9 @@ class _HomeProfileButtonState extends State<HomeProfileButton> {
   @override
   void initState() {
     super.initState();
-    SpotifyAccountService.instance.getProfile();
+    if (SpotifyAccountService.instance.profileNotifier.value == null) {
+      SpotifyAccountService.instance.getProfile();
+    }
   }
 
   @override
