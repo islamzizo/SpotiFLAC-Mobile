@@ -114,31 +114,36 @@ class SpotifyProfileAvatar extends StatelessWidget {
   }
 }
 
-class HomeProfileButton extends StatelessWidget {
+class HomeProfileButton extends StatefulWidget {
   const HomeProfileButton({super.key});
+
+  @override
+  State<HomeProfileButton> createState() => _HomeProfileButtonState();
+}
+
+class _HomeProfileButtonState extends State<HomeProfileButton> {
+  @override
+  void initState() {
+    super.initState();
+    SpotifyAccountService.instance.getProfile();
+  }
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<SpotifyProfile?>(
       valueListenable: SpotifyAccountService.instance.profileNotifier,
-      builder: (context, profile, _) {
-        // Ensure an existing cached profile is loaded when Home is first built.
-        if (profile == null) {
-          SpotifyAccountService.instance.getProfile();
-        }
-        return IconButton(
-          tooltip: context.l10n.settingsTitle,
-          iconSize: 44,
-          padding: const EdgeInsets.all(6),
-          constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
-          visualDensity: VisualDensity.standard,
-          onPressed: () =>
-              ShellNavigationService.requestTab(ShellTab.settings),
-          icon: profile == null
-              ? const ProfileAvatar(size: 44)
-              : SpotifyProfileAvatar(profile: profile, size: 44),
-        );
-      },
+      builder: (context, profile, _) => IconButton(
+        tooltip: context.l10n.settingsTitle,
+        iconSize: 44,
+        padding: const EdgeInsets.all(6),
+        constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
+        visualDensity: VisualDensity.standard,
+        onPressed: () =>
+            ShellNavigationService.requestTab(ShellTab.settings),
+        icon: profile == null
+            ? const ProfileAvatar(size: 44)
+            : SpotifyProfileAvatar(profile: profile, size: 44),
+      ),
     );
   }
 }
