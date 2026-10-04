@@ -13,6 +13,7 @@ import 'package:spotiflac_android/providers/user_profile_provider.dart';
 import 'package:spotiflac_android/screens/settings/settings_tab.dart';
 import 'package:spotiflac_android/services/backup_service.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/user_profile_store.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/profile_avatar.dart';
@@ -207,63 +208,60 @@ void main() {
   });
 
   testWidgets(
-    'profile card stays separate, saves the name, and cancel keeps it',
+    'Spotify profile card displays the connected account',
     (tester) async {
       tester.view.physicalSize = const Size(393, 852);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      final container = ProviderContainer(
-        overrides: [userProfileStoreProvider.overrideWithValue(store)],
+
+      SpotifyAccountService.instance.profileNotifier.value =
+          const SpotifyProfile(
+            id: 'spotify-test',
+            displayName: 'Listener',
+          );
+      addTearDown(
+        () => SpotifyAccountService.instance.profileNotifier.value = null,
       );
-      addTearDown(container.dispose);
-      await container.read(userProfileProvider.future);
+
       await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: MaterialApp(
-            theme: MornyeTheme.build(Brightness.dark),
-            localizationsDelegates: AppLocalizations.localizationsDelegates,
-            supportedLocales: AppLocalizations.supportedLocales,
-            home: const Scaffold(body: SettingsTab()),
-          ),
+        MaterialApp(
+          theme: MornyeTheme.build(Brightness.dark),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: const Scaffold(body: SettingsTab()),
         ),
       );
       await tester.pumpAndSettle();
+
       final card = find.ancestor(
-        of: find.text('Set up your profile'),
+        of: find.text('Listener'),
         matching: find.byType(SettingsGroup),
       );
       expect(card, findsOneWidget);
       expect(
-        find.descendant(of: card, matching: find.text('Extensions')),
+        find.descendant(of: card, matching: find.text('Spotify Account')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Set up your profile'),
         findsNothing,
       );
-      await tester.tap(find.text('Set up your profile'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Listener');
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(find.text('Listener'), findsOneWidget);
-      expect(container.read(userProfileProvider).value?.name, 'Listener');
-      await tester.tap(find.text('Listener'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Unsaved');
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      expect(find.text('Listener'), findsOneWidget);
-      expect(container.read(userProfileProvider).value?.name, 'Listener');
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('Home avatar opens Settings and reflects the saved name', (
+  testWidgets('Home avatar opens Settings and reflects the Spotify name', (
     tester,
   ) async {
-    final container = ProviderContainer(
-      overrides: [userProfileStoreProvider.overrideWithValue(store)],
+    SpotifyAccountService.instance.profileNotifier.value =
+        const SpotifyProfile(
+          id: 'spotify-test',
+          displayName: 'Listener',
+        );
+    addTearDown(
+      () => SpotifyAccountService.instance.profileNotifier.value = null,
     );
-    addTearDown(container.dispose);
-    await container.read(userProfileProvider.future);
+
     final owner = Object();
     ShellTab? requested;
     ShellNavigationService.registerTabSelectionHandler(
@@ -274,20 +272,15 @@ void main() {
       () => ShellNavigationService.unregisterTabSelectionHandler(owner),
     );
     await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MaterialApp(
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: const Scaffold(body: HomeProfileButton()),
-        ),
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: const Scaffold(body: HomeProfileButton()),
       ),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Settings'));
     expect(requested, ShellTab.settings);
-    await container.read(userProfileProvider.notifier).save(name: 'Listener');
-    await tester.pumpAndSettle();
     expect(find.text('L'), findsOneWidget);
   });
 }
