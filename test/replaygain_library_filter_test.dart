@@ -60,7 +60,7 @@ print('both databases passed')
             'history',
           ),
           'library': _tableDefinition(
-            'lib/services/library_database.dart',
+            'lib/services/library_schema.dart',
             'library',
           ),
           'historyPredicate': historyPredicate,

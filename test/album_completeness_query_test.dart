@@ -77,7 +77,7 @@ print(json.dumps([dict(row) for row in db.execute(data['sql'], data['args'])]))
 ''',
       jsonEncode({
         'history': _definition('lib/services/history_database.dart', 'history'),
-        'library': _definition('lib/services/library_database.dart', 'library'),
+        'library': _definition('lib/services/library_schema.dart', 'library'),
         'sql': sql,
         'args': arguments ?? [],
       }),

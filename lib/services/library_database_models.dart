@@ -1,12 +1,17 @@
-part of 'library_database.dart';
+import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
+import 'package:spotiflac_android/utils/audio_format_utils.dart';
 
 // Row models and query descriptors for the local library database.
+
+// v4 records ReplayGain availability; older rows rescan once.
+const libraryAudioMetadataScanVersion = 4;
+const libraryLyricsMetadataScanVersion = 3;
 
 int libraryIncrementalSnapshotModTime({
   required int storedModTime,
   required int storedScanVersion,
 }) {
-  return storedScanVersion >= LibraryDatabase.audioMetadataScanVersion
+  return storedScanVersion >= libraryAudioMetadataScanVersion
       ? storedModTime
       : -1;
 }
@@ -181,9 +186,9 @@ class LocalLibraryItem {
   }
 
   String get matchKey =>
-      '${LibraryDatabase.normalizeLookupText(trackName)}|${LibraryDatabase.normalizeLookupText(artistName)}';
+      '${sqlite.normalizeLookupText(trackName)}|${sqlite.normalizeLookupText(artistName)}';
   String get albumKey =>
-      '${LibraryDatabase.normalizeLookupText(albumName)}|${LibraryDatabase.normalizeLookupText(albumArtist ?? artistName)}';
+      '${sqlite.normalizeLookupText(albumName)}|${sqlite.normalizeLookupText(albumArtist ?? artistName)}';
 }
 
 class LocalLibrarySource {

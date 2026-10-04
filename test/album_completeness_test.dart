@@ -143,7 +143,7 @@ print('inventory passed')
             'history',
           ),
           'library': _tableDefinition(
-            'lib/services/library_database.dart',
+            'lib/services/library_schema.dart',
             'library',
           ),
           'combined': albumCompletenessSql(

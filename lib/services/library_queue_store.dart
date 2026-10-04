@@ -1,4 +1,8 @@
-part of 'library_database.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:spotiflac_android/services/album_completeness.dart';
+import 'package:spotiflac_android/services/library_database_models.dart';
+import 'package:spotiflac_android/services/library_schema.dart';
+import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 
 // SQL builders for the queue tab's history+local union queries.
 
@@ -17,7 +21,280 @@ class _QueueOrderTerm {
   const _QueueOrderTerm(this.column, {this.descending = false});
 }
 
-extension _LibraryDbQueueSql on LibraryDatabase {
+/// Queue reads against an already opened library with history attached.
+class LibraryQueueStore {
+  final Database _db;
+  final bool historyFts;
+  final bool localFts;
+
+  const LibraryQueueStore(
+    this._db, {
+    required this.historyFts,
+    required this.localFts,
+  });
+
+  Future<QueueLibraryDbPage> trackPage(QueueLibraryDbQuery request) async {
+    final args = <Object?>[];
+    final orderTerms = _queueTrackOrderTerms(request.sortMode);
+    final usesCursor =
+        request.cursor != null &&
+        request.cursor!.values.length == orderTerms.length;
+    final unionSql = _queueTrackUnionSql(
+      request,
+      args,
+      orderTerms: orderTerms,
+      usesCursor: usesCursor,
+    );
+    final rows = await _db.rawQuery(
+      '''
+      SELECT *
+      FROM ($unionSql)
+      ORDER BY ${_queueOrderBy(orderTerms)}
+      LIMIT ? ${usesCursor ? '' : 'OFFSET ?'}
+      ''',
+      [...args, request.limit, if (!usesCursor) request.offset],
+    );
+    return QueueLibraryDbPage(
+      rows: rows.map(_queueTrackRowToJson).toList(growable: false),
+      nextCursor: _queueCursorFromRow(rows.lastOrNull, orderTerms),
+    );
+  }
+
+  Future<QueueLibraryCounts> counts(QueueLibraryDbQuery request) async {
+    final fastCounts = await _getUnfilteredQueueCounts(request);
+    if (fastCounts != null) return fastCounts;
+    final parts = <String>[];
+    final args = <Object?>[];
+
+    if (request.source != 'local') {
+      final where = <String>[];
+      _appendQueueHistoryFilters(where, args, request);
+      parts.add('''
+        SELECT
+          COUNT(*) AS all_count,
+          COUNT(DISTINCT CASE WHEN grouped.track_count > ${isAlbumCompletenessFilter(request.metadata) ? 0 : 1} THEN h.album_key END) AS album_count,
+          COALESCE(SUM(CASE WHEN grouped.track_count = 1 THEN 1 ELSE 0 END), 0) AS single_count
+        FROM history_db.history h
+        JOIN (
+          SELECT album_key, COUNT(*) AS track_count
+          FROM history_db.history
+          GROUP BY album_key
+        ) grouped ON grouped.album_key = h.album_key
+        ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
+      ''');
+    }
+
+    if (request.includeLocal && request.source != 'downloaded') {
+      final where = <String>[
+        '''
+        NOT EXISTS (
+          SELECT 1
+          FROM library_path_keys lpk
+          JOIN history_db.history_path_keys hpk ON hpk.path_key = lpk.path_key
+          WHERE lpk.item_id = l.id
+        )
+        ''',
+      ];
+      _appendQueueLocalFilters(where, args, request);
+      parts.add('''
+        SELECT
+          COUNT(*) AS all_count,
+          COUNT(DISTINCT CASE WHEN grouped.track_count > ${isAlbumCompletenessFilter(request.metadata) ? 0 : 1} THEN l.album_key END) AS album_count,
+          COALESCE(SUM(CASE WHEN grouped.track_count = 1 THEN 1 ELSE 0 END), 0) AS single_count
+        FROM ${LibrarySchema.visibleView} l
+        JOIN (
+          SELECT album_key, COUNT(*) AS track_count
+          FROM ${LibrarySchema.visibleView} candidate
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM library_path_keys lpk
+            JOIN history_db.history_path_keys hpk ON hpk.path_key = lpk.path_key
+            WHERE lpk.item_id = candidate.id
+          )
+          GROUP BY album_key
+        ) grouped ON grouped.album_key = l.album_key
+        WHERE ${where.join(' AND ')}
+      ''');
+    }
+
+    if (parts.isEmpty) {
+      return const QueueLibraryCounts(
+        allTrackCount: 0,
+        albumCount: 0,
+        singleTrackCount: 0,
+      );
+    }
+
+    final rows = await _db.rawQuery('''
+      SELECT
+        COALESCE(SUM(all_count), 0) AS all_count,
+        COALESCE(SUM(single_count), 0) AS single_count,
+        COALESCE(SUM(album_count), 0) AS album_count
+      FROM (${parts.join(' UNION ALL ')})
+      ''', args);
+    final row = rows.isNotEmpty ? rows.first : const <String, Object?>{};
+
+    return QueueLibraryCounts(
+      allTrackCount: (row['all_count'] as num?)?.toInt() ?? 0,
+      albumCount: (row['album_count'] as num?)?.toInt() ?? 0,
+      singleTrackCount: (row['single_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  /// The default Library badges do not need a row-by-row join against album
+  /// counts. Aggregate the covering album-key indexes directly and reserve the
+  /// more expensive filtered query for active search/quality/metadata filters.
+  Future<QueueLibraryCounts?> _getUnfilteredQueueCounts(
+    QueueLibraryDbQuery request,
+  ) async {
+    if (sqlite.normalizeLookupText(request.searchQuery).isNotEmpty ||
+        request.quality != null ||
+        request.format != null ||
+        request.metadata != null) {
+      return null;
+    }
+    final source = request.source;
+    if (source != null && source != 'downloaded' && source != 'local') {
+      return null;
+    }
+
+    final parts = <String>[];
+    if (source != 'local') {
+      parts.add('''
+        SELECT
+          COALESCE(SUM(track_count), 0) AS all_count,
+          COALESCE(SUM(CASE WHEN track_count > 1 THEN 1 ELSE 0 END), 0) AS album_count,
+          COALESCE(SUM(CASE WHEN track_count = 1 THEN 1 ELSE 0 END), 0) AS single_count
+        FROM (
+          SELECT album_key, COUNT(*) AS track_count
+          FROM history_db.history
+          GROUP BY album_key
+        )
+      ''');
+    }
+    if (request.includeLocal && source != 'downloaded') {
+      parts.add('''
+        SELECT
+          COALESCE(SUM(track_count), 0) AS all_count,
+          COALESCE(SUM(CASE WHEN track_count > 1 THEN 1 ELSE 0 END), 0) AS album_count,
+          COALESCE(SUM(CASE WHEN track_count = 1 THEN 1 ELSE 0 END), 0) AS single_count
+        FROM (
+          SELECT l.album_key, COUNT(*) AS track_count
+          FROM ${LibrarySchema.visibleView} l
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM library_path_keys lpk
+            JOIN history_db.history_path_keys hpk ON hpk.path_key = lpk.path_key
+            WHERE lpk.item_id = l.id
+          )
+          GROUP BY l.album_key
+        )
+      ''');
+    }
+    if (parts.isEmpty) {
+      return const QueueLibraryCounts(
+        allTrackCount: 0,
+        albumCount: 0,
+        singleTrackCount: 0,
+      );
+    }
+
+    final rows = await _db.rawQuery('''
+      SELECT
+        COALESCE(SUM(all_count), 0) AS all_count,
+        COALESCE(SUM(album_count), 0) AS album_count,
+        COALESCE(SUM(single_count), 0) AS single_count
+      FROM (${parts.join(' UNION ALL ')})
+    ''');
+    final row = rows.isEmpty ? const <String, Object?>{} : rows.first;
+    return QueueLibraryCounts(
+      allTrackCount: (row['all_count'] as num?)?.toInt() ?? 0,
+      albumCount: (row['album_count'] as num?)?.toInt() ?? 0,
+      singleTrackCount: (row['single_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Future<QueueLibraryDbPage> albumPage(QueueLibraryDbQuery request) async {
+    final args = <Object?>[];
+    final orderTerms = _queueAlbumOrderTerms(request.sortMode);
+    final usesCursor =
+        request.cursor != null &&
+        request.cursor!.values.length == orderTerms.length;
+    final unionSql = _queueAlbumUnionSql(
+      request,
+      args,
+      orderTerms: orderTerms,
+      usesCursor: usesCursor,
+    );
+    final rows = await _db.rawQuery(
+      '''
+      SELECT *
+      FROM ($unionSql)
+      ORDER BY ${_queueOrderBy(orderTerms)}
+      LIMIT ? ${usesCursor ? '' : 'OFFSET ?'}
+      ''',
+      [...args, request.limit, if (!usesCursor) request.offset],
+    );
+    return QueueLibraryDbPage(
+      rows: rows.toList(growable: false),
+      nextCursor: _queueCursorFromRow(rows.lastOrNull, orderTerms),
+    );
+  }
+
+  /// Album artists across downloaded and scanned music, without loading tracks
+  /// into Dart. Scanned paths already represented by downloads are excluded.
+  Future<List<Map<String, dynamic>>> artistPage(
+    QueueLibraryDbQuery request,
+  ) async {
+    final parts = <String>[
+      '''
+        SELECT sort_album_artist AS artist_key,
+          COALESCE(NULLIF(album_artist, ''), artist_name) AS artist_name,
+          cover_url, NULL AS cover_path, file_path AS sample_file_path
+        FROM history_db.history
+      ''',
+      if (request.includeLocal)
+        '''
+          SELECT album_artist_norm AS artist_key,
+            COALESCE(NULLIF(album_artist, ''), artist_name) AS artist_name,
+            NULL AS cover_url, cover_path, file_path AS sample_file_path
+          FROM ${LibrarySchema.visibleView} l
+          WHERE NOT EXISTS (
+            SELECT 1 FROM library_path_keys lpk
+            JOIN history_db.history_path_keys hpk ON hpk.path_key = lpk.path_key
+            WHERE lpk.item_id = l.id
+          )
+        ''',
+    ];
+    final search = sqlite.normalizeLookupText(request.searchQuery);
+    return _db.rawQuery(
+      '''
+      SELECT artist_key, MIN(artist_name) AS artist_name,
+        MAX(NULLIF(cover_url, '')) AS cover_url,
+        MAX(NULLIF(cover_path, '')) AS cover_path,
+        MAX(sample_file_path) AS sample_file_path,
+        COUNT(*) AS track_count
+      FROM (${parts.join(' UNION ALL ')})
+      WHERE artist_key != '' ${search.isEmpty ? '' : "AND artist_key LIKE ? ESCAPE '\\'"}
+      GROUP BY artist_key
+      ORDER BY artist_key
+      LIMIT ? OFFSET ?
+    ''',
+      [
+        if (search.isNotEmpty) '%${_escapeLikePattern(search)}%',
+        request.limit,
+        request.offset,
+      ],
+    );
+  }
+
+  String _escapeLikePattern(String value) {
+    return value
+        .replaceAll('\\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+  }
+
   String _queueTrackUnionSql(
     QueueLibraryDbQuery request,
     List<Object?> args, {
@@ -115,7 +392,7 @@ extension _LibraryDbQueueSql on LibraryDatabase {
         where.add('''
           l.album_key IN (
             SELECT album_key
-            FROM ${LibraryDatabase.visibleLibraryView} candidate
+            FROM ${LibrarySchema.visibleView} candidate
             WHERE NOT EXISTS (
               SELECT 1
               FROM library_path_keys lpk
@@ -167,7 +444,7 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           l.bitrate,
           l.format,
           l.has_replaygain,
-          CASE WHEN l.audio_metadata_scan_version >= ${LibraryDatabase.audioMetadataScanVersion}
+          CASE WHEN l.audio_metadata_scan_version >= $libraryAudioMetadataScanVersion
             THEN 1 ELSE 0 END AS replaygain_metadata_scan_version,
           l.track_name_norm AS sort_track,
           l.artist_name_norm AS sort_artist,
@@ -175,7 +452,7 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           l.sort_genre,
           l.sort_release,
           l.sort_added
-        FROM ${LibraryDatabase.visibleLibraryView} l
+        FROM ${LibrarySchema.visibleView} l
         ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
         ''';
       parts.add(
@@ -343,13 +620,13 @@ extension _LibraryDbQueueSql on LibraryDatabase {
           MIN(l.album_artist_norm) AS sort_artist,
           COALESCE(MAX(l.release_date), '') AS sort_release,
           COALESCE(MAX(l.sort_genre), '') AS sort_genre
-        FROM ${LibraryDatabase.visibleLibraryView} l
+        FROM ${LibrarySchema.visibleView} l
         JOIN (
           SELECT
             album_key,
             COUNT(*) AS track_count,
             MAX(COALESCE(sort_added, 0)) AS latest_added
-          FROM ${LibraryDatabase.visibleLibraryView} candidate
+          FROM ${LibrarySchema.visibleView} candidate
           WHERE NOT EXISTS (
             SELECT 1
             FROM library_path_keys lpk
@@ -413,12 +690,12 @@ extension _LibraryDbQueueSql on LibraryDatabase {
     );
     if (request.albumArtist != null) {
       where.add('h.sort_album_artist = ?');
-      args.add(LibraryDatabase.normalizeLookupText(request.albumArtist));
+      args.add(sqlite.normalizeLookupText(request.albumArtist));
     }
-    final query = LibraryDatabase.normalizeLookupText(request.searchQuery);
+    final query = sqlite.normalizeLookupText(request.searchQuery);
     if (query.isNotEmpty) {
       final ftsQuery = sqlite.ftsPhraseSearchQuery(query);
-      if (HistoryDatabase.instance.searchFtsAvailable && ftsQuery != null) {
+      if (historyFts && ftsQuery != null) {
         where.add('''
           h.rowid IN (
             SELECT rowid
@@ -469,17 +746,19 @@ extension _LibraryDbQueueSql on LibraryDatabase {
     );
     if (request.albumArtist != null) {
       where.add('l.album_artist_norm = ?');
-      args.add(LibraryDatabase.normalizeLookupText(request.albumArtist));
+      args.add(sqlite.normalizeLookupText(request.albumArtist));
     }
-    final query = LibraryDatabase.normalizeLookupText(request.searchQuery);
+    final query = sqlite.normalizeLookupText(request.searchQuery);
     if (query.isNotEmpty) {
       final ftsQuery = sqlite.ftsPhraseSearchQuery(query);
-      if (searchFtsAvailable && ftsQuery != null) {
+      if (localFts && ftsQuery != null) {
         where.add('''
-          l.rowid IN (
-            SELECT rowid
-            FROM library_search_fts
-            WHERE library_search_fts MATCH ?
+          l.id IN (
+            SELECT id FROM library WHERE rowid IN (
+              SELECT rowid
+              FROM library_search_fts
+              WHERE library_search_fts MATCH ?
+            )
           )
           ''');
         args.add(ftsQuery);
@@ -507,7 +786,7 @@ extension _LibraryDbQueueSql on LibraryDatabase {
       labelExpr: 'l.label',
       hasLyricsExpr: 'l.has_lyrics',
       lyricsKnownExpr:
-          'COALESCE(l.audio_metadata_scan_version, 0) >= ${LibraryDatabase.lyricsMetadataScanVersion}',
+          'COALESCE(l.audio_metadata_scan_version, 0) >= $libraryLyricsMetadataScanVersion',
       hasReplayGainExpr: 'l.has_replaygain',
     );
   }
@@ -656,14 +935,6 @@ extension _LibraryDbQueueSql on LibraryDatabase {
         );
         break;
     }
-  }
-
-  String _queueTrackOrderBy(String sortMode) {
-    return _queueOrderBy(_queueTrackOrderTerms(sortMode));
-  }
-
-  String _queueAlbumOrderBy(String sortMode) {
-    return _queueOrderBy(_queueAlbumOrderTerms(sortMode));
   }
 
   String _boundedQueuePart(
@@ -881,50 +1152,36 @@ extension _LibraryDbQueueSql on LibraryDatabase {
 
   Map<String, dynamic> _queueTrackRowToJson(Map<String, dynamic> row) {
     final source = row['queue_source'] as String? ?? '';
-    if (source == 'local') {
-      return {
-        'source': source,
-        'item': {
-          'id': row['id'],
-          'trackName': row['track_name'],
-          'artistName': row['artist_name'],
-          'albumName': row['album_name'],
-          'albumArtist': row['album_artist'],
-          'filePath': row['file_path'],
-          'coverPath': row['cover_path'],
-          'scannedAt': row['scanned_at'],
-          'fileModTime': row['file_mod_time'],
-          'isrc': row['isrc'],
-          'trackNumber': row['track_number'],
-          'totalTracks': row['total_tracks'],
-          'discNumber': row['disc_number'],
-          'totalDiscs': row['total_discs'],
-          'duration': row['duration'],
-          'releaseDate': row['release_date'],
-          'bitDepth': row['bit_depth'],
-          'sampleRate': row['sample_rate'],
-          'bitrate': row['bitrate'],
-          'genre': row['genre'],
-          'composer': row['composer'],
-          'label': row['label'],
-          'copyright': row['copyright'],
-          'format': row['format'],
-          'hasReplayGain':
-              row['has_replaygain'] == 1 || row['has_replaygain'] == true,
-        },
-      };
-    }
-
-    return {
-      'source': source,
-      'item': {
-        'id': row['id'],
-        'trackName': row['track_name'],
-        'artistName': row['artist_name'],
-        'albumName': row['album_name'],
-        'albumArtist': row['album_artist'],
+    final item = <String, dynamic>{
+      'id': row['id'],
+      'trackName': row['track_name'],
+      'artistName': row['artist_name'],
+      'albumName': row['album_name'],
+      'albumArtist': row['album_artist'],
+      'filePath': row['file_path'],
+      'isrc': row['isrc'],
+      'trackNumber': row['track_number'],
+      'totalTracks': row['total_tracks'],
+      'discNumber': row['disc_number'],
+      'totalDiscs': row['total_discs'],
+      'duration': row['duration'],
+      'releaseDate': row['release_date'],
+      'bitDepth': row['bit_depth'],
+      'sampleRate': row['sample_rate'],
+      'bitrate': row['bitrate'],
+      'format': row['format'],
+      'hasReplayGain':
+          row['has_replaygain'] == 1 || row['has_replaygain'] == true,
+      'genre': row['genre'],
+      'composer': row['composer'],
+      'label': row['label'],
+      'copyright': row['copyright'],
+      if (source == 'local') ...{
+        'coverPath': row['cover_path'],
+        'scannedAt': row['scanned_at'],
+        'fileModTime': row['file_mod_time'],
+      } else ...{
         'coverUrl': row['cover_url'],
-        'filePath': row['file_path'],
         'storageMode': row['storage_mode'],
         'downloadTreeUri': row['download_tree_uri'],
         'safRelativeDir': row['saf_relative_dir'],
@@ -932,28 +1189,12 @@ extension _LibraryDbQueueSql on LibraryDatabase {
         'safRepaired': row['saf_repaired'] == 1 || row['saf_repaired'] == true,
         'service': row['service'],
         'downloadedAt': row['downloaded_at'],
-        'isrc': row['isrc'],
         'spotifyId': row['spotify_id'],
-        'trackNumber': row['track_number'],
-        'totalTracks': row['total_tracks'],
-        'discNumber': row['disc_number'],
-        'totalDiscs': row['total_discs'],
-        'duration': row['duration'],
-        'releaseDate': row['release_date'],
         'quality': row['quality'],
-        'bitDepth': row['bit_depth'],
-        'sampleRate': row['sample_rate'],
-        'bitrate': row['bitrate'],
-        'format': row['format'],
-        'hasReplayGain':
-            row['has_replaygain'] == 1 || row['has_replaygain'] == true,
         'replayGainMetadataScanVersion':
             row['replaygain_metadata_scan_version'] ?? 0,
-        'genre': row['genre'],
-        'composer': row['composer'],
-        'label': row['label'],
-        'copyright': row['copyright'],
       },
     };
+    return {'source': source, 'item': item};
   }
 }
