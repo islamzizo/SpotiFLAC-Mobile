@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'package:crypto/crypto.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
@@ -106,9 +108,14 @@ class SpotifyAccountService {
   SpotifyProfile? _profileCache;
 
   final _storage = const FlutterSecureStorage();
+  final ValueNotifier<SpotifyProfile?> profileNotifier = ValueNotifier(null);
+
   Future<bool> isSignedIn() async => await _storage.read(key: _signedInKey) == 'true';
 
   Future<void> saveWebSession({required String spDc, String? spKey}) async {
+    _profileCache = null;
+    profileNotifier.value = null;
+    await _storage.delete(key: _profileKey);
     await _storage.write(key: _signedInKey, value: 'true');
     await _storage.write(key: _spDcKey, value: spDc);
     if (spKey != null && spKey.isNotEmpty) {
@@ -137,6 +144,7 @@ class SpotifyAccountService {
             );
             if (storedProfile != null) {
               _profileCache = storedProfile;
+              profileNotifier.value = storedProfile;
               return storedProfile;
             }
           }
@@ -144,11 +152,17 @@ class SpotifyAccountService {
       }
     }
 
-    if (!await isSignedIn()) return storedProfile;
+    if (!await isSignedIn()) {
+      profileNotifier.value = storedProfile;
+      return storedProfile;
+    }
 
     try {
       final spDc = await _storage.read(key: _spDcKey);
-      if (spDc == null || spDc.isEmpty) return storedProfile;
+      if (spDc == null || spDc.isEmpty) {
+        profileNotifier.value = storedProfile;
+        return storedProfile;
+      }
       final token = await _validToken(
         spDc,
         await _storage.read(key: _spKeyKey) ?? '',
@@ -190,12 +204,14 @@ class SpotifyAccountService {
         imageUrl: imageUrl,
       );
       _profileCache = profile;
+      profileNotifier.value = profile;
       await _storage.write(
         key: _profileKey,
         value: jsonEncode(profile.toJson()),
       );
       return profile;
     } catch (_) {
+      profileNotifier.value = storedProfile;
       return storedProfile;
     }
   }
