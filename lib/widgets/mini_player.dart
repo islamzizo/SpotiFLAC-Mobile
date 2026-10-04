@@ -114,6 +114,7 @@ class _MiniPlayerState extends ConsumerState<MiniPlayer> {
             onTap: () {
               Navigator.of(context, rootNavigator: true).push(
                 NowPlayingRoute(
+                  child: const NowPlayingScreen(),
                   miniPlayerGeometry: mornye
                       ? () {
                           if (!mounted) return null;

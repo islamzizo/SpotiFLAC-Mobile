@@ -2338,8 +2338,9 @@ void main() {
               body: Align(
                 alignment: Alignment.bottomLeft,
                 child: TextButton(
-                  onPressed: () =>
-                      Navigator.of(context).push(NowPlayingRoute()),
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).push(NowPlayingRoute(child: const NowPlayingScreen())),
                   child: const Hero(
                     tag: kNowPlayingArtworkHeroTag,
                     child: SizedBox.square(dimension: 38, child: Text('Open')),

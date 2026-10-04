@@ -124,7 +124,11 @@ void main() {
               final navigator =
                   AppNavigationService.rootNavigatorKey.currentState;
               if (navigator != null && handler.mediaItem.value != null) {
-                unawaited(navigator.push<void>(NowPlayingRoute()));
+                unawaited(
+                  navigator.push<void>(
+                    NowPlayingRoute(child: const NowPlayingScreen()),
+                  ),
+                );
               }
             } else {
               await PlayerWidgetService.control(handler, command);
