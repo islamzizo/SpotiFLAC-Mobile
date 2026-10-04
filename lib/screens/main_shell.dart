@@ -27,6 +27,7 @@ import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/services/share_intent_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
@@ -158,6 +159,7 @@ class _MainShellState extends ConsumerState<MainShell>
       showRepoTab: false,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      unawaited(SpotifyAccountService.instance.syncOnAppOpen());
       await _repairSafAccessIfNeeded(
         knownLost: ref.read(initialSafAccessLostProvider),
       );
