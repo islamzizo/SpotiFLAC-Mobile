@@ -22,6 +22,7 @@ import 'package:spotiflac_android/screens/settings/metadata_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/playback_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/settings_search_catalog.dart';
 import 'package:spotiflac_android/screens/spotify_account_screen.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -460,9 +461,10 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             ),
           ),
           SliverToBoxAdapter(
-            child: Consumer(
-              builder: (context, ref, _) {
-                final profile = ref.watch(userProfileProvider).value;
+            child: FutureBuilder<SpotifyAccountProfile?>(
+              future: SpotifyAccountService.instance.getOrSyncProfile(),
+              builder: (context, snapshot) {
+                final profile = snapshot.data;
                 return SettingsGroup(
                   margin: margin,
                   children: [
@@ -471,31 +473,41 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                         horizontal: 20,
                         vertical: 16,
                       ),
-                      leading: ProfileAvatar(
-                        name: profile?.name ?? '',
-                        photoPath: profile?.photoPath,
-                        size: 64,
+                      leading: SizedBox.square(
+                        dimension: 64,
+                        child: ClipOval(
+                          child: profile?.imageUrl?.isNotEmpty == true
+                              ? Image.network(
+                                  profile!.imageUrl!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) =>
+                                      const CircleAvatar(
+                                    child: Icon(Icons.person),
+                                  ),
+                                )
+                              : const CircleAvatar(
+                                  child: Icon(Icons.person),
+                                ),
+                        ),
                       ),
                       title: Text(
-                        profile?.name.isNotEmpty == true
-                            ? profile!.name
-                            : context.l10n.profileSetUp,
+                        profile?.displayName.isNotEmpty == true
+                            ? profile!.displayName
+                            : 'Spotify Account',
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
-                      subtitle:
-                          profile?.name.isNotEmpty == true ||
-                              profile?.photoPath?.isNotEmpty == true
-                          ? null
-                          : Text(context.l10n.profileEdit),
+                      subtitle: Text(
+                        profile?.username.isNotEmpty == true
+                            ? '@${profile!.username}'
+                            : 'Connect your Spotify account',
+                      ),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: profile == null
-                          ? null
-                          : () => _navigateTo(
-                              context,
-                              ProfileSettingsPage(profile: profile),
-                            ),
+                      onTap: () => _navigateTo(
+                        context,
+                        const SpotifyAccountScreen(),
+                      ),
                     ),
                   ],
                 );
