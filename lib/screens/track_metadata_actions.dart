@@ -61,7 +61,7 @@ extension _TrackMetadataFileActions on _TrackMetadataScreenState {
       backgroundColor: context.isMornye
           ? colorScheme.surfaceContainerLow
           : colorScheme.surface,
-      builder: (sheetContext) => _EditMetadataSheet(
+      builder: (sheetContext) => EditMetadataSheet(
         colorScheme: colorScheme,
         initialValues: initialValues,
         filePath: cleanFilePath,
