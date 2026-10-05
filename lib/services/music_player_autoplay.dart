@@ -96,46 +96,56 @@ List<PlayableMedia> selectAutoplayTracks({
     ...dismissedSources,
   };
   final songs = {songKey(seed), ...upcoming.map(songKey)};
-  final scored = <(PlayableMedia, double)>[];
+  final seedArtist = normalized(seed.artist);
+  final seedAlbum = normalized(seed.album);
+  final seedGenre = normalized(seed.genre);
+  final recentSources = <String, int>{};
+  final recentSongs = <String, int>{};
+  for (var i = 0; i < recent.length; i++) {
+    recentSources[recent[i].source] = i;
+    recentSongs[songKey(recent[i])] = i;
+  }
+  final scored = <(PlayableMedia, double, String)>[];
   for (final item in candidates) {
+    final key = songKey(item);
     if (item.source.trim().isEmpty ||
         item.source.startsWith('http://') ||
         item.source.startsWith('https://') ||
         sources.contains(item.source) ||
-        songs.contains(songKey(item))) {
+        songs.contains(key)) {
       continue;
     }
     sources.add(item.source);
-    songs.add(songKey(item));
+    songs.add(key);
+    final artist = normalized(item.artist);
     var score = random.nextDouble() * 2;
-    if (normalized(seed.artist).isNotEmpty &&
-        normalized(seed.artist) == normalized(item.artist)) {
+    if (seedArtist.isNotEmpty && seedArtist == artist) {
       score += 5;
     }
-    if (normalized(seed.album).isNotEmpty &&
-        normalized(seed.album) == normalized(item.album)) {
+    if (seedAlbum.isNotEmpty && seedAlbum == normalized(item.album)) {
       score += 3;
     }
-    if (normalized(seed.genre).isNotEmpty &&
-        normalized(seed.genre) == normalized(item.genre)) {
+    if (seedGenre.isNotEmpty && seedGenre == normalized(item.genre)) {
       score += 4;
     }
-    final played = recent.lastIndexWhere(
-      (previous) =>
-          previous.source == item.source || songKey(previous) == songKey(item),
+    // Match the latest source OR normalized song occurrence without walking
+    // the entire listening history again for every candidate.
+    final played = max(
+      recentSources[item.source] ?? -1,
+      recentSongs[key] ?? -1,
     );
     if (played >= 0) score -= 20 + played.toDouble();
-    scored.add((item, score));
+    scored.add((item, score, artist));
   }
   final selected = <PlayableMedia>[];
   while (selected.length < limit && scored.isNotEmpty) {
     scored.sort((a, b) => b.$2.compareTo(a.$2));
-    final next = scored.removeAt(0).$1;
-    selected.add(next);
+    final next = scored.removeAt(0);
+    selected.add(next.$1);
     for (var i = 0; i < scored.length; i++) {
-      final (item, score) = scored[i];
-      if (normalized(item.artist) == normalized(next.artist)) {
-        scored[i] = (item, score - 4);
+      final (item, score, artist) = scored[i];
+      if (artist == next.$3) {
+        scored[i] = (item, score - 4, artist);
       }
     }
   }
