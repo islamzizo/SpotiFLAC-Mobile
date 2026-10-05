@@ -54,8 +54,6 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       final playlists = await _spotify.getPlaylists();
       if (!mounted) return;
       setState(() { _signedIn = signed; _playlists = playlists; });
-      // Refresh the saved Spotify library whenever this screen is opened.
-      if (signed) await _syncPlaylists();
     } catch (error) {
       if (mounted) setState(() => _error = 'Could not load saved Spotify session: $error');
     }
@@ -207,6 +205,12 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   Widget _buildSpotifyHome() => Scaffold(
     appBar: AppBar(
       title: const Text('Spotify'),
+      leading: IconButton(
+        tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+        icon: const Icon(Icons.arrow_back),
+        color: Theme.of(context).colorScheme.primary,
+        onPressed: () => Navigator.of(context).maybePop(),
+      ),
       actions: [
         if (_signedIn) IconButton(
           tooltip: 'Sign out', onPressed: _loading ? null : _signOut,
@@ -231,16 +235,6 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   ]);
 
   Widget _buildLibrary() {
-    if (_playlists.isEmpty && _loading) {
-      return const Center(child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(),
-          SizedBox(height: 12),
-          Text('Syncing Spotify library…'),
-        ],
-      ));
-    }
     return RefreshIndicator(
       onRefresh: _syncPlaylists,
       child: ListView.builder(
@@ -302,18 +296,6 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
             child: Text(_error!, textAlign: TextAlign.center,
               style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
-          if (_signedIn && _loading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                  SizedBox(width: 8),
-                  Text('Syncing Spotify library…'),
-                ],
-              ),
-            ),
           if (!_signedIn)
             SizedBox(
               width: double.infinity,
