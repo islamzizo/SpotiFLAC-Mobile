@@ -363,6 +363,7 @@ void main() {
       version + 2,
     );
     expect(database.indexReads, indexReads + 2);
+    await _waitFor(() => library.scannedSources.isNotEmpty);
     expect(library.scannedSources, ['music']);
   });
 

@@ -169,6 +169,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   bool _scanCancelRequested = false;
   bool _scanPauseRequested = false;
   bool _scanInProgress = false;
+  Future<void>? _scanCompletion;
+  final Set<String> _pendingReconnectScans = {};
+  bool _drainingReconnectScans = false;
   StreamSubscription<void>? _storageEventsSubscription;
   Timer? _storageEventDebounce;
   Timer? _availabilityRetry;
@@ -187,6 +190,16 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   @override
   LocalLibraryState build() {
     ref.onDispose(() {
+      _scanCancelRequested = true;
+      _scanPauseRequested = false;
+      _pendingReconnectScans.clear();
+      if (_scanInProgress) {
+        unawaited(
+          PlatformBridge.cancelLibraryScan().catchError((Object error) {
+            _log.w('Failed to cancel disposed library scan: $error');
+          }),
+        );
+      }
       _progressPoller.stop();
       _storageEventsSubscription?.cancel();
       _storageEventDebounce?.cancel();
@@ -414,11 +427,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     // Existing rows become visible as soon as availability flips. The
     // incremental pass then verifies changes made while storage was detached
     // without re-reading metadata for unchanged files.
-    if (ref.mounted &&
-        _scanReconnectedOnRefresh &&
-        reconnected.isNotEmpty &&
-        !_scanInProgress) {
-      unawaited(_scanSourcesSequentially(reconnected));
+    if (ref.mounted && _scanReconnectedOnRefresh && reconnected.isNotEmpty) {
+      _pendingReconnectScans.addAll(reconnected);
+      unawaited(_drainReconnectScans());
     }
   }
 
@@ -427,6 +438,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     bool forceFullScan = false,
   }) async {
     for (final sourceId in sourceIds) {
+      if (!ref.mounted) break;
       await startSourceScan(sourceId, forceFullScan: forceFullScan);
       if (_scanCancelRequested) break;
     }
@@ -445,17 +457,64 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     String sourceId, {
     bool forceFullScan = false,
   }) async {
+    final reconnect = _pendingReconnectScans.contains(sourceId);
+    while (ref.mounted) {
+      final source = await _sourceForScan(sourceId);
+      if (source == null ||
+          (reconnect && !_pendingReconnectScans.contains(sourceId))) {
+        return;
+      }
+      if (_scanInProgress) {
+        if (!reconnect) return;
+        final active = _scanCompletion;
+        if (active != null) await active;
+        continue;
+      }
+      await startScan(
+        source.path,
+        forceFullScan: forceFullScan,
+        iosBookmark: source.bookmark,
+        sourceId: source.id,
+      );
+      return;
+    }
+  }
+
+  Future<LocalLibrarySource?> _sourceForScan(String sourceId) async {
+    if (!ref.mounted) return null;
     await _ensureLoadedFromDatabase();
-    final source = (await _db.getSources())
-        .where((entry) => entry.id == sourceId)
-        .firstOrNull;
-    if (source == null || !source.enabled || !source.available) return;
-    await startScan(
-      source.path,
-      forceFullScan: forceFullScan,
-      iosBookmark: source.bookmark,
-      sourceId: source.id,
-    );
+    if (!ref.mounted) return null;
+    while (ref.mounted) {
+      final sourceVersion = _sourceVersion;
+      final source = (await _db.getSources())
+          .where((entry) => entry.id == sourceId)
+          .firstOrNull;
+      if (!ref.mounted) return null;
+      if (sourceVersion != _sourceVersion) continue;
+      return source?.enabled == true && source?.available == true
+          ? source
+          : null;
+    }
+    return null;
+  }
+
+  Future<void> _drainReconnectScans() async {
+    if (_drainingReconnectScans || !ref.mounted) return;
+    _drainingReconnectScans = true;
+    try {
+      while (ref.mounted && _pendingReconnectScans.isNotEmpty) {
+        final active = _scanCompletion;
+        if (active != null) await active;
+        if (!ref.mounted || _pendingReconnectScans.isEmpty) break;
+        final sourceId = _pendingReconnectScans.first;
+        await startSourceScan(sourceId);
+        _pendingReconnectScans.remove(sourceId);
+      }
+    } catch (error, stack) {
+      _log.e('Failed to scan reconnected library source: $error', error, stack);
+    } finally {
+      _drainingReconnectScans = false;
+    }
   }
 
   Future<void> _refreshSummaryFromStorage({
@@ -765,107 +824,153 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     String? iosBookmark,
     String? sourceId,
   }) async {
+    if (!ref.mounted) return;
     if (_scanInProgress || state.isScanning) {
       _log.w('Scan already in progress');
       return;
     }
 
-    var activeSourceId = sourceId;
-    if (activeSourceId == null) {
-      final existingSource = await _db.getSourceByPath(folderPath);
-      activeSourceId = existingSource?.id;
-      if (activeSourceId == null) {
-        final source = await addSource(
-          path: folderPath,
-          displayName: _displayNameForPath(folderPath),
-          bookmark: iosBookmark,
-          isRemovable: _looksLikeRemovablePath(folderPath),
-        );
-        activeSourceId = source.id;
-      }
-    }
-
-    if (!await _isPathAvailable(folderPath, bookmark: iosBookmark)) {
-      _sourceVersion++;
-      await _db.updateSourceState(activeSourceId, available: false);
-      await _refreshSummaryFromStorage();
-      return;
-    }
-
+    final completion = Completer<void>();
+    _scanCompletion = completion.future;
     _scanInProgress = true;
+    if (sourceId != null) _pendingReconnectScans.remove(sourceId);
     _scanCancelRequested = false;
     _scanPauseRequested = false;
-    // A pause left behind by an interrupted Dart session would hold the new
-    // native scan forever; clear it before the pause control becomes visible.
-    await _releaseNativeScanPause();
     try {
-      final prefs = await _prefs;
-      await prefs.setString(localLibraryActiveScanSourceKey, activeSourceId);
-    } catch (e) {
-      _log.w('Failed to persist active library scan marker: $e');
-    }
-    _log.i(
-      'Starting library scan: $folderPath (incremental: ${!forceFullScan})',
-    );
-    state = state.copyWith(
-      isScanning: true,
-      scanIsFinalizing: false,
-      scanIsPaused: false,
-      scanProgress: 0,
-      scanCurrentFile: null,
-      scanTotalFiles: 0,
-      scannedFiles: 0,
-      scanErrorCount: 0,
-      scanWasCancelled: false,
-      scanningSourceId: activeSourceId,
-    );
-    _resetScanNotificationTracking();
-    // Hold before the first progress notification so Android shows a single
-    // foreground-service notification; released in the final cleanup below.
-    await _notificationService.beginLibraryScanWork();
-    if (_shouldShowScanProgressNotification(
-      progress: 0,
-      totalFiles: 0,
-      isComplete: false,
-    )) {
-      await _showScanProgressNotification(
-        progress: 0,
-        scannedFiles: 0,
-        totalFiles: 0,
-        currentFile: null,
+      await _runScan(
+        folderPath,
+        forceFullScan: forceFullScan,
+        iosBookmark: iosBookmark,
+        sourceId: sourceId,
       );
-    }
-
-    try {
-      final appSupportDir = await getApplicationSupportDirectory();
-      final coverCacheDir = '${appSupportDir.path}/library_covers';
-      await PlatformBridge.setLibraryCoverCacheDir(coverCacheDir);
-      _log.i('Cover cache directory set to: $coverCacheDir');
-    } catch (e) {
-      _log.w('Failed to set cover cache directory: $e');
-    }
-
-    if (!folderPath.startsWith('network://')) _startProgressPolling();
-
-    String? resolvedPath;
-    IosSecurityScopedAccess? securityAccess;
-    if (Platform.isIOS && iosBookmark != null && iosBookmark.isNotEmpty) {
-      securityAccess = await PlatformBridge.startAccessingIosBookmark(
-        iosBookmark,
-      );
-      resolvedPath = securityAccess?.path;
-      if (securityAccess != null) {
-        _log.i('Started iOS security-scoped access: $resolvedPath');
-      } else {
-        _log.w(
-          'Failed to start iOS security-scoped access, '
-          'falling back to original path',
+    } finally {
+      if (ref.mounted) {
+        state = state.copyWith(
+          isScanning: false,
+          scanIsFinalizing: false,
+          clearScanningSourceId: true,
+          scanIsPaused: false,
         );
       }
+      _scanInProgress = false;
+      _scanCompletion = null;
+      completion.complete();
     }
-    final effectiveFolderPath = resolvedPath ?? folderPath;
+  }
 
+  Future<void> _runScan(
+    String folderPath, {
+    required bool forceFullScan,
+    required String? iosBookmark,
+    required String? sourceId,
+  }) async {
+    var activeSourceId = sourceId;
+    IosSecurityScopedAccess? securityAccess;
     try {
+      if (activeSourceId == null) {
+        final existingSource = await _db.getSourceByPath(folderPath);
+        if (!ref.mounted || _scanCancelRequested) return;
+        activeSourceId = existingSource?.id;
+        if (activeSourceId == null) {
+          final source = await addSource(
+            path: folderPath,
+            displayName: _displayNameForPath(folderPath),
+            bookmark: iosBookmark,
+            isRemovable: _looksLikeRemovablePath(folderPath),
+          );
+          activeSourceId = source.id;
+        }
+      }
+
+      final available = await _isPathAvailable(
+        folderPath,
+        bookmark: iosBookmark,
+      );
+      if (!ref.mounted || _scanCancelRequested) return;
+      if (!available) {
+        _sourceVersion++;
+        await _db.updateSourceState(activeSourceId, available: false);
+        await _refreshSummaryFromStorage();
+        return;
+      }
+      if (await _sourceForScan(activeSourceId) == null ||
+          !ref.mounted ||
+          _scanCancelRequested) {
+        return;
+      }
+
+      // A pause left behind by an interrupted Dart session would hold the new
+      // native scan forever; clear it before the pause control becomes visible.
+      await _releaseNativeScanPause();
+      try {
+        final prefs = await _prefs;
+        await prefs.setString(localLibraryActiveScanSourceKey, activeSourceId);
+      } catch (e) {
+        _log.w('Failed to persist active library scan marker: $e');
+      }
+      if (!ref.mounted || _scanCancelRequested) return;
+      _log.i(
+        'Starting library scan: $folderPath (incremental: ${!forceFullScan})',
+      );
+      state = state.copyWith(
+        isScanning: true,
+        scanIsFinalizing: false,
+        scanIsPaused: false,
+        scanProgress: 0,
+        scanCurrentFile: null,
+        scanTotalFiles: 0,
+        scannedFiles: 0,
+        scanErrorCount: 0,
+        scanWasCancelled: false,
+        scanningSourceId: activeSourceId,
+      );
+      _resetScanNotificationTracking();
+      // Hold before the first progress notification so Android shows a single
+      // foreground-service notification; released in the final cleanup below.
+      await _notificationService.beginLibraryScanWork();
+      if (_shouldShowScanProgressNotification(
+        progress: 0,
+        totalFiles: 0,
+        isComplete: false,
+      )) {
+        await _showScanProgressNotification(
+          progress: 0,
+          scannedFiles: 0,
+          totalFiles: 0,
+          currentFile: null,
+        );
+      }
+
+      try {
+        final appSupportDir = await getApplicationSupportDirectory();
+        final coverCacheDir = '${appSupportDir.path}/library_covers';
+        await PlatformBridge.setLibraryCoverCacheDir(coverCacheDir);
+        _log.i('Cover cache directory set to: $coverCacheDir');
+      } catch (e) {
+        _log.w('Failed to set cover cache directory: $e');
+      }
+      if (!ref.mounted || _scanCancelRequested) return;
+
+      if (!folderPath.startsWith('network://')) _startProgressPolling();
+
+      String? resolvedPath;
+      if (Platform.isIOS && iosBookmark != null && iosBookmark.isNotEmpty) {
+        securityAccess = await PlatformBridge.startAccessingIosBookmark(
+          iosBookmark,
+        );
+        resolvedPath = securityAccess?.path;
+        if (securityAccess != null) {
+          _log.i('Started iOS security-scoped access: $resolvedPath');
+        } else {
+          _log.w(
+            'Failed to start iOS security-scoped access, '
+            'falling back to original path',
+          );
+        }
+      }
+      if (!ref.mounted || _scanCancelRequested) return;
+      final effectiveFolderPath = resolvedPath ?? folderPath;
+
       final isSaf = effectiveFolderPath.startsWith('content://');
 
       final useStreamingFullScan =
@@ -873,12 +978,18 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           forceFullScan ||
           await _db.getSourceCount(activeSourceId) == 0;
       if (useStreamingFullScan) {
+        if (await _sourceForScan(activeSourceId) == null ||
+            !ref.mounted ||
+            _scanCancelRequested) {
+          return;
+        }
         final scanResult = await _replaceFromFullScanStream(
           sourceId: activeSourceId,
           folderPath: effectiveFolderPath,
           isSaf: isSaf,
           forceFullScan: forceFullScan,
         );
+        if (!ref.mounted) return;
         if (scanResult == null || _scanCancelRequested) {
           state = state.copyWith(
             isScanning: false,
@@ -923,6 +1034,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           lastScannedAt: now,
           excludedDownloadedCount: skippedDownloads,
         );
+        if (!ref.mounted) return;
         state = state.copyWith(
           isScanning: false,
           scanIsFinalizing: false,
@@ -973,8 +1085,10 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
         Map<String, dynamic> result;
         try {
-          if (_scanCancelRequested) {
-            throw StateError('Library scan cancelled before native scan');
+          if (await _sourceForScan(activeSourceId) == null ||
+              _scanCancelRequested ||
+              !ref.mounted) {
+            return;
           }
           if (isSaf) {
             result = useSnapshotBridge && snapshotPath != null
@@ -1005,6 +1119,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           }
         }
 
+        if (!ref.mounted) return;
         if (_scanCancelRequested || result['cancelled'] == true) {
           state = state.copyWith(
             isScanning: false,
@@ -1102,6 +1217,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           lastScannedAt: now,
           excludedDownloadedCount: skippedDownloads,
         );
+        if (!ref.mounted) return;
         state = state.copyWith(
           isScanning: false,
           scanIsFinalizing: false,
@@ -1128,6 +1244,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         );
       }
     } catch (e, stack) {
+      if (!ref.mounted) return;
       if (_scanCancelRequested) {
         _log.i('Library scan cancelled');
         state = state.copyWith(
@@ -1139,8 +1256,14 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         return;
       }
       _log.e('Library scan failed: $e', e, stack);
-      await _db.updateSourceState(activeSourceId, lastScanError: e.toString());
-      await _refreshSummaryFromStorage();
+      if (activeSourceId != null) {
+        await _db.updateSourceState(
+          activeSourceId,
+          lastScanError: e.toString(),
+        );
+        await _refreshSummaryFromStorage();
+      }
+      if (!ref.mounted) return;
       state = state.copyWith(
         isScanning: false,
         scanIsFinalizing: false,
@@ -1160,7 +1283,6 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         _scanPauseRequested = false;
         await _releaseNativeScanPause();
       }
-      _scanInProgress = false;
       try {
         final prefs = await _prefs;
         if (prefs.getString(localLibraryActiveScanSourceKey) ==
@@ -1170,7 +1292,6 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       } catch (e) {
         _log.w('Failed to clear active library scan marker: $e');
       }
-      state = state.copyWith(clearScanningSourceId: true, scanIsPaused: false);
     }
   }
 
@@ -1283,13 +1404,19 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   );
 
   Future<void> cancelScan() async {
-    if (!state.isScanning) return;
+    if (!ref.mounted || (!_scanInProgress && !state.isScanning)) return;
 
     _log.i('Cancelling library scan');
     _scanCancelRequested = true;
+    _pendingReconnectScans.clear();
+    _availabilityRequestVersion++;
+    _scanReconnectedOnRefresh = false;
     // Native cancel also releases a paused scan.
     _scanPauseRequested = false;
-    if (!_isScanningNetwork) await PlatformBridge.cancelLibraryScan();
+    if (state.isScanning && !_isScanningNetwork) {
+      await PlatformBridge.cancelLibraryScan();
+    }
+    if (!ref.mounted) return;
     state = state.copyWith(
       scanIsFinalizing: false,
       scanIsPaused: false,
