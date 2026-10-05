@@ -104,6 +104,7 @@ class SpotifyAccountService {
       throw const SpotifyAccountException('Spotify session is missing. Log in again.');
     }
     final token = await _validToken(spDc, await _storage.read(key: _spKeyKey) ?? '');
+    await syncProfile();
     final result = <String, SpotifyPlaylist>{};
     var offset = 0;
     const limit = 50;
