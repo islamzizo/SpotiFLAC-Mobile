@@ -364,6 +364,7 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
   Timer? _localLibraryWarmupTimer;
   bool _localLibraryWarmupScheduled = false;
   bool _autoScanTriggeredOnLaunch = false;
+  bool _spotifySyncInProgress = false;
   StreamSubscription<void>? _verificationNotificationSubscription;
 
   @override
@@ -379,6 +380,7 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
       _initializeAppServices();
       _initializeExtensions();
       _initializeDeferredProviders();
+      unawaited(_syncSpotifyLibraryOnAppOpen());
     });
   }
 
@@ -398,6 +400,7 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_consumeVerificationNotification());
+      unawaited(_syncSpotifyLibraryOnAppOpen());
       CoverCacheManager.scheduleMaintenance();
       // Native downloads can finish while Flutter is suspended. Refresh the
       // persisted history even when no queued item remains to reconcile.
@@ -444,6 +447,29 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
       CoverCacheManager.instance.store.emptyMemoryCache();
     }
     unawaited(PlatformBridge.releaseNativeMemory(underPressure: true));
+  }
+
+  Future<void> _syncSpotifyLibraryOnAppOpen() async {
+    if (_spotifySyncInProgress) return;
+    _spotifySyncInProgress = true;
+    try {
+      final spotify = SpotifyAccountService.instance;
+      if (!await spotify.isSignedIn()) return;
+
+      // Publish the last successful snapshot immediately so Spotify playlists
+      // and Liked Songs never flash away while the fresh sync is running.
+      await spotify.getProfile();
+      await spotify.getPlaylists();
+
+      // Refresh silently in the background. The Spotify screen itself is not
+      // required to be opened for the library to stay current.
+      await spotify.syncSavedLibraryInBackground();
+    } catch (_) {
+      // Startup must remain independent from Spotify availability. The cached
+      // snapshot loaded above remains available when a refresh fails.
+    } finally {
+      _spotifySyncInProgress = false;
+    }
   }
 
   void _initializeDeferredProviders() {
