@@ -25,6 +25,7 @@ class MornyeSelectionPill extends StatefulWidget {
     this.liquidInteraction = false,
     this.selectionColor,
     this.maskItemForeground = true,
+    this.interactionBuilder,
   });
 
   final List<String> labels;
@@ -40,6 +41,11 @@ class MornyeSelectionPill extends StatefulWidget {
   /// mode so the unmasked foreground retains its normal color.
   final Color? selectionColor;
   final bool maskItemForeground;
+
+  /// Lets the bar animate its glass behind the fixed-size foreground using the
+  /// same press/release animation as the selection lens.
+  final Widget Function(BuildContext context, double progress, Widget child)?
+  interactionBuilder;
 
   @override
   State<MornyeSelectionPill> createState() => _MornyeSelectionPillState();
@@ -141,7 +147,8 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
         ui.ImageFilter.isShaderFilterSupported &&
         !MediaQuery.disableAnimationsOf(context) &&
         !MediaQuery.highContrastOf(context);
-    return Listener(
+    final pressProgress = lensEnabled ? _pressAnimation.value : 0.0;
+    final content = Listener(
       // An accepted drag can end with a PointerCancelEvent. Do not navigate
       // when the OS interrupts the gesture (e.g. opening system controls).
       onPointerDown: (event) {
@@ -258,11 +265,11 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
                     ),
                   ),
                 if (lensEnabled && selected >= 0 && selected < count)
-                  _interactionLens(selected, count, _pressAnimation.value),
+                  _interactionLens(selected, count, pressProgress),
                 _foreground(
                   selected,
                   count,
-                  lensEnabled ? _pressAnimation.value : 0,
+                  pressProgress,
                   Row(
                     key: _foregroundKey,
                     children: [
@@ -289,27 +296,7 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
                                     : Colors.transparent,
                                 onTap: () => widget.onChanged(index),
                                 child: ExcludeSemantics(
-                                  child: AnimatedScale(
-                                    scale:
-                                        lensEnabled && _pressed && selected >= 0
-                                        ? 1 +
-                                              0.18 *
-                                                  _coverage(
-                                                    index,
-                                                    selected,
-                                                    count,
-                                                  )
-                                        : 1,
-                                    duration:
-                                        _dragAlignment != null ||
-                                            MediaQuery.disableAnimationsOf(
-                                              context,
-                                            )
-                                        ? Duration.zero
-                                        : const Duration(milliseconds: 220),
-                                    curve: Curves.easeOutCubic,
-                                    child: _item(context, index, selected),
-                                  ),
+                                  child: _item(context, index, selected),
                                 ),
                               ),
                             ),
@@ -324,6 +311,8 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
         ),
       ),
     );
+    return widget.interactionBuilder?.call(context, pressProgress, content) ??
+        content;
   }
 
   Widget _item(BuildContext context, int index, int selected) {
@@ -335,13 +324,6 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
     return widget.maskItemForeground
         ? MornyeSelectionForeground(child: child)
         : child;
-  }
-
-  double _coverage(int index, int selected, int count) {
-    final position = _dragAlignment == null
-        ? selected.toDouble()
-        : (_dragAlignment! + 1) * (count - 1) / 2;
-    return (1 - (index - position).abs()).clamp(0.0, 1.0);
   }
 
   Widget _foreground(

@@ -120,6 +120,7 @@ class MornyeGlass extends ConsumerWidget {
     this.tintOpacity,
     this.tintColor,
     this.highlightBorder = false,
+    this.refractionDepth = 0.30,
   }) : firstInGroup = true,
        lastInGroup = true,
        samplesBackdrop = true;
@@ -136,6 +137,7 @@ class MornyeGlass extends ConsumerWidget {
     this.tintColor,
     this.samplesBackdrop = true,
     this.highlightBorder = false,
+    this.refractionDepth = 0.30,
   });
 
   // Quantized and shared across surfaces. Avoid composed color filters and
@@ -157,6 +159,7 @@ class MornyeGlass extends ConsumerWidget {
 
   /// Paint the edge above the fill so tinted popovers retain a visible rim.
   final bool highlightBorder;
+  final double refractionDepth;
 
   /// Plain-page surfaces keep their tint without filtering a uniform backdrop.
   final bool samplesBackdrop;
@@ -282,6 +285,7 @@ class MornyeGlass extends ConsumerWidget {
                   borderRadius: shape,
                   clarity: clarity,
                   blurSigma: _blurSigmas[filterIndex],
+                  refractionDepth: refractionDepth,
                   child: surface,
                 )
               : sampleBackdrop
@@ -511,8 +515,8 @@ class MornyeTabBar extends StatelessWidget {
       blurEnabled: blurEnabled,
       liquidGlass: liquidGlass,
     );
-    final content = FadeTransition(
-      opacity: contentOpacity,
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: floating ? 8 : 0),
       child: MornyeSelectionPill(
         selectionColor: scheme.primary,
         maskItemForeground: false,
@@ -524,6 +528,28 @@ class MornyeTabBar extends StatelessWidget {
         padding: EdgeInsets.symmetric(
           horizontal: floating ? 6 : 5,
           vertical: 5,
+        ),
+        interactionBuilder: (context, progress, child) => Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(
+              // Only the capsule projects forward. Icons, labels and touch
+              // coordinates stay fixed, and collapse never fades the backdrop.
+              child: Transform.scale(
+                scaleX: 1 + 0.025 * progress,
+                scaleY: 1 + 0.06 * progress,
+                child: MornyeGlass.navigation(
+                  blurEnabled: blurEnabled,
+                  strongTint: true,
+                  tintOpacity: MornyeTheme.navigationOpacity(context),
+                  refractionDepth: 0.45 + 0.15 * progress,
+                  child: const SizedBox.expand(),
+                ),
+              ),
+            ),
+            // The selection lens can swell beyond the capsule's clip.
+            FadeTransition(opacity: contentOpacity, child: child),
+          ],
         ),
         itemBuilder: (context, index, selected) => ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 54),
@@ -564,24 +590,6 @@ class MornyeTabBar extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: floating ? 8 : 0),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Positioned.fill(
-            child: MornyeGlass.navigation(
-              blurEnabled: blurEnabled,
-              strongTint: true,
-              tintOpacity: MornyeTheme.navigationOpacity(context),
-              child: const SizedBox.expand(),
-            ),
-          ),
-          // Keep the held lens above the bar's clip so it can swell outward.
-          content,
-        ],
       ),
     );
   }

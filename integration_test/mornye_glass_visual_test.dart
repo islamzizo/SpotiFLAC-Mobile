@@ -92,7 +92,10 @@ void main() {
       return builder.animation as CurvedAnimation;
     }
 
-    Future<void> capture(String name) async {
+    Future<void> capture(
+      String name, {
+      Map<String, Object?> details = const {},
+    }) async {
       await tester.pump();
       // Android can acquire the previously displayed image before the new
       // Flutter frame reaches its image view. Prime that view, then capture the
@@ -122,6 +125,7 @@ void main() {
       // ignore: invalid_use_of_protected_member
       visit(tester.binding.renderViews.first.layer!);
       poses[name] = {
+        ...details,
         'collapseProgress': fold().value,
         'controllerProgress': fold().parent.value,
         'shaderBackdrops': histogram['_ImpellerShaderBackdropLayer'] ?? 0,
@@ -240,6 +244,41 @@ void main() {
       );
       final home = tab('Home');
       final search = tab('Search');
+      Rect capsule() => tester.getRect(
+        find.descendant(
+          of: find.byType(MornyeTabBar),
+          matching: find.byType(MornyeGlass),
+        ),
+      );
+      Map<String, Rect> foreground() => {
+        for (final entry in const {
+          'Home': Icons.home,
+          'Library': Icons.music_note,
+          'Repo': Icons.grid_view,
+          'Search': Icons.search,
+        }.entries) ...{
+          '${entry.key}_icon': tester.getRect(
+            find.descendant(
+              of: find.byType(MornyeTabBar),
+              matching: find.byIcon(entry.value),
+            ),
+          ),
+          '${entry.key}_label': tester.getRect(
+            find.descendant(
+              of: find.byType(MornyeTabBar),
+              matching: find.text(entry.key),
+            ),
+          ),
+        },
+      };
+      List<double> bounds(Rect rect) => [
+        rect.left,
+        rect.top,
+        rect.width,
+        rect.height,
+      ];
+      final restingCapsule = capsule();
+      final restingForeground = foreground();
       final touch = await tester.startGesture(home);
       try {
         await wait(320);
@@ -257,11 +296,37 @@ void main() {
           await wait(100);
         }
         expect(tester.widget<MornyeLiquidBackdrop>(lens).progress, 1);
-        await capture('${prefix}_held_halfway');
+        final heldCapsule = capsule();
+        expect(heldCapsule.width, closeTo(restingCapsule.width * 1.025, 0.01));
+        expect(heldCapsule.height, closeTo(restingCapsule.height * 1.06, 0.01));
+        expect(foreground(), restingForeground);
+        final glass = tester.widget<MornyeLiquidBackdrop>(
+          find.descendant(
+            of: find.byType(MornyeTabBar),
+            matching: find.byWidgetPredicate(
+              (widget) => widget is MornyeLiquidBackdrop && !widget.interaction,
+            ),
+          ),
+        );
+        expect(glass.refractionDepth, closeTo(0.60, 0.001));
+        await capture(
+          '${prefix}_held_halfway',
+          details: {
+            'restingCapsule': bounds(restingCapsule),
+            'heldCapsule': bounds(heldCapsule),
+            'fixedForegroundBounds': {
+              for (final entry in restingForeground.entries)
+                entry.key: bounds(entry.value),
+            },
+            'heldRefractionDepth': glass.refractionDepth,
+          },
+        );
       } finally {
         await touch.cancel();
       }
       await wait(300);
+      expect(capsule(), restingCapsule);
+      expect(foreground(), restingForeground);
       expect(tester.state(find.byType(MiniPlayer)), same(player));
       expect(tester.takeException(), isNull);
     }
