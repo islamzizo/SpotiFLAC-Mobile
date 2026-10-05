@@ -132,11 +132,18 @@ class LocalLibraryState {
   }
 }
 
+typedef LocalLibraryAvailabilityProbe =
+    Future<bool?> Function(String path, {String? bookmark});
+
 class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
-  LocalLibraryNotifier({LibraryDatabase? database})
-    : _db = database ?? LibraryDatabase.instance;
+  LocalLibraryNotifier({
+    LibraryDatabase? database,
+    LocalLibraryAvailabilityProbe? availabilityProbe,
+  }) : _db = database ?? LibraryDatabase.instance,
+       _availabilityProbe = availabilityProbe;
 
   final LibraryDatabase _db;
+  final LocalLibraryAvailabilityProbe? _availabilityProbe;
   final NotificationService _notificationService = NotificationService();
   static const _progressPollingInterval = Duration(milliseconds: 350);
   static const _progressStreamBootstrapTimeout = Duration(milliseconds: 900);
@@ -166,7 +173,12 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   Timer? _storageEventDebounce;
   Timer? _availabilityRetry;
   int _availabilityRetryCount = 0;
-  Future<List<String>>? _availabilityRefreshFuture;
+  int _sourceVersion = 0;
+  int _availabilityRequestVersion = 0;
+  bool _scanReconnectedOnRefresh = false;
+  Future<void>? _availabilityRefreshFuture;
+  Future<({List<String> reconnected, bool changed, int requestVersion})>?
+  _availabilityCheckFuture;
   static const _scanNotificationHeartbeat = Duration(seconds: 4);
   int _lastScanNotificationPercent = -1;
   int _lastScanNotificationTotalFiles = -1;
@@ -223,47 +235,56 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       await ref.read(settingsProvider.notifier).ensureLoaded();
       await _migrateLegacySource();
       final reconnectedSources = await _refreshSourceAvailabilityInDatabase();
-      final sources = await _db.getSources();
-      if (!ref.mounted) return;
-      state = state.copyWith(sources: sources);
-      final summary = await Future.wait<Object>([
-        _db.getCount(),
-        _db.getLookupIndex(),
-      ]);
-      final prefsFuture = _prefs;
-      final count = summary[0] as int;
-      final lookupIndex = summary[1] as LocalLibraryLookupIndex;
+      while (ref.mounted) {
+        final sourceVersion = _sourceVersion;
+        final sources = await _db.getSources();
+        if (!ref.mounted) return;
+        if (sourceVersion != _sourceVersion) continue;
+        state = state.copyWith(sources: sources);
+        final summary = await Future.wait<Object>([
+          _db.getCount(),
+          _db.getLookupIndex(),
+        ]);
+        final prefsFuture = _prefs;
+        final count = summary[0] as int;
+        final lookupIndex = summary[1] as LocalLibraryLookupIndex;
 
-      DateTime? lastScannedAt;
-      var excludedDownloadedCount = 0;
-      try {
-        final prefs = await prefsFuture;
-        lastScannedAt = readLocalLibraryLastScannedAt(prefs);
-        excludedDownloadedCount =
-            prefs.getInt(_excludedDownloadedCountKey) ?? 0;
-      } catch (e) {
-        _log.w('Failed to load lastScannedAt: $e');
+        DateTime? lastScannedAt;
+        var excludedDownloadedCount = 0;
+        try {
+          final prefs = await prefsFuture;
+          lastScannedAt = readLocalLibraryLastScannedAt(prefs);
+          excludedDownloadedCount =
+              prefs.getInt(_excludedDownloadedCountKey) ?? 0;
+        } catch (e) {
+          _log.w('Failed to load lastScannedAt: $e');
+        }
+
+        if (!ref.mounted) return;
+        if (sourceVersion != _sourceVersion) {
+          if (_hasLoadedFromDatabase) break;
+          continue;
+        }
+        state = state.copyWith(
+          totalCount: count,
+          loadedIndexVersion: state.loadedIndexVersion + 1,
+          lastScannedAt: lastScannedAt,
+          excludedDownloadedCount: excludedDownloadedCount,
+          sources: sources,
+          trackKeySet: lookupIndex.matchKeys,
+          isrcSet: lookupIndex.isrcs,
+        );
+        _log.i(
+          'Loaded local library summary: $count items, lastScannedAt: '
+          '$lastScannedAt, excludedDownloadedCount: $excludedDownloadedCount',
+        );
+        _hasLoadedFromDatabase = true;
+        break;
       }
-
-      if (!ref.mounted) return;
-      state = state.copyWith(
-        totalCount: count,
-        loadedIndexVersion: state.loadedIndexVersion + 1,
-        lastScannedAt: lastScannedAt,
-        excludedDownloadedCount: excludedDownloadedCount,
-        sources: sources,
-        trackKeySet: lookupIndex.matchKeys,
-        isrcSet: lookupIndex.isrcs,
-      );
-      _log.i(
-        'Loaded local library summary: $count items, lastScannedAt: '
-        '$lastScannedAt, excludedDownloadedCount: $excludedDownloadedCount',
-      );
-      _hasLoadedFromDatabase = true;
-      if (reconnectedSources.isNotEmpty) {
+      if (ref.mounted && reconnectedSources.reconnected.isNotEmpty) {
         unawaited(
           Future<void>.microtask(
-            () => _scanSourcesSequentially(reconnectedSources),
+            () => _scanSourcesSequentially(reconnectedSources.reconnected),
           ),
         );
       }
@@ -285,6 +306,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     }
     _isLoaded = false;
     _hasLoadedFromDatabase = false;
+    _sourceVersion++;
     _loadFuture = null;
     await _ensureLoadedFromDatabase();
   }
@@ -302,6 +324,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     }
     final existing = await _db.getSourceByPath(trimmedPath);
     if (existing != null) {
+      _sourceVersion++;
       await _db.updateSourceState(
         existing.id,
         enabled: true,
@@ -329,6 +352,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       available: true,
       lastSeenAt: DateTime.now(),
     );
+    _sourceVersion++;
     await _db.upsertSource(source);
     await _refreshSummaryFromStorage();
     return source;
@@ -349,6 +373,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     final source = state.sources
         .where((entry) => entry.id == sourceId)
         .firstOrNull;
+    _sourceVersion++;
     await _db.updateSourceState(sourceId, enabled: enabled);
     await _refreshSummaryFromStorage();
     if (enabled &&
@@ -360,20 +385,39 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   }
 
   Future<void> removeSource(String sourceId) async {
+    _sourceVersion++;
     await _db.removeSource(sourceId);
     await _refreshSummaryFromStorage();
   }
 
-  Future<void> refreshSourceAvailability({bool scanReconnected = false}) async {
+  Future<void> refreshSourceAvailability({bool scanReconnected = false}) {
+    _availabilityRequestVersion++;
+    _scanReconnectedOnRefresh |= scanReconnected;
+    return _availabilityRefreshFuture ??= _refreshSourceAvailability()
+        .whenComplete(() {
+          _availabilityRefreshFuture = null;
+          _scanReconnectedOnRefresh = false;
+        });
+  }
+
+  Future<void> _refreshSourceAvailability() async {
     await _ensureLoadedFromDatabase();
-    final reconnected = await _refreshSourceAvailabilityInDatabase();
-    if (!ref.mounted) return;
-    await _refreshSummaryFromStorage();
+    final reconnected = <String>{};
+    while (ref.mounted) {
+      final result = await _refreshSourceAvailabilityInDatabase();
+      if (!ref.mounted) return;
+      reconnected.addAll(result.reconnected);
+      if (result.changed) await _refreshSummaryFromStorage();
+      if (result.requestVersion == _availabilityRequestVersion) break;
+    }
 
     // Existing rows become visible as soon as availability flips. The
     // incremental pass then verifies changes made while storage was detached
     // without re-reading metadata for unchanged files.
-    if (scanReconnected && reconnected.isNotEmpty && !_scanInProgress) {
+    if (ref.mounted &&
+        _scanReconnectedOnRefresh &&
+        reconnected.isNotEmpty &&
+        !_scanInProgress) {
       unawaited(_scanSourcesSequentially(reconnected));
     }
   }
@@ -418,8 +462,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     DateTime? lastScannedAt,
     int? excludedDownloadedCount,
   }) async {
+    final sourceVersion = ++_sourceVersion;
     final sources = await _db.getSources();
-    if (!ref.mounted) return;
+    if (!ref.mounted || sourceVersion != _sourceVersion) return;
     state = state.copyWith(sources: sources);
     final summary = await Future.wait<Object>([
       _db.getCount(),
@@ -427,7 +472,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     ]);
     final count = summary[0] as int;
     final index = summary[1] as LocalLibraryLookupIndex;
-    if (!ref.mounted) return;
+    if (!ref.mounted || sourceVersion != _sourceVersion) return;
     final latestSourceScan = sources
         .map((source) => source.lastScannedAt)
         .whereType<DateTime>()
@@ -459,6 +504,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     try {
       legacyLastScannedAt = readLocalLibraryLastScannedAt(await _prefs);
     } catch (_) {}
+    _sourceVersion++;
     await _db.migrateLegacySource(
       path: path,
       displayName: _displayNameForPath(path),
@@ -517,6 +563,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     // opening/scanning a source reports connectivity errors without dropping it.
     if (path.startsWith('network://')) return true;
     try {
+      if (_availabilityProbe != null) {
+        return await _availabilityProbe(path, bookmark: bookmark);
+      }
       if (Platform.isAndroid && path.startsWith('content://')) {
         return await PlatformBridge.probeSafTreeReadAccess(path);
       }
@@ -537,51 +586,77 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     }
   }
 
-  Future<List<String>> _refreshSourceAvailabilityInDatabase() =>
-      _availabilityRefreshFuture ??= _checkSourceAvailability().whenComplete(
-        () {
-          _availabilityRefreshFuture = null;
-        },
-      );
+  Future<({List<String> reconnected, bool changed, int requestVersion})>
+  _refreshSourceAvailabilityInDatabase() =>
+      _availabilityCheckFuture ??= _checkSourceAvailability().whenComplete(() {
+        _availabilityCheckFuture = null;
+      });
 
-  Future<List<String>> _checkSourceAvailability() async {
-    final sources = await _db.getSources();
-    final reconnected = <String>[];
-    var inconclusive = false;
-    for (final source in sources) {
-      final available = await _probePathAvailability(
-        source.path,
-        bookmark: source.bookmark,
-      );
-      if (!ref.mounted) return reconnected;
-      if (available == null) {
-        inconclusive = true;
-        _log.w(
-          'Library source access inconclusive; retaining status: ${source.id}',
+  Future<({List<String> reconnected, bool changed, int requestVersion})>
+  _checkSourceAvailability() async {
+    final reconnected = <String>{};
+    var changed = false;
+    while (ref.mounted) {
+      final sourceVersion = _sourceVersion;
+      final requestVersion = _availabilityRequestVersion;
+      final sources = await _db.getSources();
+      var inconclusive = false;
+      for (final source in sources) {
+        final available = await _probePathAvailability(
+          source.path,
+          bookmark: source.bookmark,
         );
-        continue;
-      }
-      if (available != source.available) {
-        await _db.updateSourceState(
-          source.id,
-          available: available,
-          lastSeenAt: available ? DateTime.now() : null,
-        );
-        if (available && source.enabled && source.isIndexed) {
-          reconnected.add(source.id);
+        if (!ref.mounted ||
+            sourceVersion != _sourceVersion ||
+            requestVersion != _availabilityRequestVersion) {
+          break;
+        }
+        if (available == null) {
+          inconclusive = true;
+          _log.w(
+            'Library source access inconclusive; retaining status: ${source.id}',
+          );
+          continue;
+        }
+        if (available != source.available) {
+          await _db.updateSourceState(
+            source.id,
+            available: available,
+            lastSeenAt: available ? DateTime.now() : null,
+          );
+          changed = true;
+          if (available && source.enabled && source.isIndexed) {
+            reconnected.add(source.id);
+          }
         }
       }
+      if (!ref.mounted) break;
+      // A folder edit or a newer storage event supersedes pending probe
+      // results. Re-read the source snapshot before applying them.
+      if (sourceVersion != _sourceVersion ||
+          requestVersion != _availabilityRequestVersion) {
+        continue;
+      }
+      _availabilityRetry?.cancel();
+      if (inconclusive && _availabilityRetryCount < 3) {
+        _availabilityRetryCount++;
+        _availabilityRetry = Timer(const Duration(seconds: 2), () {
+          unawaited(refreshSourceAvailability(scanReconnected: true));
+        });
+      } else if (!inconclusive) {
+        _availabilityRetryCount = 0;
+      }
+      return (
+        reconnected: reconnected.toList(growable: false),
+        changed: changed,
+        requestVersion: requestVersion,
+      );
     }
-    _availabilityRetry?.cancel();
-    if (inconclusive && _availabilityRetryCount < 3) {
-      _availabilityRetryCount++;
-      _availabilityRetry = Timer(const Duration(seconds: 2), () {
-        unawaited(refreshSourceAvailability(scanReconnected: true));
-      });
-    } else if (!inconclusive) {
-      _availabilityRetryCount = 0;
-    }
-    return reconnected;
+    return (
+      reconnected: reconnected.toList(growable: false),
+      changed: changed,
+      requestVersion: _availabilityRequestVersion,
+    );
   }
 
   Future<({int inserted, int skipped})?> _replaceFromFullScanStream({
@@ -711,6 +786,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     }
 
     if (!await _isPathAvailable(folderPath, bookmark: iosBookmark)) {
+      _sourceVersion++;
       await _db.updateSourceState(activeSourceId, available: false);
       await _refreshSummaryFromStorage();
       return;
@@ -826,6 +902,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         }
 
         final now = DateTime.now();
+        _sourceVersion++;
         await _db.updateSourceState(
           activeSourceId,
           available: true,
@@ -1004,6 +1081,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         }
 
         final now = DateTime.now();
+        _sourceVersion++;
         await _db.updateSourceState(
           activeSourceId,
           available: true,
@@ -1409,6 +1487,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   }
 
   Future<void> clearLibrary() async {
+    _sourceVersion++;
     await _db.clearAll();
 
     try {
