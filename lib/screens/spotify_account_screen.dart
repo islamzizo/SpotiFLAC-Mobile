@@ -54,8 +54,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       final playlists = await _spotify.getPlaylists();
       if (!mounted) return;
       setState(() { _signedIn = signed; _playlists = playlists; });
-      // Refresh the saved Spotify library whenever this screen is opened.
-      if (signed) await _syncPlaylists();
+      // The app syncs Spotify in the background at startup. Do not replace the cached library when this screen opens.
     } catch (error) {
       if (mounted) setState(() => _error = 'Could not load saved Spotify session: $error');
     }
@@ -104,16 +103,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       if (!hasSession && !await _spotify.isSignedIn()) {
         throw const SpotifyAccountException('Log in to Spotify above, then sync your library.');
       }
-      final normal = await _spotify.syncPlaylists();
-      final merged = List<SpotifyPlaylist>.from(normal);
-      try {
-        final liked = await _extras.fetchLikedSongsEntry();
-        if (liked != null && !merged.any((item) => item.id == liked.id)) merged.insert(0, liked);
-      } catch (_) {
-        if (!merged.any((item) => item.id == 'liked-songs')) {
-          merged.insert(0, const SpotifyPlaylist(id: 'liked-songs', name: 'Liked Songs', url: 'https://open.spotify.com/collection/tracks'));
-        }
-      }
+      final merged = await _spotify.syncLibrary();
       if (!mounted) return;
       setState(() { _playlists = merged; _signedIn = true; _loading = false; });
     } catch (error) {
@@ -324,8 +314,9 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
               ),
             ),
           const SizedBox(height: 6),
-          Text(_signedIn ? 'Library syncs automatically when you open this screen.' : 'Uses the Spotify web login session; no developer client ID is required.',
-            textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+          if (!_signedIn)
+            const Text('Uses the Spotify web login session; no developer client ID is required.',
+              textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
         ]),
       ),
     ),
