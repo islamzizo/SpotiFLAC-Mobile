@@ -28,6 +28,7 @@ import 'package:spotiflac_android/widgets/error_card.dart';
 import 'package:spotiflac_android/widgets/downloadable_cover.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/mornye_artist_header.dart';
+import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 
 class PlaylistScreen extends ConsumerStatefulWidget {
   final String playlistName;
@@ -510,6 +511,13 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen>
       playlistPosition: playlistPosition,
       forceQualityPicker: forceQualityPicker,
     );
+  }
+
+  Widget _buildSpotifyOrLoveButton() {
+    if (SpotifyNavigationScope.maybeOf(context) != null) {
+      return SpotifySaveButton(tracks: _tracks);
+    }
+    return _buildLoveAllButton();
   }
 
   Widget _buildLoveAllButton() {
