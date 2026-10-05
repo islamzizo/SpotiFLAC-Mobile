@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/screens/settings/profile_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/about_page.dart';
 import 'package:spotiflac_android/screens/settings/app_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/appearance_settings_page.dart';
@@ -100,7 +99,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   Future<void> _loadSpotifyProfile() async {
     final service = SpotifyAccountService.instance;
     final signedIn = await service.isSignedIn();
-    final profile = signedIn ? await service.getProfile() : null;
+    final profile = signedIn ? await service.syncProfile() : null;
     if (!mounted) return;
     setState(() {
       _spotifySignedIn = signedIn;
