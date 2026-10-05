@@ -155,9 +155,10 @@ class SpotifyAccountService {
       final decoded = jsonDecode(response.body);
       if (decoded is! Map) return await getProfile();
       final images = decoded['images'];
-      final imageUrl = images is List && images.isNotEmpty
-          ? (_map(images.first)?['url']?.toString())
+      final firstImage = images is List && images.isNotEmpty
+          ? _map(images.first)
           : null;
+      final imageUrl = firstImage?['url']?.toString();
       final id = decoded['id']?.toString();
       final displayName = decoded['display_name']?.toString().trim();
       final profile = SpotifyAccountProfile(
