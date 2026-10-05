@@ -487,7 +487,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                     horizontal: 20,
                     vertical: 16,
                   ),
-                  leading: ${_spotifyProfile?.imageUrl?.isNotEmpty == true
+                  leading: _spotifyProfile?.imageUrl?.isNotEmpty == true
                       ? ClipOval(
                           child: Image.network(
                             _spotifyProfile!.imageUrl!,
@@ -510,19 +510,19 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                           ),
                         ),
                   title: Text(
-                    ${_spotifyProfile?.displayName.isNotEmpty == true
+                    _spotifyProfile?.displayName.isNotEmpty == true
                         ? _spotifyProfile!.displayName
-                        : 'Spotify Account'},
+                        : 'Spotify Account',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   subtitle: Text(
-                    ${_spotifyProfile?.username?.isNotEmpty == true
+                    _spotifyProfile?.username?.isNotEmpty == true
                         ? '@${_spotifyProfile!.username}'
                         : _spotifySignedIn
                             ? 'Spotify account connected'
-                            : 'Connect your Spotify account'},
+                            : 'Connect your Spotify account',
                   ),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => _navigateTo(
