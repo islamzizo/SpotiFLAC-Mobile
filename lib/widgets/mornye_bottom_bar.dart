@@ -324,16 +324,23 @@ class _MornyeBottomBarState extends ConsumerState<MornyeBottomBar>
                               ),
                             ),
                           ),
-                        ClipRect(
-                          clipBehavior: amount == 0 ? Clip.none : Clip.hardEdge,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            heightFactor: 1 - amount,
-                            child: IgnorePointer(
-                              ignoring: amount > 0.5,
-                              child: ExcludeSemantics(
-                                excluding: amount > 0.5,
-                                child: amount == 0 ? fullTabs : foldingTabs,
+                        Offstage(
+                          // Retain tab state, but drop its backdrop layers only
+                          // after the last visible frame of the fold.
+                          offstage: amount == 1,
+                          child: ClipRect(
+                            clipBehavior: amount == 0
+                                ? Clip.none
+                                : Clip.hardEdge,
+                            child: Align(
+                              alignment: Alignment.bottomCenter,
+                              heightFactor: 1 - amount,
+                              child: IgnorePointer(
+                                ignoring: amount > 0.5,
+                                child: ExcludeSemantics(
+                                  excluding: amount > 0.5,
+                                  child: amount == 0 ? fullTabs : foldingTabs,
+                                ),
                               ),
                             ),
                           ),

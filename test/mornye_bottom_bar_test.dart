@@ -141,7 +141,10 @@ void main() {
     'player and navbar share a backdrop while moving capsules remain isolated',
     (tester) async {
       await pumpShell(tester, blur: true, liquidGlass: false);
-      void expectSharedBackdrop({int movingSurfaces = 2}) {
+      void expectSharedBackdrop({
+        int movingSurfaces = 2,
+        int sharedSurfaces = 2,
+      }) {
         final filters = find.descendant(
           of: find.byType(MornyeBottomBar),
           matching: find.byType(BackdropFilter),
@@ -155,8 +158,10 @@ void main() {
         final shared = renderers
             .where((filter) => filter.backdropKey != null)
             .toList();
-        expect(shared, hasLength(2));
-        expect(shared[0].backdropKey, same(shared[1].backdropKey));
+        expect(shared, hasLength(sharedSurfaces));
+        if (sharedSurfaces == 2) {
+          expect(shared[0].backdropKey, same(shared[1].backdropKey));
+        }
         // Side capsules overlap the folding tabs and must not join their group.
         expect(
           renderers.where((filter) => filter.backdropKey == null),
@@ -171,7 +176,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 190));
       expectSharedBackdrop();
       await tester.pumpAndSettle();
-      expectSharedBackdrop();
+      expectSharedBackdrop(sharedSurfaces: 1);
       expect(tester.takeException(), isNull);
     },
   );
@@ -817,7 +822,11 @@ void main() {
       expect(TickerMode.valuesOf(glass).enabled, isTrue);
       chrome.value = true;
       await tester.pumpAndSettle();
-      expect(tester.element(find.byType(MornyeSelectionPill)), same(glass));
+      expect(find.byType(MornyeSelectionPill), findsNothing);
+      expect(
+        tester.element(find.byType(MornyeSelectionPill, skipOffstage: false)),
+        same(glass),
+      );
       expect(TickerMode.valuesOf(glass).enabled, isFalse);
       chrome.expand();
       await tester.pumpAndSettle();
