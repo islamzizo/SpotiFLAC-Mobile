@@ -9,6 +9,10 @@ import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
+import 'package:spotiflac_android/services/spotify_library_extras_service.dart';
+import 'package:spotiflac_android/screens/playlist_screen.dart';
+import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/utils/nav_bar_inset.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
@@ -45,6 +49,9 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   int _limit = 40;
   List<LibraryBrowseEntry> _rows = const [];
   bool _loading = true;
+  List<SpotifyPlaylist> _spotifyPlaylists = const [];
+  String? _openingSpotifyPlaylistId;
+  late final VoidCallback _spotifyLibraryListener;
 
   bool get _overview => widget.page == MornyeLibraryPage.overview;
   bool get _artists => widget.page == MornyeLibraryPage.artists;
@@ -59,6 +66,9 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   @override
   void initState() {
     super.initState();
+    _spotifyLibraryListener = _loadSpotifyPlaylists;
+    SpotifyAccountService.libraryVersion.addListener(_spotifyLibraryListener);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSpotifyPlaylists());
     _sort = _overview ? 'latest' : 'a-z';
     _scroll.addListener(() {
       if (_scroll.position.extentAfter < 500 &&
@@ -71,6 +81,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
 
   @override
   void dispose() {
+    SpotifyAccountService.libraryVersion.removeListener(_spotifyLibraryListener);
     _debounce?.cancel();
     _scroll.dispose();
     _search.dispose();
@@ -295,6 +306,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                   ],
                 ),
               ),
+            _spotifyPlaylistSliver(context),
             if (_overview)
               SliverToBoxAdapter(
                 child: Padding(
