@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
@@ -114,23 +113,37 @@ class SpotifyProfileAvatar extends StatelessWidget {
   }
 }
 
-class HomeProfileButton extends ConsumerWidget {
+class HomeProfileButton extends StatefulWidget {
   const HomeProfileButton({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final profile = ref.watch(userProfileProvider).value;
-    return IconButton(
-      tooltip: context.l10n.settingsTitle,
-      iconSize: 44,
-      padding: const EdgeInsets.all(6),
-      constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
-      visualDensity: VisualDensity.standard,
-      onPressed: () => ShellNavigationService.requestTab(ShellTab.settings),
-      icon: ProfileAvatar(
-        name: profile?.name ?? '',
-        photoPath: profile?.photoPath,
-        size: 44,
+  State<HomeProfileButton> createState() => _HomeProfileButtonState();
+}
+
+class _HomeProfileButtonState extends State<HomeProfileButton> {
+  @override
+  void initState() {
+    super.initState();
+    if (SpotifyAccountService.instance.profileNotifier.value == null) {
+      SpotifyAccountService.instance.getProfile();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<SpotifyProfile?>(
+      valueListenable: SpotifyAccountService.instance.profileNotifier,
+      builder: (context, profile, _) => IconButton(
+        tooltip: context.l10n.settingsTitle,
+        iconSize: 44,
+        padding: const EdgeInsets.all(6),
+        constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
+        visualDensity: VisualDensity.standard,
+        onPressed: () =>
+            ShellNavigationService.requestTab(ShellTab.settings),
+        icon: profile == null
+            ? const ProfileAvatar(size: 44)
+            : SpotifyProfileAvatar(profile: profile, size: 44),
       ),
     );
   }
