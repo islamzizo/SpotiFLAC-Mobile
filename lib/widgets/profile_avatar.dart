@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/providers/user_profile_provider.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 
 class ProfileAvatar extends StatelessWidget {
@@ -78,6 +78,36 @@ class ProfileAvatar extends StatelessWidget {
                   errorBuilder: (_, _, _) => fallback,
                 )
               : fallback,
+        ),
+      ),
+    );
+  }
+}
+
+class SpotifyProfileAvatar extends StatelessWidget {
+  const SpotifyProfileAvatar({
+    super.key,
+    required this.profile,
+    this.size = 40,
+  });
+
+  final SpotifyProfile profile;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final fallback = ProfileAvatar(name: profile.displayName, size: size);
+    final imageUrl = profile.imageUrl;
+    if (imageUrl == null || imageUrl.isEmpty) return fallback;
+
+    return ClipOval(
+      child: SizedBox.square(
+        dimension: size,
+        child: Image.network(
+          imageUrl,
+          fit: BoxFit.cover,
+          cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).ceil(),
+          errorBuilder: (_, _, _) => fallback,
         ),
       ),
     );
