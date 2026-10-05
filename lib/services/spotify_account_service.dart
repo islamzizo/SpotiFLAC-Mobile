@@ -167,7 +167,7 @@ class SpotifyAccountService {
         username: id,
         imageUrl: imageUrl,
       );
-      if (profile.displayName.isEmpty) return getProfile();
+      if (profile.displayName.isEmpty) return await getProfile();
       await _storage.write(
         key: _profileKey,
         value: jsonEncode(profile.toJson()),
