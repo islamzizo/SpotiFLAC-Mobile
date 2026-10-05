@@ -1,8 +1,30 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+
+class SpotifyAccountProfile {
+  const SpotifyAccountProfile({required this.name, this.imageUrl});
+
+  final String name;
+  final String? imageUrl;
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    if (imageUrl != null && imageUrl!.isNotEmpty) 'imageUrl': imageUrl,
+  };
+
+  static SpotifyAccountProfile? fromJson(Map<String, dynamic> json) {
+    final name = json['name']?.toString().trim() ?? '';
+    if (name.isEmpty) return null;
+    return SpotifyAccountProfile(
+      name: name,
+      imageUrl: json['imageUrl']?.toString(),
+    );
+  }
+}
 
 class SpotifyPlaylist {
   const SpotifyPlaylist({
@@ -70,6 +92,10 @@ class SpotifyAccountService {
   static const accessTokenKey = 'spotify_web_access_token';
   static const _expiryKey = 'spotify_web_access_token_expires';
   static const _playlistsKey = 'spotify_web_playlists';
+  static const _profileKey = 'spotify_web_profile';
+
+  /// Notifies other app surfaces when the cached Spotify library changes.
+  static final ValueNotifier<int> libraryVersion = ValueNotifier<int>(0);
 
   final _storage = const FlutterSecureStorage();
   Future<bool> isSignedIn() async => await _storage.read(key: _signedInKey) == 'true';
@@ -86,6 +112,18 @@ class SpotifyAccountService {
     await _storage.delete(key: _expiryKey);
   }
 
+  Future<SpotifyAccountProfile?> getProfile() async {
+    final raw = await _storage.read(key: _profileKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      return SpotifyAccountProfile.fromJson(Map<String, dynamic>.from(decoded));
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<List<SpotifyPlaylist>> getPlaylists() async {
     final raw = await _storage.read(key: _playlistsKey);
     if (raw == null || raw.isEmpty) return const [];
@@ -98,6 +136,32 @@ class SpotifyAccountService {
     } catch (_) { return const []; }
   }
 
+  Future<List<SpotifyPlaylist>> syncLibrary() async {
+    final playlists = await syncPlaylists();
+    final merged = List<SpotifyPlaylist>.from(playlists);
+    final liked = _lastLikedEntry;
+    if (liked != null && !merged.any((item) => item.id == liked.id)) {
+      merged.insert(0, liked);
+    } else if (!merged.any((item) => item.id == 'liked-songs')) {
+      merged.insert(
+        0,
+        const SpotifyPlaylist(
+          id: 'liked-songs',
+          name: 'Liked Songs',
+          url: 'https://open.spotify.com/collection/tracks',
+        ),
+      );
+    }
+    await _storage.write(
+      key: _playlistsKey,
+      value: jsonEncode(merged.map((p) => p.toJson()).toList()),
+    );
+    libraryVersion.value++;
+    return merged;
+  }
+
+  SpotifyPlaylist? _lastLikedEntry;
+
   Future<List<SpotifyPlaylist>> syncPlaylists() async {
     final spDc = await _storage.read(key: _spDcKey);
     if (spDc == null || spDc.isEmpty) {
@@ -105,6 +169,9 @@ class SpotifyAccountService {
     }
     final token = await _validToken(spDc, await _storage.read(key: _spKeyKey) ?? '');
     final result = <String, SpotifyPlaylist>{};
+    final ownerCounts = <String, int>{};
+    final ownerImages = <String, String?>{};
+    _lastLikedEntry = null;
     var offset = 0;
     const limit = 50;
     while (true) {
@@ -127,11 +194,29 @@ class SpotifyAccountService {
         if (wrapper == null || d == null) continue;
         final type = (wrapper['__typename'] ?? d['__typename'] ?? '').toString().toLowerCase();
         final uri = (wrapper['_uri'] ?? d['uri'] ?? '').toString();
+        final itemName = d['name']?.toString() ?? '';
+        if (uri == 'spotify:collection:tracks' || itemName.toLowerCase().contains('liked songs')) {
+          _lastLikedEntry = SpotifyPlaylist(
+            id: 'liked-songs',
+            name: itemName.isEmpty ? 'Liked Songs' : itemName,
+            url: 'https://open.spotify.com/collection/tracks',
+            coverUrl: _image(d['image'] ?? d['images']),
+            trackCount: (_map(d['content'])?['totalCount'] as num?)?.toInt(),
+          );
+          continue;
+        }
         if (!type.contains('playlist') || !uri.startsWith('spotify:playlist:')) continue;
         final id = uri.split(':').last;
         final name = d['name']?.toString() ?? '';
         if (id.isEmpty || name.isEmpty) continue;
         final ownerData = _map(_map(d['ownerV2'])?['data']);
+        final ownerName = ownerData?['name']?.toString().trim();
+        if (ownerName != null && ownerName.isNotEmpty) {
+          ownerCounts[ownerName] = (ownerCounts[ownerName] ?? 0) + 1;
+          ownerImages[ownerName] ??= _image(
+            ownerData?['avatar'] ?? ownerData?['images'] ?? ownerData?['image'],
+          );
+        }
         final content = _map(d['content']);
         result[id] = SpotifyPlaylist(
           id: id, name: name, url: 'https://open.spotify.com/playlist/$id',
@@ -151,6 +236,21 @@ class SpotifyAccountService {
     final playlists = result.values.toList(growable: false);
     await _storage.write(key: _playlistsKey, value: jsonEncode(playlists.map((p) => p.toJson()).toList()));
     await _storage.write(key: _signedInKey, value: 'true');
+
+    if (ownerCounts.isNotEmpty) {
+      final accountName = ownerCounts.entries.reduce(
+        (a, b) => a.value >= b.value ? a : b,
+      ).key;
+      final oldProfile = await getProfile();
+      final profile = SpotifyAccountProfile(
+        name: accountName,
+        imageUrl: ownerImages[accountName] ?? oldProfile?.imageUrl,
+      );
+      await _storage.write(
+        key: _profileKey,
+        value: jsonEncode(profile.toJson()),
+      );
+    }
     return playlists;
   }
 
@@ -252,8 +352,9 @@ class SpotifyAccountService {
     return output;
   }
   Future<void> signOut() async {
-    for (final key in [_signedInKey,_spDcKey,_spKeyKey,accessTokenKey,_expiryKey,_playlistsKey]) {
+    for (final key in [_signedInKey,_spDcKey,_spKeyKey,accessTokenKey,_expiryKey,_playlistsKey,_profileKey]) {
       await _storage.delete(key:key);
     }
+    libraryVersion.value++;
   }
 }
