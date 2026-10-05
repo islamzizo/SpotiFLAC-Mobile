@@ -263,6 +263,7 @@ class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
                 ? PlayerArtwork(
                     artUri: mediaItem.artUri?.toString(),
                     colorScheme: colorScheme,
+                    cacheWidth: PlayerArtwork.transitionCacheWidth(context),
                   )
                 : artwork(),
           ),

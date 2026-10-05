@@ -333,11 +333,9 @@ class MornyePlayerLayout extends ConsumerWidget {
                                                           ?.toString(),
                                                       colorScheme: colorScheme,
                                                       cacheWidth:
-                                                          (360 *
-                                                                  MediaQuery.devicePixelRatioOf(
-                                                                    context,
-                                                                  ))
-                                                              .round(),
+                                                          PlayerArtwork.transitionCacheWidth(
+                                                            context,
+                                                          ),
                                                     ),
                                                   ),
                                                 ),

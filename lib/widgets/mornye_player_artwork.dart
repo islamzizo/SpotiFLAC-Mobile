@@ -41,10 +41,7 @@ class _MornyePlayerArtworkState extends ConsumerState<MornyePlayerArtwork> {
         child: PlayerArtwork(
           artUri: widget.mediaItem.artUri?.toString(),
           colorScheme: Theme.of(context).colorScheme,
-          cacheWidth:
-              (MediaQuery.sizeOf(context).width *
-                      MediaQuery.devicePixelRatioOf(context))
-                  .round(),
+          cacheWidth: PlayerArtwork.transitionCacheWidth(context),
         ),
       ),
     );
