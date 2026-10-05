@@ -10,6 +10,136 @@ import 'package:spotiflac_android/widgets/app_switch.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:spotiflac_android/widgets/mornye_selection_pill.dart';
 
+void _maskCullingTests() {
+  for (final direction in TextDirection.values) {
+    testWidgets(
+      'selection masks cull and restore retained layers ($direction)',
+      (tester) async {
+        var selected = 0;
+        Color color = Colors.red;
+        late StateSetter update;
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Directionality(
+              textDirection: direction,
+              child: Center(
+                child: SizedBox(
+                  width: 300,
+                  height: 64,
+                  child: StatefulBuilder(
+                    builder: (_, setState) {
+                      update = setState;
+                      return MornyeSelectionPill(
+                        labels: const ['A', 'B', 'C', 'D', 'E'],
+                        selectedIndex: selected,
+                        selectionColor: color,
+                        maskItemForeground: false,
+                        padding: EdgeInsets.zero,
+                        onChanged: (_) {},
+                        itemBuilder: (_, _, _) => const Center(
+                          child: MornyeSelectionForeground(
+                            child: SizedBox(
+                              width: 16,
+                              height: 40,
+                              child: ColoredBox(color: Colors.white),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.runAsync(
+          () => ui.FragmentProgram.fromAsset(
+            'assets/shaders/mornye_selection_mask.frag',
+          ),
+        );
+        await tester.pumpAndSettle();
+        final masks = tester
+            .renderObjectList<RenderShaderMask>(
+              find.byWidgetPredicate((widget) => widget is ShaderMask),
+            )
+            .toList();
+        int activeMasks() => masks.where((mask) => mask.layer != null).length;
+        expect(masks, hasLength(5));
+        expect(activeMasks(), 1);
+        expect(masks.first.layer, isNotNull);
+
+        update(() => selected = 4);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 110));
+        expect(activeMasks(), inInclusiveRange(1, 2));
+        await tester.pumpAndSettle();
+        expect(activeMasks(), 1);
+        expect(masks.first.layer, isNull);
+        expect(masks.last.layer, isNotNull);
+
+        update(() => color = Colors.transparent);
+        await tester.pumpAndSettle();
+        expect(activeMasks(), 0);
+        update(() => color = Colors.red);
+        await tester.pumpAndSettle();
+        expect(activeMasks(), 1);
+        expect(masks.last.layer, isNotNull);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('selection culling includes overflowing child paint bounds', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Center(
+          child: SizedBox(
+            width: 300,
+            height: 64,
+            child: MornyeSelectionPill(
+              labels: const ['A', 'B', 'C', 'D', 'E'],
+              selectedIndex: 0,
+              selectionColor: Colors.red,
+              maskItemForeground: false,
+              padding: EdgeInsets.zero,
+              onChanged: (_) {},
+              itemBuilder: (_, index, _) => Center(
+                child: MornyeSelectionForeground(
+                  child: index == 4
+                      ? const _OverflowForeground()
+                      : const SizedBox(
+                          width: 16,
+                          height: 40,
+                          child: ColoredBox(color: Colors.white),
+                        ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => ui.FragmentProgram.fromAsset(
+        'assets/shaders/mornye_selection_mask.frag',
+      ),
+    );
+    await tester.pumpAndSettle();
+    final masks = tester
+        .renderObjectList<RenderShaderMask>(
+          find.byWidgetPredicate((widget) => widget is ShaderMask),
+        )
+        .toList();
+    expect(masks.last.child!.paintBounds.left, lessThan(0));
+    expect(masks.last.layer, isNotNull);
+    expect(masks.where((mask) => mask.layer != null), hasLength(2));
+    expect(tester.takeException(), isNull);
+  });
+}
+
 void main() {
   testWidgets('selection color follows rounded pill corners', (tester) async {
     final capture = GlobalKey();
@@ -86,6 +216,8 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  _maskCullingTests();
 
   for (final direction in TextDirection.values) {
     testWidgets('tab dragging previews, commits and cancels ($direction)', (
@@ -309,6 +441,28 @@ void main() {
     expect(tester.getSize(find.byType(MornyeTabBar)).height, greaterThan(80));
     expect(tester.takeException(), isNull);
   });
+}
+
+class _OverflowForeground extends LeafRenderObjectWidget {
+  const _OverflowForeground();
+
+  @override
+  RenderBox createRenderObject(BuildContext context) =>
+      _RenderOverflowForeground();
+}
+
+class _RenderOverflowForeground extends RenderBox {
+  @override
+  void performLayout() => size = constraints.constrain(const Size(16, 40));
+
+  @override
+  Rect get paintBounds => Rect.fromLTRB(-280, 0, size.width, size.height);
+
+  @override
+  void paint(PaintingContext context, Offset offset) => context.canvas.drawRect(
+    paintBounds.shift(offset),
+    Paint()..color = Colors.white,
+  );
 }
 
 Future<List<int>> _foregroundPixels(

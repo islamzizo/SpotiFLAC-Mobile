@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:spotiflac_android/widgets/mornye_liquid_backdrop.dart';
 
@@ -469,26 +470,42 @@ class _MornyeSelectionForegroundState extends State<MornyeSelectionForeground> {
       _program = scope.program;
       _shader = _program?.fragmentShader();
     }
-    return ShaderMask(
-      blendMode: BlendMode.srcATop,
-      shaderCallback: (bounds) {
+    late Rect local;
+    late double width;
+    late double rowHeight;
+    return _SelectionShaderMask(
+      maskIntersects: (bounds) {
+        // A transparent srcATop source leaves the foreground unchanged.
+        if (scope.color.a == 0) return false;
         final row =
             scope.rowKey.currentContext!.findRenderObject()! as RenderBox;
         final box = context.findRenderObject()! as RenderBox;
-        final width = row.size.width / scope.count;
+        width = row.size.width / scope.count;
+        rowHeight = row.size.height;
         final left = (scope.alignment + 1) * (row.size.width - width) / 2;
         final lens = Rect.fromCenter(
-          center: Offset(left + width / 2, row.size.height / 2),
+          center: Offset(left + width / 2, rowHeight / 2),
           width: width * scope.scaleX,
-          height: row.size.height * scope.scaleY,
+          height: rowHeight * scope.scaleY,
         );
-        // Use the same rounded, expanding bounds as the glass, including the
-        // inverse scale of each icon. A one-tab rectangular mask cuts through
-        // the foreground before it reaches the held lens's curved edge.
-        final local = Rect.fromPoints(
+        local = Rect.fromPoints(
           box.globalToLocal(row.localToGlobal(lens.topLeft)),
           box.globalToLocal(row.localToGlobal(lens.bottomRight)),
         );
+        // Keep generous AA room, including inverse foreground scaling.
+        final padX = 2 * math.max(1.0, local.width / width);
+        final padY = 2 * math.max(1.0, local.height / rowHeight);
+        return bounds.right >= local.left - padX &&
+            bounds.left <= local.right + padX &&
+            // The gradient fallback is vertically unbounded.
+            (_shader == null ||
+                (bounds.bottom >= local.top - padY &&
+                    bounds.top <= local.bottom + padY));
+      },
+      shaderCallback: (bounds) {
+        // Use the same rounded, expanding bounds as the glass, including the
+        // inverse scale of each icon. A one-tab rectangular mask cuts through
+        // the foreground before it reaches the held lens's curved edge.
         final shader = _shader;
         if (shader != null) {
           shader
@@ -497,11 +514,8 @@ class _MornyeSelectionForegroundState extends State<MornyeSelectionForeground> {
             ..setFloat(2, local.width)
             ..setFloat(3, local.height)
             ..setFloat(4, local.width / width)
-            ..setFloat(5, local.height / row.size.height)
-            ..setFloat(
-              6,
-              math.min(_pillRadius, math.min(width, row.size.height) / 2),
-            )
+            ..setFloat(5, local.height / rowHeight)
+            ..setFloat(6, math.min(_pillRadius, math.min(width, rowHeight) / 2))
             ..setFloat(7, scope.color.r)
             ..setFloat(8, scope.color.g)
             ..setFloat(9, scope.color.b)
@@ -518,6 +532,52 @@ class _MornyeSelectionForegroundState extends State<MornyeSelectionForeground> {
       },
       child: widget.child,
     );
+  }
+}
+
+class _SelectionShaderMask extends ShaderMask {
+  const _SelectionShaderMask({
+    required this.maskIntersects,
+    required super.shaderCallback,
+    required super.child,
+  }) : super(blendMode: BlendMode.srcATop);
+
+  final bool Function(Rect) maskIntersects;
+
+  @override
+  RenderShaderMask createRenderObject(BuildContext context) =>
+      _SelectionRenderShaderMask(
+        maskIntersects: maskIntersects,
+        shaderCallback: shaderCallback,
+      );
+
+  @override
+  void updateRenderObject(BuildContext context, RenderShaderMask renderObject) {
+    super.updateRenderObject(context, renderObject);
+    (renderObject as _SelectionRenderShaderMask).maskIntersects =
+        maskIntersects;
+  }
+}
+
+class _SelectionRenderShaderMask extends RenderShaderMask {
+  _SelectionRenderShaderMask({
+    required this.maskIntersects,
+    required super.shaderCallback,
+  }) : super(blendMode: BlendMode.srcATop);
+
+  bool Function(Rect) maskIntersects;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final foreground = child;
+    if (foreground != null && !maskIntersects(foreground.paintBounds)) {
+      // Drop any layer retained from a previous intersecting frame.
+      layer = null;
+      context.paintChild(foreground, offset);
+    } else {
+      // The predicate prepared this paint's geometry for shaderCallback.
+      super.paint(context, offset);
+    }
   }
 }
 
