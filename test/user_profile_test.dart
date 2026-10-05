@@ -16,7 +16,6 @@ import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/services/user_profile_store.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/profile_avatar.dart';
-import 'package:spotiflac_android/widgets/settings_group.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
