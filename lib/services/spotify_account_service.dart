@@ -179,6 +179,18 @@ class SpotifyAccountService {
     }
   }
 
+  /// Refreshes the persisted Spotify library without requiring the Spotify screen
+  /// to be opened. Errors are intentionally ignored so app startup remains
+  /// independent from Spotify availability.
+  Future<void> syncSavedLibraryInBackground() async {
+    try {
+      if (!await isSignedIn()) return;
+      await syncPlaylists();
+    } catch (_) {
+      // Keep the last successful cached library available offline.
+    }
+  }
+
   Future<List<SpotifyPlaylist>> getPlaylists() async {
     final raw = await _storage.read(key: _playlistsKey);
     if (raw == null || raw.isEmpty) return const [];
