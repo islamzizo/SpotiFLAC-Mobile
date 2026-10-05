@@ -108,22 +108,20 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       return;
     }
 
-    // Show the cached Spotify identity immediately, then refresh it in the
-    // background so Settings never waits on the Spotify web session.
+    // Settings should render from the persisted Spotify identity immediately.
+    // The home avatar owns the background refresh, so reopening Settings does
+    // not start a network request that can disturb navigation/focus state.
     final cachedProfile = await service.getProfile();
-    if (mounted) {
-      setState(() {
-        _spotifySignedIn = true;
-        _spotifyProfile = cachedProfile;
-      });
-    }
-
-    final refreshedProfile = await service.syncProfile();
     if (!mounted) return;
     setState(() {
       _spotifySignedIn = true;
-      _spotifyProfile = refreshedProfile ?? cachedProfile;
+      _spotifyProfile = cachedProfile;
     });
+    if (cachedProfile == null) {
+      final profile = await service.syncProfile();
+      if (!mounted) return;
+      setState(() => _spotifyProfile = profile);
+    }
   }
 
   @override
