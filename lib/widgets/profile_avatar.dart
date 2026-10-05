@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/user_profile_provider.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 
 class ProfileAvatar extends StatelessWidget {
   const ProfileAvatar({
@@ -18,6 +19,7 @@ class ProfileAvatar extends StatelessWidget {
 
   final String name;
   final String? photoPath;
+  final String? photoUrl;
   final Uint8List? photo;
   final double size;
 
@@ -68,6 +70,12 @@ class ProfileAvatar extends StatelessWidget {
                   fit: BoxFit.cover,
                   errorBuilder: (_, _, _) => fallback,
                 )
+              : photoUrl != null && photoUrl!.isNotEmpty
+              ? Image.network(
+                  photoUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => fallback,
+                )
               : photoPath != null
               ? Image.file(
                   File(photoPath!),
@@ -84,24 +92,40 @@ class ProfileAvatar extends StatelessWidget {
   }
 }
 
-class HomeProfileButton extends ConsumerWidget {
+class HomeProfileButton extends StatefulWidget {
   const HomeProfileButton({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final profile = ref.watch(userProfileProvider).value;
-    return IconButton(
-      tooltip: context.l10n.settingsTitle,
-      iconSize: 44,
-      padding: const EdgeInsets.all(6),
-      constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
-      visualDensity: VisualDensity.standard,
-      onPressed: () => ShellNavigationService.requestTab(ShellTab.settings),
-      icon: ProfileAvatar(
-        name: profile?.name ?? '',
-        photoPath: profile?.photoPath,
-        size: 44,
-      ),
+  State<HomeProfileButton> createState() => _HomeProfileButtonState();
+}
+
+class _HomeProfileButtonState extends State<HomeProfileButton> {
+  @override
+  void initState() {
+    super.initState();
+    SpotifyAccountService.instance.getProfile();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<SpotifyAccountProfile?>(
+      valueListenable: SpotifyAccountService.instance.profileNotifier,
+      builder: (context, spotifyProfile, _) {
+        return IconButton(
+          tooltip: context.l10n.settingsTitle,
+          iconSize: 44,
+          padding: const EdgeInsets.all(6),
+          constraints: const BoxConstraints(minWidth: 56, minHeight: 56),
+          visualDensity: VisualDensity.standard,
+          onPressed: () =>
+              ShellNavigationService.requestTab(ShellTab.settings),
+          icon: ProfileAvatar(
+            name: spotifyProfile?.displayName ?? '',
+            photoUrl: spotifyProfile?.imageUrl,
+            size: 44,
+          ),
+        );
+      },
     );
   }
 }
