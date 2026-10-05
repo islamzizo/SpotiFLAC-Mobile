@@ -72,10 +72,12 @@ class FFmpegService {
     required String inputPath,
     required DownloadDecryptionDescriptor descriptor,
     bool deleteOriginal = true,
+    Future<void> Function(String)? prepareOutput,
   }) => FFmpegDecryption.decrypt(
     inputPath: inputPath,
     descriptor: descriptor,
     deleteOriginal: deleteOriginal,
+    prepareOutput: prepareOutput,
   );
 
   /// Measures EBU R128 loudness and true peak using a -18 LUFS reference.

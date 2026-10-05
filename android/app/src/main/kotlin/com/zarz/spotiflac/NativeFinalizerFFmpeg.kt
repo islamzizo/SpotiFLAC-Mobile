@@ -171,19 +171,27 @@ internal fun NativeDownloadFinalizer.stagedConversionPath(finalPath: String): St
 
 internal fun NativeDownloadFinalizer.promoteStagedConversion(stagedPath: String, finalPath: String): Boolean {
     val staged = File(stagedPath)
+    if (!staged.isFile || staged.length() == 0L) return false
     fsyncQuietly(staged)
     val final = File(finalPath)
-    if (staged.renameTo(final)) return true
-    return final.delete() && staged.renameTo(final)
+    val backup = File("$finalPath.spotiflac-backup-${System.nanoTime()}")
+    val backedUp = final.exists()
+    if (backedUp && (!final.isFile || !final.renameTo(backup))) return false
+    if (staged.renameTo(final)) {
+        if (backedUp) backup.delete()
+        return true
+    }
+    if (backedUp) check(backup.renameTo(final)) { "failed to restore conversion source" }
+    return false
 }
 
 internal fun NativeDownloadFinalizer.buildOutputPath(inputPath: String, extension: String): String {
     val ext = normalizeExt(extension).ifBlank { ".tmp" }
     val file = File(inputPath)
     val base = file.nameWithoutExtension.ifBlank { "track" }
-    val candidate = File(file.parentFile, "$base$ext").absolutePath
-    if (candidate != inputPath) return candidate
-    return File(file.parentFile, "${base}_converted$ext").absolutePath
+    // This is the final name. FFmpeg writes via stagedConversionPath even
+    // when the source and final extensions match.
+    return File(file.parentFile, "$base$ext").absolutePath
 }
 
 internal fun NativeDownloadFinalizer.desiredFileName(input: NativeDownloadFinalizer.FinalizeInput, state: NativeDownloadFinalizer.FinalizeState, extension: String): String {

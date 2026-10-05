@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:spotiflac_android/services/ffmpeg_models.dart';
-import 'package:spotiflac_android/services/ffmpeg_probe.dart';
 import 'package:spotiflac_android/services/ffmpeg_support.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -14,6 +13,8 @@ abstract final class FFmpegDecryption {
     required String inputPath,
     required DownloadDecryptionDescriptor descriptor,
     bool deleteOriginal = true,
+    Future<FFmpegResult> Function(String)? execute,
+    Future<void> Function(String)? prepareOutput,
   }) async {
     if (descriptor.normalizedStrategy != 'ffmpeg.mov_key') {
       _log.e(
@@ -29,6 +30,8 @@ abstract final class FFmpegDecryption {
       inputFormat: descriptor.inputFormat,
       outputExtension: descriptor.outputExtension,
       deleteOriginal: deleteOriginal,
+      execute: execute ?? FFmpegExecution.command,
+      prepareOutput: prepareOutput,
     );
   }
 
@@ -70,26 +73,16 @@ abstract final class FFmpegDecryption {
     return '.flac';
   }
 
-  static String _outputPath(String inputPath, String extension) {
-    final file = File(inputPath);
-    final name = file.uri.pathSegments.last;
-    final dot = name.lastIndexOf('.');
-    final base = dot > 0 ? name.substring(0, dot) : name;
-    final path = '${file.parent.path}${Platform.pathSeparator}$base$extension';
-    return path == inputPath
-        ? '${file.parent.path}${Platform.pathSeparator}${base}_converted$extension'
-        : path;
-  }
-
   static Future<String?> _decryptMovKeyFile({
     required String inputPath,
     required String decryptionKey,
     String? inputFormat,
     String? outputExtension,
     required bool deleteOriginal,
+    required Future<FFmpegResult> Function(String) execute,
+    Future<void> Function(String)? prepareOutput,
   }) async {
     final preferredExt = _preferredExtension(inputPath, outputExtension);
-    var tempOutput = _outputPath(inputPath, preferredExt);
     final demuxer = (inputFormat ?? '').trim().isNotEmpty
         ? inputFormat!.trim()
         : 'mov';
@@ -117,67 +110,60 @@ abstract final class FFmpegDecryption {
       return null;
     }
     FFmpegResult? lastResult;
-    var succeeded = false;
-    for (final key in candidates) {
-      _log.d('Executing FFmpeg decrypt command (key length: ${key.length})');
-      var result = await FFmpegExecution.command(
-        command(tempOutput, mapAudioOnly: preferredExt == '.flac', key: key),
+    FFmpegOutputPlan? plan;
+    var published = false;
+    Future<bool> attempt(
+      String extension,
+      String key, {
+      bool forceMov = false,
+    }) async {
+      if (plan != null) await FFmpegOutput.cleanup(plan!.workingPath);
+      final output = await FFmpegOutput.plan(
+        inputPath,
+        extension,
+        deleteOriginal: deleteOriginal,
       );
-      if (!result.success && preferredExt == '.flac') {
-        final fallback = _outputPath(inputPath, '.m4a');
-        final attempt = await FFmpegExecution.command(
-          command(fallback, mapAudioOnly: false, key: key),
-        );
-        if (attempt.success) {
-          tempOutput = fallback;
-          result = attempt;
-        }
-      }
-      if (!result.success &&
-          (preferredExt == '.flac' || preferredExt == '.m4a')) {
-        final fallback = _outputPath(inputPath, '.mp4');
-        final attempt = await FFmpegExecution.command(
-          command(fallback, mapAudioOnly: false, key: key),
-        );
-        if (attempt.success) {
-          tempOutput = fallback;
-          result = attempt;
-        }
-      }
-      if (!result.success) {
-        final fallback = _outputPath(inputPath, '.mp4');
-        final attempt = await FFmpegExecution.command(
-          command(fallback, mapAudioOnly: false, key: key, forceMov: true),
-        );
-        if (attempt.success) {
-          tempOutput = fallback;
-          result = attempt;
-        }
-      }
+      plan = output;
+      final result = await execute(
+        command(
+          output.workingPath,
+          mapAudioOnly: extension == '.flac',
+          key: key,
+          forceMov: forceMov,
+        ),
+      );
       lastResult = result;
-      if (result.success) {
-        succeeded = true;
-        break;
-      }
-      await FFmpegOutput.cleanup(tempOutput);
+      final file = File(output.workingPath);
+      return result.success && await file.exists() && await file.length() > 0;
     }
-    if (!succeeded) {
+
+    try {
+      for (final key in candidates) {
+        _log.d('Executing FFmpeg decrypt command (key length: ${key.length})');
+        if (await attempt(preferredExt, key) ||
+            (preferredExt == '.flac' && await attempt('.m4a', key)) ||
+            ((preferredExt == '.flac' || preferredExt == '.m4a') &&
+                await attempt('.mp4', key)) ||
+            await attempt('.mp4', key, forceMov: true)) {
+          await prepareOutput?.call(plan!.workingPath);
+          final path = await FFmpegOutput.finalize(
+            plan: plan!,
+            inputPath: inputPath,
+            deleteOriginal: deleteOriginal,
+          );
+          published = path != null;
+          return path;
+        }
+      }
       _log.e('FFmpeg decrypt failed: ${lastResult?.output ?? 'unknown error'}');
       return null;
-    }
-    try {
-      if (!await File(tempOutput).exists()) {
-        _log.e('Decrypted output file not found: $tempOutput');
-        return null;
-      }
-      final source = File(inputPath);
-      if (deleteOriginal && await source.exists()) await source.delete();
-      FFmpegProbe.invalidate(inputPath);
-      FFmpegProbe.invalidate(tempOutput);
-      return tempOutput;
     } catch (e) {
       _log.e('Failed to finalize decrypted file: $e');
       return null;
+    } finally {
+      if (!published && plan != null) {
+        await FFmpegOutput.cleanup(plan!.workingPath);
+      }
     }
   }
 }

@@ -1025,42 +1025,22 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
       return _DecryptOutcome(newUri, newFileName: producedFileName);
     }
 
-    if (repairAc4) {
-      final rawDecryptedPath = await FFmpegService.decryptWithDescriptor(
-        inputPath: filePath,
-        descriptor: descriptor,
-        deleteOriginal: false,
-      );
-      if (rawDecryptedPath == null) {
-        try {
-          await deleteFile(filePath);
-        } catch (_) {}
-        return const _DecryptOutcome(
-          null,
-          failStage: DownloadQueueNotifier._decryptStageDecrypt,
-        );
-      }
-      final decryptedPath = await _normalizeDecryptedIsoBmffAudioPath(
-        rawDecryptedPath,
-        result,
-      );
-      if (_isMp4Container(decryptedPath)) {
-        try {
-          await PlatformBridge.ensureAC4Config(decryptedPath, filePath);
-        } catch (e) {
-          _log.w('AC-4 container repair skipped: $e');
-        }
-      }
-      try {
-        await deleteFile(filePath);
-      } catch (_) {}
-      return _DecryptOutcome(decryptedPath);
-    }
-
     final rawDecryptedPath = await FFmpegService.decryptWithDescriptor(
       inputPath: filePath,
       descriptor: descriptor,
       deleteOriginal: true,
+      // Repair while the encrypted source still exists, then publish under
+      // its original name instead of keeping a conversion suffix.
+      prepareOutput: repairAc4
+          ? (path) async {
+              if (!_isMp4Container(path)) return;
+              try {
+                await PlatformBridge.ensureAC4Config(path, filePath);
+              } catch (e) {
+                _log.w('AC-4 container repair skipped: $e');
+              }
+            }
+          : null,
     );
     final decryptedPath = rawDecryptedPath == null
         ? null

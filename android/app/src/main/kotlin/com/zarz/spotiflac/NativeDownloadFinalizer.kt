@@ -613,7 +613,7 @@ object NativeDownloadFinalizer {
             )
             replaceStatePath(context, input, state, decryptedPath, deleteOld = true)
         } finally {
-            if (successPath == null) {
+            if (successPath == null && outputPath != localInput) {
                 File(outputPath).delete()
             }
             if (originalPath != successPath && originalPath.startsWith(context.cacheDir.absolutePath)) {
@@ -694,15 +694,13 @@ object NativeDownloadFinalizer {
             if (!conversion.first || !File(stagedOutput).exists()) {
                 throw IllegalStateException("automatic conversion failed: ${conversion.second}")
             }
+            val metadataFormat = if (target.codec == "aac") "m4a" else target.codec
+            embedBasicMetadata(context, stagedOutput, input, metadataFormat)
             if (!promoteStagedConversion(stagedOutput, output)) {
                 throw IllegalStateException("failed to promote automatic conversion output")
             }
 
-            val metadataFormat = if (target.codec == "aac") "m4a" else target.codec
-            embedBasicMetadata(context, output, input, metadataFormat)
-
             if (sameLocalExtension) {
-                replaceSameFormatLocalOutput(localInput, output)
                 state.filePath = localInput
                 state.fileName = File(localInput).name
             } else {
@@ -712,7 +710,7 @@ object NativeDownloadFinalizer {
         } finally {
             if (!adoptedOutput) {
                 File(stagedOutput).delete()
-                File(output).delete()
+                if (output != localInput) File(output).delete()
             }
             if (sourceWasSaf) File(localInput).delete()
         }
@@ -722,24 +720,6 @@ object NativeDownloadFinalizer {
         state.sampleRate = null
         state.bitrateKbps = target.bitrateKbps
         state.audioCodec = target.codec
-    }
-
-    private fun replaceSameFormatLocalOutput(inputPath: String, convertedPath: String) {
-        val source = File(inputPath)
-        val converted = File(convertedPath)
-        val backup = File("$inputPath.spotiflac-backup-${System.nanoTime()}")
-        if (!source.renameTo(backup)) {
-            throw IllegalStateException("failed to stage original for same-format conversion")
-        }
-        try {
-            if (!converted.renameTo(source)) {
-                throw IllegalStateException("failed to publish same-format conversion")
-            }
-            backup.delete()
-        } catch (e: Exception) {
-            if (!source.exists()) backup.renameTo(source)
-            throw e
-        }
     }
 
     private fun uniqueAutoConversionOutputPath(inputPath: String, extension: String): String {
@@ -819,13 +799,12 @@ object NativeDownloadFinalizer {
                 execute = { arguments -> runFFmpegArguments(arguments, shouldCancel) },
                 checkCancelled = { checkCancelled(shouldCancel) },
             )
+            // Tag the staged file before replacing a same-suffix source.
+            embedBasicMetadata(context, stagedOutput, input, "flac")
             if (!promoteStagedConversion(stagedOutput, output)) {
                 throw IllegalStateException("failed to publish container conversion output")
             }
             createdOutput = true
-            // Keep metadata failures before adoption so the source survives
-            // and the unsuccessful output is removed by the local cleanup.
-            embedBasicMetadata(context, output, input, "flac")
             replaceStatePath(context, input, state, output, deleteOld = true)
             adoptedOutput = true
         } finally {
