@@ -6,6 +6,7 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/library_browse_provider.dart';
 import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
+import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/services/library_database.dart';
@@ -255,6 +256,15 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                         Icons.queue_music,
                         context.l10n.searchPlaylists,
                         () => widget.onOpenSection('playlists'),
+                      ),
+                      (
+                        Icons.music_note,
+                        'Spotify Playlists',
+                        () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SpotifyAccountScreen(),
+                          ),
+                        ),
                       ),
                       (
                         Icons.mic_none,
