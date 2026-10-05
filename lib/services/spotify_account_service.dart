@@ -338,11 +338,35 @@ class SpotifyAccountService {
     return first == null ? null : first['message']?.toString();
   }
   static String? _image(dynamic value) {
+    if (value is List) {
+      for (final item in value) {
+        final url = _image(item);
+        if (url != null && url.isNotEmpty) return url;
+      }
+      return null;
+    }
     final m = _map(value);
-    final sources = m?['sources'];
-    if (sources is List && sources.isNotEmpty) return _map(sources.first)?['url']?.toString();
-    final items = m?['items'];
-    if (items is List) { for (final item in items) { final url = _image(item); if (url != null) return url; } }
+    if (m == null) return null;
+    final directUrl = m['url']?.toString().trim();
+    if (directUrl != null && directUrl.isNotEmpty) return directUrl;
+    final sources = m['sources'];
+    if (sources is List) {
+      for (final source in sources) {
+        final url = _image(source);
+        if (url != null && url.isNotEmpty) return url;
+      }
+    }
+    final items = m['items'];
+    if (items is List) {
+      for (final item in items) {
+        final url = _image(item);
+        if (url != null && url.isNotEmpty) return url;
+      }
+    }
+    for (final key in ['images', 'image']) {
+      final url = _image(m[key]);
+      if (url != null && url.isNotEmpty) return url;
+    }
     return null;
   }
   static const _userAgent = 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
