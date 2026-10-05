@@ -310,6 +310,42 @@ Future<void> createPathKeyTable(DatabaseExecutor db, String table) async {
   );
 }
 
+/// Finds every index entry for these physical files, including SAF aliases.
+/// Keep extensions: deleting a FLAC must not remove a surviving Opus variant.
+Future<List<String>> findPhysicalFileRowIds(
+  DatabaseExecutor db,
+  String table,
+  Iterable<String> filePaths,
+) async {
+  final keys = {
+    for (final path in filePaths) ...buildPhysicalPathMatchKeys(path),
+  };
+  final values = keys.toList();
+  final ids = <String>{};
+  const chunkSize = 450;
+  for (var start = 0; start < values.length; start += chunkSize) {
+    final chunk = values.sublist(
+      start,
+      (start + chunkSize).clamp(0, values.length),
+    );
+    final placeholders = List.filled(chunk.length, '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT DISTINCT item.id, item.file_path
+      FROM $table item
+      JOIN ${table}_path_keys keys ON keys.item_id = item.id
+      WHERE keys.path_key IN ($placeholders)
+    ''', chunk);
+    for (final row in rows) {
+      if (buildPhysicalPathMatchKeys(
+        row['file_path'] as String?,
+      ).any(keys.contains)) {
+        ids.add(row['id'] as String);
+      }
+    }
+  }
+  return ids.toList();
+}
+
 Future<void> backfillPathKeys(
   Database db,
   String sourceTable,

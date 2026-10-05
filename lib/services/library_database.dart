@@ -989,6 +989,9 @@ class LibraryDatabase {
     ];
   }
 
+  Future<List<String>> getPhysicalFileIds(Iterable<String> filePaths) async =>
+      sqlite.findPhysicalFileRowIds(await database, 'library', filePaths);
+
   Future<void> deleteByPath(String filePath) async {
     final db = await database;
     final rows = await db.query(

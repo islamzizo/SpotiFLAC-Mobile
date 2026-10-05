@@ -12,6 +12,7 @@ import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/batch_metadata_re_enrich.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
+import 'package:spotiflac_android/services/deleted_library_files.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
@@ -580,25 +581,19 @@ Future<void> deleteLibraryTracks(
   );
   if (confirmed != true || !isActive() || !context.mounted) return;
 
-  final historyNotifier = ref.read(downloadHistoryProvider.notifier);
   final messenger = ScaffoldMessenger.of(context);
   final l10n = context.l10n;
+  final deletedPaths = <String>{};
   var deletedCount = 0;
   for (final item in selected) {
     final cleanPath = DownloadedEmbeddedCoverResolver.cleanFilePath(
       item.filePath,
     );
     if (!await deleteFile(cleanPath)) continue;
-    if (item.source == LibraryItemSource.downloaded) {
-      historyNotifier.removeFromHistory(item.historyItem!.id);
-    } else {
-      await LibraryDatabase.instance.deleteByPath(item.filePath);
-    }
+    deletedPaths.add(cleanPath);
     deletedCount++;
   }
-  if (selected.any((item) => item.source == LibraryItemSource.local)) {
-    ref.read(localLibraryProvider.notifier).reloadFromStorage();
-  }
+  await removeDeletedLibraryFileEntries(ref, deletedPaths);
   onComplete();
   messenger.showSnackBar(
     SnackBar(content: Text(l10n.snackbarDeletedTracks(deletedCount))),

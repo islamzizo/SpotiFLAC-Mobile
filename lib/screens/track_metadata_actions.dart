@@ -137,25 +137,14 @@ extension _TrackMetadataFileActions on _TrackMetadataScreenState {
             isDestructive: true,
             onPressed: () async {
               var fileDeleted = true;
-              if (_isLocalItem) {
-                if (_isCueVirtualTrack && _localLibraryItem != null) {
-                  await ref
-                      .read(localLibraryProvider.notifier)
-                      .removeItem(_localLibraryItem!.id);
-                } else {
-                  fileDeleted = await deleteFile(cleanFilePath);
-                  if (fileDeleted && _localLibraryItem != null) {
-                    await ref
-                        .read(localLibraryProvider.notifier)
-                        .removeItem(_localLibraryItem!.id);
-                  }
-                }
+              if (_isCueVirtualTrack && _localLibraryItem != null) {
+                await ref
+                    .read(localLibraryProvider.notifier)
+                    .removeItem(_localLibraryItem!.id);
               } else {
                 fileDeleted = await deleteFile(cleanFilePath);
                 if (fileDeleted) {
-                  ref
-                      .read(downloadHistoryProvider.notifier)
-                      .removeFromHistory(_downloadItem!.id);
+                  await removeDeletedLibraryFileEntries(ref, [cleanFilePath]);
                 }
               }
 

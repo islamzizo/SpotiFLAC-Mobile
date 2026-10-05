@@ -7,6 +7,7 @@ import 'package:spotiflac_android/theme/cover_palette.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:spotiflac_android/services/cover_cache_manager.dart';
+import 'package:spotiflac_android/services/deleted_library_files.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
 import 'package:spotiflac_android/services/local_track_batch_actions.dart';
 import 'package:spotiflac_android/models/unified_library_item.dart';
@@ -159,7 +160,6 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
   }
 
   Future<void> _deleteSelected(List<DownloadHistoryItem> currentTracks) async {
-    final historyNotifier = ref.read(downloadHistoryProvider.notifier);
     final tracksById = {for (final track in currentTracks) track.id: track};
 
     await confirmAndDeleteTracks(
@@ -168,11 +168,12 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
       deleteItem: (id) async {
         final item = tracksById[id];
         if (item == null) return false;
-        final deleted = await deleteFile(item.filePath);
-        if (!deleted) return false;
-        historyNotifier.removeFromHistory(id);
-        return true;
+        return deleteFile(item.filePath);
       },
+      persistDeletedItems: (ids) => removeDeletedLibraryFileEntries(
+        ref,
+        ids.map((id) => tracksById[id]!.filePath),
+      ),
       onExitSelectionMode: exitSelectionMode,
     );
   }

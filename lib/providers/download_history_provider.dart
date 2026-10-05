@@ -421,6 +421,15 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
         });
   }
 
+  Future<void> removePhysicalFiles(Iterable<String> filePaths) {
+    final paths = filePaths.toList();
+    // Serialize with reloads so a snapshot read before deletion cannot restore
+    // the removed entries after both indexes have been cleaned.
+    return _enqueueHistoryWrite(() async {
+      await removeManyFromHistory(await _db.getPhysicalFileIds(paths));
+    });
+  }
+
   Future<void> removeManyFromHistory(Iterable<String> ids) async {
     final removedIds = ids.toSet();
     if (removedIds.isEmpty) return;
@@ -444,6 +453,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       );
     } catch (error) {
       _historyLog.e('Failed to delete from database: $error');
+      rethrow;
     }
   }
 

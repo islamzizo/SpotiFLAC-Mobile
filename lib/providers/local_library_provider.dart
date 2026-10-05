@@ -1662,6 +1662,10 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     }
   }
 
+  Future<void> removePhysicalFiles(Iterable<String> filePaths) async {
+    await removeItems(await _db.getPhysicalFileIds(filePaths));
+  }
+
   Future<void> removeItem(String id) async {
     await removeItems([id]);
   }

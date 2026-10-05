@@ -1,10 +1,67 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/providers/download_history_provider.dart';
+import 'package:spotiflac_android/services/history_database.dart';
 import 'package:spotiflac_android/services/history_maintenance.dart';
+
+class _ReloadDatabase implements HistoryDatabase {
+  _ReloadDatabase(this.rows);
+
+  final Map<String, DownloadHistoryItem> rows;
+  final snapshotRead = Completer<void>();
+  final count = Completer<int>();
+  bool failDeletion = false;
+
+  @override
+  Future<bool> migrateFromSharedPreferences() async => false;
+
+  @override
+  Future<int> getCount() => count.future;
+
+  @override
+  Future<List<Map<String, dynamic>>> getAll({int? limit, int? offset}) async {
+    final snapshot = rows.values.map((item) => item.toJson()).toList();
+    snapshotRead.complete();
+    return snapshot;
+  }
+
+  @override
+  Future<List<String>> getPhysicalFileIds(Iterable<String> paths) async => [
+    for (final item in rows.values)
+      if (paths.contains(item.filePath)) item.id,
+  ];
+
+  @override
+  Future<int> deleteByIds(List<String> ids) async {
+    if (failDeletion) throw StateError('database write failed');
+    final previousCount = rows.length;
+    rows.removeWhere((id, _) => ids.contains(id));
+    return previousCount - rows.length;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _HistoryNotifier extends DownloadHistoryNotifier {
+  _HistoryNotifier(_ReloadDatabase database)
+    : _initialItems = database.rows.values.toList(),
+      super(database: database);
+
+  final List<DownloadHistoryItem> _initialItems;
+
+  @override
+  DownloadHistoryState build() => DownloadHistoryState(
+    items: _initialItems,
+    totalCount: _initialItems.length,
+  );
+}
 
 class _HistoryRows implements DatabaseExecutor {
   final statements = <Map<String, Object?>>[];
@@ -81,6 +138,58 @@ DownloadHistoryItem _track(String id) => DownloadHistoryItem(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  SharedPreferences.setMockInitialValues({});
+
+  test('an older reload cannot restore a deleted physical file', () async {
+    final item = _track('removed');
+    final db = _ReloadDatabase({item.id: item});
+    final container = ProviderContainer(
+      overrides: [
+        downloadHistoryProvider.overrideWith(() => _HistoryNotifier(db)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(downloadHistoryProvider.notifier);
+    final reload = notifier.reloadFromStorage();
+    await db.snapshotRead.future;
+    final removal = notifier.removePhysicalFiles([item.filePath]);
+    await Future<void>.delayed(Duration.zero);
+    expect(db.rows.keys, [
+      item.id,
+    ], reason: 'deletion waits for the older reload');
+    db.count.complete(1);
+    await Future.wait([reload, removal]);
+    final state = container.read(downloadHistoryProvider);
+    expect(db.rows, isEmpty);
+    expect(state.items, isEmpty);
+    expect(state.lookupItems, isEmpty);
+    expect(state.totalCount, 0);
+  });
+
+  test(
+    'failed index deletion is reported and keeps the current state',
+    () async {
+      final item = _track('retained');
+      final db = _ReloadDatabase({item.id: item})..failDeletion = true;
+      final container = ProviderContainer(
+        overrides: [
+          downloadHistoryProvider.overrideWith(() => _HistoryNotifier(db)),
+        ],
+      );
+      addTearDown(container.dispose);
+      await expectLater(
+        container.read(downloadHistoryProvider.notifier).removePhysicalFiles([
+          item.filePath,
+        ]),
+        throwsStateError,
+      );
+      expect(db.rows.keys, [item.id]);
+      expect(container.read(downloadHistoryProvider).items, [item]);
+      expect(container.read(downloadHistoryProvider).totalCount, 1);
+    },
+  );
+
   test(
     'late maintenance cannot recreate deleted rows or their path keys',
     () async {

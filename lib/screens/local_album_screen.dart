@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math';
+import 'package:spotiflac_android/services/deleted_library_files.dart';
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
@@ -169,7 +170,20 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
         }
         return true;
       },
-      persistDeletedItems: libraryNotifier.removeItems,
+      persistDeletedItems: (ids) async {
+        final items = ids.map((id) => tracksById[id]!);
+        await removeDeletedLibraryFileEntries(
+          ref,
+          items
+              .where((item) => !isCueVirtualPath(item.filePath))
+              .map((item) => item.filePath),
+        );
+        await libraryNotifier.removeItems(
+          items
+              .where((item) => isCueVirtualPath(item.filePath))
+              .map((item) => item.id),
+        );
+      },
       onExitSelectionMode: exitSelectionMode,
     );
 

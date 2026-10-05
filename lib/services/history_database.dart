@@ -896,6 +896,9 @@ class HistoryDatabase {
     return _dbRowToJson(rows.first);
   }
 
+  Future<List<String>> getPhysicalFileIds(Iterable<String> filePaths) async =>
+      sqlite.findPhysicalFileRowIds(await database, 'history', filePaths);
+
   Future<Map<String, dynamic>?> getBySpotifyId(String spotifyId) async {
     final db = await database;
     final rows = await db.query(
