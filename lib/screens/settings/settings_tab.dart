@@ -26,6 +26,7 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/utils/nav_bar_inset.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
+import 'package:spotiflac_android/widgets/profile_avatar.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
@@ -458,54 +459,43 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             ),
           ),
           SliverToBoxAdapter(
-            child: ValueListenableBuilder<int>(
-              valueListenable: SpotifyAccountService.libraryVersion,
-              builder: (context, _, _) => FutureBuilder<SpotifyAccountProfile?>(
-                future: SpotifyAccountService.instance.getProfile(),
-                builder: (context, snapshot) {
-                  final spotifyProfile = snapshot.data;
-                  final signedIn = spotifyProfile != null;
-                  return SettingsGroup(
-                    margin: margin,
-                    children: [
-                      ListTile(
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 16,
-                        ),
-                        leading: CircleAvatar(
-                          radius: 32,
-                          backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                          foregroundImage: spotifyProfile?.imageUrl?.isNotEmpty == true
-                              ? NetworkImage(spotifyProfile!.imageUrl!)
-                              : null,
-                          child: Icon(
-                            signedIn ? Icons.music_note : Icons.person,
-                            color: signedIn
-                                ? Colors.green
-                                : Theme.of(context).colorScheme.onSurfaceVariant,
-                            size: 32,
-                          ),
-                        ),
-                        title: Text(
-                          signedIn ? spotifyProfile!.name : 'Spotify Account',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        subtitle: Text(
-                          signedIn ? 'Spotify account' : 'Connect your Spotify account',
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _navigateTo(
-                          context,
-                          const SpotifyAccountScreen(),
-                        ),
+            child: ValueListenableBuilder<SpotifyProfile?>(
+              valueListenable: SpotifyAccountService.instance.profileNotifier,
+              builder: (context, profile, _) {
+                final signedIn = profile != null;
+                return SettingsGroup(
+                  margin: margin,
+                  children: [
+                    ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 16,
                       ),
-                    ],
-                  );
-                },
-              ),
+                      leading: signedIn
+                          ? SpotifyProfileAvatar(profile: profile, size: 64)
+                          : const SizedBox.square(
+                              dimension: 64,
+                              child: Icon(Icons.person_outline, size: 40),
+                            ),
+                      title: Text(
+                        signedIn ? profile.displayName : 'Spotify Account',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      subtitle: Text(
+                        signedIn ? 'Spotify Account' : 'Connect your Spotify account',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () async {
+                        await _navigateTo(context, const SpotifyAccountScreen());
+                        if (!mounted) return;
+                        await SpotifyAccountService.instance.getProfile();
+                      },
+                    ),
+                  ],
+                );
+              },
             ),
           ),
           ...body,
