@@ -114,6 +114,8 @@ class SpotifyAccountService {
   Future<bool> isSignedIn() async => await _storage.read(key: _signedInKey) == 'true';
 
   Future<void> saveWebSession({required String spDc, String? spKey}) async {
+    _profileCache = null;
+    profileNotifier.value = null;
     await _storage.delete(key: _profileKey);
     await _storage.write(key: _signedInKey, value: 'true');
     await _storage.write(key: _spDcKey, value: spDc);
