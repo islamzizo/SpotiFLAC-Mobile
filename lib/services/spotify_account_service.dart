@@ -158,7 +158,8 @@ class SpotifyAccountService {
       final firstImage = images is List && images.isNotEmpty
           ? _map(images.first)
           : null;
-      final imageUrl = firstImage?['url']?.toString();
+      final imageUrl =
+          firstImage == null ? null : firstImage['url']?.toString();
       final id = decoded['id']?.toString();
       final displayName = decoded['display_name']?.toString().trim();
       final profile = SpotifyAccountProfile(
