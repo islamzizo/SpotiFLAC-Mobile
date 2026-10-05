@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -119,22 +120,20 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       return;
     }
 
-    // Show the cached Spotify identity immediately, then refresh it in the
-    // background so Settings never waits on the Spotify web session.
+    // Settings should render from the persisted Spotify identity immediately.
+    // The home avatar owns the background refresh, so reopening Settings does
+    // not start a network request that can disturb navigation/focus state.
     final cachedProfile = await service.getProfile();
-    if (mounted) {
-      setState(() {
-        _spotifySignedIn = true;
-        _spotifyProfile = cachedProfile;
-      });
-    }
-
-    final refreshedProfile = await service.syncProfile();
     if (!mounted) return;
     setState(() {
       _spotifySignedIn = true;
-      _spotifyProfile = refreshedProfile ?? cachedProfile;
+      _spotifyProfile = cachedProfile;
     });
+    if (cachedProfile == null) {
+      final profile = await service.syncProfile();
+      if (!mounted) return;
+      setState(() => _spotifyProfile = profile);
+    }
   }
 
   @override
@@ -359,18 +358,16 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       context,
     ).push(slidePageRoute<void>(page: MornyeSettingsTheme(child: destination)));
     if (!mounted) return;
-    await _loadSpotifyProfile();
-    if (!mounted) return;
 
-    // A route's focus scope remembers its previously focused child. Keep the
-    // search field out of that restoration cycle while the child page is open,
-    // then re-enable it without requesting focus when Settings becomes active.
+    // A route's focus scope can restore the previously focused search field
+    // while the child route is being popped. Clear that focus immediately
+    // before any asynchronous Spotify profile refresh can rebuild Settings.
     FocusManager.instance.primaryFocus?.unfocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _searchFocusNode.canRequestFocus = true;
-      _searchFocusNode.unfocus();
-    });
+    _searchFocusNode.canRequestFocus = true;
+    _searchFocusNode.unfocus();
+
+    // Refresh the visible Spotify identity without delaying the focus reset.
+    unawaited(_loadSpotifyProfile());
   }
 
   Color _iconColorFor(_Destination destination) => context.isMornye

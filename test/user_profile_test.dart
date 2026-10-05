@@ -16,7 +16,6 @@ import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/services/user_profile_store.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/profile_avatar.dart';
-import 'package:spotiflac_android/widgets/settings_group.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -207,7 +206,7 @@ void main() {
   });
 
   testWidgets(
-    'profile card stays separate, saves the name, and cancel keeps it',
+    'Spotify account card replaces the local profile setup card',
     (tester) async {
       tester.view.physicalSize = const Size(393, 852);
       tester.view.devicePixelRatio = 1;
@@ -229,34 +228,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final card = find.ancestor(
-        of: find.text('Set up your profile'),
-        matching: find.byType(SettingsGroup),
-      );
-      expect(card, findsOneWidget);
-      expect(
-        find.descendant(of: card, matching: find.text('Extensions')),
-        findsNothing,
-      );
-      await tester.tap(find.text('Set up your profile'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Listener');
-      await tester.tap(find.text('Save'));
-      await tester.pumpAndSettle();
-      expect(find.text('Listener'), findsOneWidget);
-      expect(container.read(userProfileProvider).value?.name, 'Listener');
-      await tester.tap(find.text('Listener'));
-      await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'Unsaved');
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      expect(find.text('Listener'), findsOneWidget);
-      expect(container.read(userProfileProvider).value?.name, 'Listener');
-      expect(tester.takeException(), isNull);
+
+      expect(find.text('Connect your Spotify account'), findsOneWidget);
+      expect(find.text('Set up your profile'), findsNothing);
     },
   );
 
-  testWidgets('Home avatar opens Settings and reflects the saved name', (
+  testWidgets('Home avatar opens Settings without local-profile coupling', (
     tester,
   ) async {
     final container = ProviderContainer(
@@ -284,10 +262,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Settings'), findsOneWidget);
     await tester.tap(find.byTooltip('Settings'));
     expect(requested, ShellTab.settings);
-    await container.read(userProfileProvider.notifier).save(name: 'Listener');
-    await tester.pumpAndSettle();
-    expect(find.text('L'), findsOneWidget);
   });
+
 }
