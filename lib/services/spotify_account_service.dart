@@ -330,6 +330,80 @@ class SpotifyAccountService {
     );
   }
 
+  /// Saves Spotify track IDs to the signed-in user's Spotify library.
+  ///
+  /// Spotify's current library endpoint accepts Spotify URIs and a maximum
+  /// of 40 items per request. The existing Web Player session token is reused,
+  /// so the user does not need a second OAuth flow.
+  Future<void> saveTracksToLibrary(Iterable<String> trackIds) async {
+    final ids = trackIds
+        .map((id) => id.trim())
+        .map(
+          (id) => id.startsWith('spotify:track:')
+              ? id.substring('spotify:track:'.length)
+              : id,
+        )
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (ids.isEmpty) {
+      throw const SpotifyAccountException(
+        'No Spotify track IDs are available to save.',
+      );
+    }
+
+    final spDc = await _storage.read(key: _spDcKey);
+    if (spDc == null || spDc.isEmpty) {
+      throw const SpotifyAccountException(
+        'Spotify session is missing. Log in again.',
+      );
+    }
+
+    final token = await _validToken(
+      spDc,
+      await _storage.read(key: _spKeyKey) ?? '',
+    );
+
+    for (var offset = 0; offset < ids.length; offset += 40) {
+      final end = offset + 40 < ids.length ? offset + 40 : ids.length;
+      final uris = ids
+          .sublist(offset, end)
+          .map((id) => 'spotify:track:$id')
+          .toList(growable: false);
+      final response = await http.put(
+        Uri.parse('https://api.spotify.com/v1/me/library'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({'uris': uris}),
+      );
+      if (response.statusCode != 200) {
+        final detail = response.body.trim();
+        final suffix = detail.isEmpty ? '' : ': $detail';
+        switch (response.statusCode) {
+          case 401:
+            throw const SpotifyAccountException(
+              'Spotify session expired. Log in again.',
+            );
+          case 403:
+            throw const SpotifyAccountException(
+              'Spotify did not grant permission to modify your library.',
+            );
+          case 429:
+            throw const SpotifyAccountException(
+              'Spotify rate-limited the save request. Try again shortly.',
+            );
+          default:
+            throw SpotifyAccountException(
+              'Spotify could not save the tracks (${response.statusCode})$suffix',
+            );
+        }
+      }
+    }
+  }
+
   Future<String> _validToken(String spDc, String spKey) async {
     final token = await _storage.read(key: accessTokenKey);
     final expiry = int.tryParse(await _storage.read(key: _expiryKey) ?? '');
