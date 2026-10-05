@@ -185,7 +185,9 @@ class SpotifyAccountService {
       throw const SpotifyAccountException('Spotify session is missing. Log in again.');
     }
     final token = await _validToken(spDc, await _storage.read(key: _spKeyKey) ?? '');
-    await syncProfile();
+    final syncedProfile = await syncProfile();
+    String? fallbackProfileName = syncedProfile?.displayName;
+    String? fallbackProfileImage = syncedProfile?.imageUrl;
     final result = <String, SpotifyPlaylist>{};
     var offset = 0;
     const limit = 50;
@@ -214,6 +216,8 @@ class SpotifyAccountService {
         final name = d['name']?.toString() ?? '';
         if (id.isEmpty || name.isEmpty) continue;
         final ownerData = _map(_map(d['ownerV2'])?['data']);
+        fallbackProfileName ??= ownerData?['name']?.toString();
+        fallbackProfileImage ??= _image(ownerData?['images'] ?? ownerData?['image']);
         final content = _map(d['content']);
         result[id] = SpotifyPlaylist(
           id: id, name: name, url: 'https://open.spotify.com/playlist/$id',
@@ -231,6 +235,16 @@ class SpotifyAccountService {
       throw const SpotifyAccountException('Spotify returned no playlists. The web session or library query may have changed.');
     }
     final playlists = result.values.toList(growable: false);
+    if (syncedProfile == null && fallbackProfileName?.trim().isNotEmpty == true) {
+      final fallbackProfile = SpotifyAccountProfile(
+        displayName: fallbackProfileName!.trim(),
+        imageUrl: fallbackProfileImage,
+      );
+      await _storage.write(
+        key: _profileKey,
+        value: jsonEncode(fallbackProfile.toJson()),
+      );
+    }
     await _storage.write(key: _playlistsKey, value: jsonEncode(playlists.map((p) => p.toJson()).toList()));
     await _storage.write(key: _signedInKey, value: 'true');
     return playlists;
