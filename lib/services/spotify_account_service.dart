@@ -306,6 +306,16 @@ class SpotifyAccountService {
       ...cachedLikedSongs,
       ...playlists.where((playlist) => playlist.id != 'liked-songs'),
     ];
+    if (!persistedPlaylists.any((playlist) => playlist.id == 'liked-songs')) {
+      persistedPlaylists.insert(
+        0,
+        const SpotifyPlaylist(
+          id: 'liked-songs',
+          name: 'Liked Songs',
+          url: 'https://open.spotify.com/collection/tracks',
+        ),
+      );
+    }
     await savePlaylists(persistedPlaylists);
     await _storage.write(key: _signedInKey, value: 'true');
     return persistedPlaylists;
