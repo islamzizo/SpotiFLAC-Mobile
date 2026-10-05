@@ -151,11 +151,12 @@ class _OverflowMarqueeState extends State<OverflowMarquee>
         }
         return false;
       },
-      child: RepaintBoundary(
-        child: SingleChildScrollView(
-          controller: _scroll,
-          scrollDirection: Axis.horizontal,
-          physics: const NeverScrollableScrollPhysics(),
+      child: SingleChildScrollView(
+        controller: _scroll,
+        scrollDirection: Axis.horizontal,
+        physics: const NeverScrollableScrollPhysics(),
+        // The viewport repaints as it scrolls; retain the unchanged content.
+        child: RepaintBoundary(
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
