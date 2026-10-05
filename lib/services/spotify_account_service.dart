@@ -258,25 +258,25 @@ class SpotifyAccountService {
     final playlists = result.values.toList(growable: false);
     final bestName = libraryOwnerName ?? fallbackProfileName;
     final bestImage = libraryOwnerImage ?? fallbackProfileImage;
-    final syncedName = syncedProfile?.displayName?.trim();
+    final syncedName = syncedProfile?.displayName.trim();
     final nameLooksLikeId =
         syncedName != null &&
         syncedProfile?.username != null &&
         syncedName == syncedProfile!.username;
     if (bestName?.isNotEmpty == true || syncedName?.isNotEmpty == true) {
       final mergedProfile = SpotifyAccountProfile(
-        displayName: (bestName?.isNotEmpty == true && (nameLooksLikeId || syncedName == null))
-            ? bestName!.trim()
-            : syncedName!,
+        displayName:
+            bestName?.isNotEmpty == true && (nameLooksLikeId || syncedName == null)
+                ? bestName!.trim()
+                : syncedName!,
         username: syncedProfile?.username,
         imageUrl: syncedProfile?.imageUrl ?? bestImage,
       );
-        await _storage.write(
-          key: _profileKey,
-          value: jsonEncode(mergedProfile.toJson()),
-        );
-        profileNotifier.value = mergedProfile;
-      }
+      await _storage.write(
+        key: _profileKey,
+        value: jsonEncode(mergedProfile.toJson()),
+      );
+      profileNotifier.value = mergedProfile;
     }
     await _storage.write(key: _playlistsKey, value: jsonEncode(playlists.map((p) => p.toJson()).toList()));
     await _storage.write(key: _signedInKey, value: 'true');
