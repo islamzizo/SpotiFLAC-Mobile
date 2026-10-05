@@ -131,6 +131,7 @@ class TrackListTile extends ConsumerWidget {
                   ref,
                   track,
                   hasLocalPlaybackCandidate: isInHistory || isInLocalLibrary,
+                  navigationContext: context,
                 ),
     );
   }
