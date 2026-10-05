@@ -561,7 +561,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
       if (!mounted) return;
       _invalidateLibraryDataCaches();
       ref.read(downloadHistoryProvider.notifier).reloadFromStorage();
-      ref.read(localLibraryProvider.notifier).reloadFromStorage();
+      if (ref.read(settingsProvider).localLibraryEnabled) {
+        ref.read(localLibraryProvider.notifier).reloadFromStorage();
+      }
       setState(() {});
     });
   }
@@ -1271,6 +1273,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     }
     _initializePageController();
     _applyDefaultLibraryViewOnTabVisible();
+    final localLibraryEnabled = ref.watch(
+      settingsProvider.select((s) => s.localLibraryEnabled),
+    );
 
     ref.listen(downloadQueueLookupProvider, (previous, next) {
       if (previous == null) return;
@@ -1317,15 +1322,17 @@ class _QueueTabState extends ConsumerState<QueueTab> {
         if (mounted) setState(() {});
       },
     );
-    ref.listen<int>(
-      localLibraryProvider.select((state) => state.loadedIndexVersion),
-      (previous, next) {
-        if (previous == null || previous == next) return;
-        // Keep stale rows visible until the refreshed query replaces them.
-        _resetLibraryOffsets();
-        if (mounted) setState(() {});
-      },
-    );
+    if (localLibraryEnabled) {
+      ref.listen<int>(
+        localLibraryProvider.select((state) => state.loadedIndexVersion),
+        (previous, next) {
+          if (previous == null || previous == next) return;
+          // Keep stale rows visible until the refreshed query replaces them.
+          _resetLibraryOffsets();
+          if (mounted) setState(() {});
+        },
+      );
+    }
 
     if (widget.librarySection == 'downloads') {
       final ids = ref.watch(
@@ -1366,12 +1373,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     final inMemoryHistoryItems = ref.watch(
       downloadHistoryProvider.select((state) => state.items),
     );
-    final localLibraryTotalCount = ref.watch(
-      localLibraryProvider.select((state) => state.totalCount),
-    );
-    final localLibraryEnabled = ref.watch(
-      settingsProvider.select((s) => s.localLibraryEnabled),
-    );
+    final localLibraryTotalCount = localLibraryEnabled
+        ? ref.watch(localLibraryProvider.select((state) => state.totalCount))
+        : 0;
     // Watch with selector on key fields to reduce unnecessary rebuilds.
     // LibraryCollectionsState doesn't implement == so watching without
     // selector rebuilds on every provider notification.

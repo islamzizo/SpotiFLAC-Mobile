@@ -67,11 +67,13 @@ final librarySearchProvider = FutureProvider.autoDispose
             })
             .toList(growable: false);
       }
-      ref.watch(downloadHistoryProvider.select((s) => s.loadedIndexVersion));
-      ref.watch(localLibraryProvider.select((s) => s.loadedIndexVersion));
       final includeLocal = ref.watch(
         settingsProvider.select((s) => s.localLibraryEnabled),
       );
+      ref.watch(downloadHistoryProvider.select((s) => s.loadedIndexVersion));
+      if (includeLocal) {
+        ref.watch(localLibraryProvider.select((s) => s.loadedIndexVersion));
+      }
       return LibraryDatabase.instance.searchLibrary(
         query: request.query,
         kind: request.kind,

@@ -488,6 +488,10 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
     _localLibraryWarmupTimer = _scheduleProviderWarmup(
       const Duration(milliseconds: 1600),
       () {
+        if (!ref.read(settingsProvider).localLibraryEnabled) {
+          _localLibraryWarmupScheduled = false;
+          return;
+        }
         ref.read(localLibraryProvider);
         if (!_autoScanTriggeredOnLaunch) {
           _autoScanTriggeredOnLaunch = true;

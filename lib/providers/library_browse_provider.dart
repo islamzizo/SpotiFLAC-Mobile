@@ -61,11 +61,13 @@ final libraryBrowseProvider = FutureProvider.autoDispose
       ref,
       request,
     ) async {
-      ref.watch(downloadHistoryProvider.select((s) => s.loadedIndexVersion));
-      ref.watch(localLibraryProvider.select((s) => s.loadedIndexVersion));
       final includeLocal = ref.watch(
         settingsProvider.select((s) => s.localLibraryEnabled),
       );
+      ref.watch(downloadHistoryProvider.select((s) => s.loadedIndexVersion));
+      if (includeLocal) {
+        ref.watch(localLibraryProvider.select((s) => s.loadedIndexVersion));
+      }
       final query = QueueLibraryDbQuery(
         limit: request.limit,
         includeSingleTrackAlbums: true,

@@ -406,9 +406,11 @@ final _queueLibraryPageProvider = FutureProvider.autoDispose
       ref.watch(
         downloadHistoryProvider.select((state) => state.loadedIndexVersion),
       );
-      ref.watch(
-        localLibraryProvider.select((state) => state.loadedIndexVersion),
-      );
+      if (request.localLibraryEnabled) {
+        ref.watch(
+          localLibraryProvider.select((state) => state.loadedIndexVersion),
+        );
+      }
       // Playlists render from libraryCollectionsProvider, not the DB.
       if (request.filterMode == 'playlists') {
         return const _QueueLibraryPageData();
@@ -496,8 +498,10 @@ final _queueLibraryCountsProvider = FutureProvider.autoDispose
       ref.watch(
         downloadHistoryProvider.select((state) => state.loadedIndexVersion),
       );
-      ref.watch(
-        localLibraryProvider.select((state) => state.loadedIndexVersion),
-      );
+      if (request.localLibraryEnabled) {
+        ref.watch(
+          localLibraryProvider.select((state) => state.loadedIndexVersion),
+        );
+      }
       return LibraryDatabase.instance.getQueueCounts(request.toDbQuery());
     });
