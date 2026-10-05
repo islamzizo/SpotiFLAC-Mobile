@@ -147,7 +147,7 @@ class SpotifyAccountService {
       if (decoded is! Map) return getProfile();
       final images = decoded['images'];
       final imageUrl = images is List && images.isNotEmpty
-          ? _map(images.first)?['url']?.toString()
+          ? (_map(images.first)?['url']?.toString())
           : null;
       final id = decoded['id']?.toString();
       final displayName = decoded['display_name']?.toString().trim();
@@ -235,15 +235,22 @@ class SpotifyAccountService {
       throw const SpotifyAccountException('Spotify returned no playlists. The web session or library query may have changed.');
     }
     final playlists = result.values.toList(growable: false);
-    if (syncedProfile == null && fallbackProfileName?.trim().isNotEmpty == true) {
-      final fallbackProfile = SpotifyAccountProfile(
-        displayName: fallbackProfileName!.trim(),
-        imageUrl: fallbackProfileImage,
-      );
-      await _storage.write(
-        key: _profileKey,
-        value: jsonEncode(fallbackProfile.toJson()),
-      );
+    if (fallbackProfileName?.trim().isNotEmpty == true) {
+      final profileImage = syncedProfile?.imageUrl ?? fallbackProfileImage;
+      final profileNeedsMerge =
+          syncedProfile == null ||
+          (syncedProfile.imageUrl == null && profileImage != null);
+      if (profileNeedsMerge) {
+        final mergedProfile = SpotifyAccountProfile(
+          displayName: syncedProfile?.displayName ?? fallbackProfileName!.trim(),
+          username: syncedProfile?.username,
+          imageUrl: profileImage,
+        );
+        await _storage.write(
+          key: _profileKey,
+          value: jsonEncode(mergedProfile.toJson()),
+        );
+      }
     }
     await _storage.write(key: _playlistsKey, value: jsonEncode(playlists.map((p) => p.toJson()).toList()));
     await _storage.write(key: _signedInKey, value: 'true');
