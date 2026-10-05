@@ -100,6 +100,122 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     });
   }
 
+  Future<void> _loadSpotifyPlaylists() async {
+    if (!await SpotifyAccountService.instance.isSignedIn()) {
+      if (mounted && _spotifyPlaylists.isNotEmpty) {
+        setState(() => _spotifyPlaylists = const []);
+      }
+      return;
+    }
+    final playlists = await SpotifyAccountService.instance.getPlaylists();
+    if (!mounted) return;
+    setState(() => _spotifyPlaylists = playlists);
+  }
+
+  Future<void> _openSpotifyPlaylist(SpotifyPlaylist playlist) async {
+    if (_openingSpotifyPlaylistId != null) return;
+    setState(() => _openingSpotifyPlaylistId = playlist.id);
+    try {
+      final extras = SpotifyLibraryExtrasService.instance;
+      final tracks = playlist.id == 'liked-songs'
+          ? await extras.fetchLikedSongsTracks()
+          : await extras.fetchPlaylistTracks(playlist.id);
+      if (!mounted || tracks.isEmpty) return;
+      final converted = tracks.map((track) => Track(
+        id: track.id,
+        name: track.name,
+        artistName: track.artistName,
+        albumName: track.albumName ?? '',
+        coverUrl: track.coverUrl,
+        duration: ((track.durationMs ?? 0) / 1000).round(),
+      )).toList(growable: false);
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => PlaylistScreen(
+            playlistName: playlist.name,
+            coverUrl: playlist.coverUrl,
+            tracks: converted,
+            playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingSpotifyPlaylistId = null);
+    }
+  }
+
+  Widget _spotifyPlaylistSliver(BuildContext context) {
+    if (!_overview || _spotifyPlaylists.isEmpty) {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+    final colors = Theme.of(context).colorScheme;
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 4, 0, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Spotify Playlists',
+              style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 132,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(right: 24),
+                itemCount: _spotifyPlaylists.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 14),
+                itemBuilder: (context, index) {
+                  final playlist = _spotifyPlaylists[index];
+                  final opening = _openingSpotifyPlaylistId == playlist.id;
+                  return SizedBox(
+                    width: 104,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: opening ? null : () => _openSpotifyPlaylist(playlist),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: SizedBox(
+                              width: 104,
+                              height: 104,
+                              child: playlist.coverUrl?.isNotEmpty == true
+                                  ? Image.network(
+                                      playlist.coverUrl!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, _, _) => ColoredBox(
+                                        color: colors.surfaceContainerHighest,
+                                        child: Icon(Icons.music_note, color: colors.primary),
+                                      ),
+                                    )
+                                  : ColoredBox(
+                                      color: colors.surfaceContainerHighest,
+                                      child: Icon(
+                                        playlist.id == 'liked-songs' ? Icons.favorite : Icons.music_note,
+                                        color: colors.primary,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(playlist.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _openPage(MornyeLibraryPage page, {String? artist}) {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
