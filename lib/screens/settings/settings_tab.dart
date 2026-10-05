@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -343,18 +344,16 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       context,
     ).push(slidePageRoute<void>(page: MornyeSettingsTheme(child: destination)));
     if (!mounted) return;
-    await _loadSpotifyProfile();
-    if (!mounted) return;
 
-    // A route's focus scope remembers its previously focused child. Keep the
-    // search field out of that restoration cycle while the child page is open,
-    // then re-enable it without requesting focus when Settings becomes active.
+    // A route's focus scope can restore the previously focused search field
+    // while the child route is being popped. Clear that focus immediately
+    // before any asynchronous Spotify profile refresh can rebuild Settings.
     FocusManager.instance.primaryFocus?.unfocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _searchFocusNode.canRequestFocus = true;
-      _searchFocusNode.unfocus();
-    });
+    _searchFocusNode.canRequestFocus = true;
+    _searchFocusNode.unfocus();
+
+    // Refresh the visible Spotify identity without delaying the focus reset.
+    unawaited(_loadSpotifyProfile());
   }
 
   Color _iconColorFor(_Destination destination) => context.isMornye
