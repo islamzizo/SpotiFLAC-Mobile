@@ -104,6 +104,8 @@ class SpotifyAccountService {
   final _storage = const FlutterSecureStorage();
   final ValueNotifier<SpotifyAccountProfile?> profileNotifier =
       ValueNotifier<SpotifyAccountProfile?>(null);
+  final ValueNotifier<List<SpotifyPlaylist>> playlistsNotifier =
+      ValueNotifier<List<SpotifyPlaylist>>(const []);
 
   Future<bool> isSignedIn() async =>
       await _storage.read(key: _signedInKey) == 'true';
@@ -185,9 +187,11 @@ class SpotifyAccountService {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const [];
-      return decoded.whereType<Map<dynamic, dynamic>>()
+      final playlists = decoded.whereType<Map<dynamic, dynamic>>()
           .map((v) => SpotifyPlaylist.fromJson(Map<String, dynamic>.from(v)))
           .whereType<SpotifyPlaylist>().toList(growable: false);
+      playlistsNotifier.value = List.unmodifiable(playlists);
+      return playlists;
     } catch (_) { return const []; }
   }
 
@@ -295,9 +299,11 @@ class SpotifyAccountService {
   }
 
   Future<void> savePlaylists(List<SpotifyPlaylist> playlists) async {
+    final snapshot = List<SpotifyPlaylist>.unmodifiable(playlists);
+    playlistsNotifier.value = snapshot;
     await _storage.write(
       key: _playlistsKey,
-      value: jsonEncode(playlists.map((p) => p.toJson()).toList()),
+      value: jsonEncode(snapshot.map((p) => p.toJson()).toList()),
     );
   }
 
