@@ -1574,12 +1574,12 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                         vertical: 8,
                       ),
                       leading: Icon(
-                        Icons.music_note,
+                        Icons.playlist_add,
                         color: Theme.of(context).colorScheme.primary,
                         size: 28,
                       ),
                       title: const Text(
-                        'Spotify Playlists',
+                        'Add Spotify playlist',
                         style: TextStyle(fontSize: 20),
                       ),
                       trailing: Icon(
