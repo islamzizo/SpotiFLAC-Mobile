@@ -148,6 +148,7 @@ class LibraryQueueStore {
     QueueLibraryDbQuery request,
   ) async {
     if (sqlite.normalizeLookupText(request.searchQuery).isNotEmpty ||
+        request.albumArtist != null ||
         request.quality != null ||
         request.format != null ||
         request.metadata != null) {

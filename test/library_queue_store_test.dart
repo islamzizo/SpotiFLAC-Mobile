@@ -231,6 +231,23 @@ void main() {
     },
   );
 
+  test('artist counts use the same filter as the track query', () async {
+    for (final artist in ['Artist', 'Another Artist', 'Missing Artist']) {
+      final query = QueueLibraryDbQuery(albumArtist: artist);
+      final counts = await store.counts(query);
+      final tracks = await store.trackPage(query);
+      expect(counts.allTrackCount, tracks.rows.length, reason: artist);
+      expect(
+        [counts.allTrackCount, counts.albumCount, counts.singleTrackCount],
+        switch (artist) {
+          'Artist' => [4, 2, 0],
+          'Another Artist' => [1, 0, 1],
+          _ => [0, 0, 0],
+        },
+      );
+    }
+  });
+
   test(
     'independent FTS inputs match LIKE fallback and escape literal search',
     () async {
