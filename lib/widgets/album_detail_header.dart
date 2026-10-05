@@ -650,6 +650,7 @@ class HeaderCircleButton extends ConsumerWidget {
     required this.tooltip,
     required this.onPressed,
     this.iconColor,
+    this.iconWidget,
     this.tonal = false,
     this.glassTintColor,
     this.glassTintOpacity,
@@ -663,6 +664,10 @@ class HeaderCircleButton extends ConsumerWidget {
 
   /// Overrides the palette foreground, e.g. to mark an active "loved" state.
   final Color? iconColor;
+
+  /// Optional custom mark for brand actions that are not represented by a
+  /// Material [IconData].
+  final Widget? iconWidget;
 
   /// Uses the same translucent fill as the local album's Play/Shuffle pills.
   final bool tonal;
@@ -690,13 +695,15 @@ class HeaderCircleButton extends ConsumerWidget {
                 alpha: scheme.brightness == Brightness.dark ? 0.10 : 0.06,
               ),
               onPressed: onPressed,
-              child: Icon(
-                mornyeIconFor(icon),
-                size: iconSize,
-                color: onPressed == null
-                    ? scheme.onSurfaceVariant
-                    : iconColor ?? scheme.primary,
-              ),
+              child:
+                  iconWidget ??
+                  Icon(
+                    mornyeIconFor(icon),
+                    size: iconSize,
+                    color: onPressed == null
+                        ? scheme.onSurfaceVariant
+                        : iconColor ?? scheme.primary,
+                  ),
             ),
           ),
         );
@@ -705,7 +712,9 @@ class HeaderCircleButton extends ConsumerWidget {
       final button = IconButton(
         onPressed: onPressed,
         tooltip: tooltip,
-        icon: Icon(mornyeIconFor(icon), size: iconSize),
+        icon:
+            iconWidget ??
+            Icon(mornyeIconFor(icon), size: iconSize),
         style: IconButton.styleFrom(
           minimumSize: Size.square(buttonSize ?? 44),
           foregroundColor: iconColor ?? scheme.onSurface,
@@ -730,7 +739,7 @@ class HeaderCircleButton extends ConsumerWidget {
     }
     return ExpressiveIconButton(
       onPressed: onPressed,
-      icon: Icon(icon, size: iconSize),
+      icon: iconWidget ?? Icon(icon, size: iconSize),
       tooltip: tooltip,
       size: buttonSize ?? tokens.minTouchTarget,
       backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
