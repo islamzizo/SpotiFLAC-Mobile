@@ -17,12 +17,19 @@ final playerArtworkVideoProvider = FutureProvider.autoDispose
         File.fromUri(uri),
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
-      ref.onDispose(() => unawaited(controller.dispose()));
-      await controller.initialize();
-      if (!ref.mounted) return controller;
-      await controller.setVolume(0);
-      if (!ref.mounted) return controller;
-      await controller.setLooping(true);
-      await restoreMusicAudioSessionAfterVideo();
-      return controller;
+      Future<void>? disposal;
+      Future<void> disposeController() => disposal ??= controller.dispose();
+      ref.onDispose(() => unawaited(disposeController()));
+      try {
+        await controller.initialize();
+        if (!ref.mounted) return controller;
+        await controller.setVolume(0);
+        if (!ref.mounted) return controller;
+        await controller.setLooping(true);
+        await restoreMusicAudioSessionAfterVideo();
+        return controller;
+      } catch (_) {
+        unawaited(disposeController());
+        rethrow;
+      }
     });

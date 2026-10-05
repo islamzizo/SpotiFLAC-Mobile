@@ -161,6 +161,7 @@ class _MotionHeaderBannerState extends ConsumerState<MotionHeaderBanner>
     } catch (e) {
       _log.w('Failed to play motion banner: $e');
       if (!mounted || !identical(controller, _controller)) return;
+      _disposeController();
       setState(() => _failed = true);
       widget.onError?.call();
     }

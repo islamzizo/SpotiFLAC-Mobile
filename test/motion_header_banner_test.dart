@@ -30,6 +30,7 @@ class _VideoPlatform extends VideoPlayerPlatform {
   int creations = 0;
   int disposals = 0;
   Map<int, StreamController<VideoEvent>>? events;
+  Completer<void>? disposalPending;
 
   @override
   Future<void> init() async {}
@@ -85,6 +86,7 @@ class _VideoPlatform extends VideoPlayerPlatform {
   @override
   Future<void> dispose(int playerId) async {
     disposals++;
+    await disposalPending?.future;
     await events?[playerId]?.close();
   }
 }
@@ -96,6 +98,67 @@ class _MotionSettings extends SettingsNotifier {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  for (final prepared in [false, true]) {
+    testWidgets(
+      'failed video is disposed while its owner stays mounted ($prepared)',
+      (tester) async {
+        final previous = VideoPlayerPlatform.instance;
+        final platform = _VideoPlatform()
+          ..events = {}
+          ..disposalPending = Completer<void>();
+        VideoPlayerPlatform.instance = platform;
+        addTearDown(() => VideoPlayerPlatform.instance = previous);
+        final container = ProviderContainer(
+          overrides: [settingsProvider.overrideWith(_MotionSettings.new)],
+        );
+        const source = 'file:///failed-cover.mp4';
+        final failure = PlatformException(
+          code: 'video',
+          message: 'Invalid cover',
+        );
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              home: prepared
+                  ? Consumer(
+                      builder: (context, ref, _) {
+                        final video = ref.watch(
+                          playerArtworkVideoProvider(source),
+                        );
+                        return Text(
+                          video.hasError ? 'Failed cover' : 'Preparing',
+                        );
+                      },
+                    )
+                  : const MotionHeaderBanner(
+                      videoUrl: source,
+                      fallback: Text('Failed cover'),
+                    ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(platform.creations, 1);
+        platform.events![1]!.addError(failure);
+        await tester.pump();
+        await tester.pump();
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        expect(find.text('Failed cover'), findsOneWidget);
+        expect(platform.disposals, 1);
+        // Tear down before platform disposal completes to cover concurrent calls.
+        await tester.pumpWidget(const SizedBox());
+        container.dispose();
+        await tester.pump();
+        expect(platform.disposals, 1);
+        platform.disposalPending!.complete();
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        expect(platform.disposals, 1);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets('artwork switch prevents decoding and disposes active video', (
     tester,
   ) async {
