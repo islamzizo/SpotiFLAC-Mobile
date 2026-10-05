@@ -23,6 +23,7 @@ import 'package:spotiflac_android/screens/home_tab.dart';
 import 'package:spotiflac_android/screens/repo_tab.dart';
 import 'package:spotiflac_android/screens/queue_tab.dart';
 import 'package:spotiflac_android/screens/settings/settings_tab.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/services/share_intent_service.dart';
@@ -158,6 +159,10 @@ class _MainShellState extends ConsumerState<MainShell>
       showRepoTab: false,
     );
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Refresh Spotify once when the app opens. This is independent of the
+      // Spotify screen, so opening Spotify never causes a visible sync state.
+      unawaited(_syncSpotifyLibraryAtStartup());
+
       await _repairSafAccessIfNeeded(
         knownLost: ref.read(initialSafAccessLostProvider),
       );
@@ -173,6 +178,16 @@ class _MainShellState extends ConsumerState<MainShell>
         await _checkAppAnnouncement();
       }
     });
+  }
+
+  Future<void> _syncSpotifyLibraryAtStartup() async {
+    final spotify = SpotifyAccountService.instance;
+    if (!await spotify.isSignedIn()) return;
+    try {
+      await spotify.syncPlaylists();
+    } catch (_) {
+      // Keep cached Spotify data available if startup sync fails.
+    }
   }
 
   void _onUsbAudioStatusChanged() {
