@@ -39,6 +39,10 @@ import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
+import 'package:spotiflac_android/services/spotify_library_extras_service.dart';
+import 'package:spotiflac_android/screens/playlist_screen.dart';
+import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
@@ -228,6 +232,11 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   static const int _libraryPageSize = 300;
   final LibraryFileAvailabilityCache _fileExistsCache =
       LibraryFileAvailabilityCache();
+  final _spotifyAccount = SpotifyAccountService.instance;
+  final _spotifyExtras = SpotifyLibraryExtrasService.instance;
+  List<SpotifyPlaylist> _spotifyPlaylists = const [];
+  String? _openingSpotifyPlaylistId;
+  late final VoidCallback _spotifyLibraryListener;
   late final CompletionBridgePlayableProbeCache _completionBridgePlayableProbe;
   static const double _libraryGridMinExtent = 92;
   static const double _libraryGridDefaultExtent = 126;
@@ -332,6 +341,147 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     );
   }
 
+  Future<void> _loadSpotifyPlaylists() async {
+    if (!await _spotifyAccount.isSignedIn()) {
+      if (mounted && _spotifyPlaylists.isNotEmpty) {
+        setState(() => _spotifyPlaylists = const []);
+      }
+      return;
+    }
+    final playlists = await _spotifyAccount.getPlaylists();
+    if (!mounted) return;
+    setState(() => _spotifyPlaylists = playlists);
+  }
+
+  Future<void> _openSpotifyPlaylist(SpotifyPlaylist playlist) async {
+    if (_openingSpotifyPlaylistId != null) return;
+    setState(() => _openingSpotifyPlaylistId = playlist.id);
+    try {
+      final tracks = playlist.id == 'liked-songs'
+          ? await _spotifyExtras.fetchLikedSongsTracks()
+          : await _spotifyExtras.fetchPlaylistTracks(playlist.id);
+      if (!mounted) return;
+      if (tracks.isEmpty) return;
+      final converted = tracks.map((track) => Track(
+        id: track.id,
+        name: track.name,
+        artistName: track.artistName,
+        albumName: track.albumName ?? '',
+        coverUrl: track.coverUrl,
+        duration: ((track.durationMs ?? 0) / 1000).round(),
+      )).toList(growable: false);
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => PlaylistScreen(
+            playlistName: playlist.name,
+            coverUrl: playlist.coverUrl,
+            tracks: converted,
+            playlistId: playlist.id == 'liked-songs' ? null : playlist.id,
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingSpotifyPlaylistId = null);
+    }
+  }
+
+  Widget _buildSpotifyPlaylistsSliver(BuildContext context) {
+    if (_spotifyPlaylists.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 0, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Row(
+                children: [
+                  Icon(Icons.music_note, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Spotify Playlists',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 126,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.only(right: 16),
+                itemCount: _spotifyPlaylists.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final playlist = _spotifyPlaylists[index];
+                  final opening = _openingSpotifyPlaylistId == playlist.id;
+                  return SizedBox(
+                    width: 96,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(10),
+                      onTap: opening ? null : () => _openSpotifyPlaylist(playlist),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: SizedBox(
+                              width: 96,
+                              height: 96,
+                              child: playlist.coverUrl?.isNotEmpty == true
+                                  ? CachedNetworkImage(
+                                      imageUrl: playlist.coverUrl!,
+                                      fit: BoxFit.cover,
+                                      placeholder: (_, _) => const ColoredBox(
+                                        color: Colors.black12,
+                                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                                      ),
+                                      errorWidget: (_, _, _) => const Icon(Icons.music_note),
+                                    )
+                                  : ColoredBox(
+                                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                      child: Icon(
+                                        playlist.id == 'liked-songs' ? Icons.favorite : Icons.music_note,
+                                        color: Theme.of(context).colorScheme.primary,
+                                      ),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            playlist.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.labelMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _spotifyLibraryListener = _loadSpotifyPlaylists;
+    SpotifyAccountService.libraryVersion.addListener(_spotifyLibraryListener);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSpotifyPlaylists();
+    });
+    _completionBridgePlayableProbe = CompletionBridgePlayableProbeCache(
+      onPlayable: _fileExistsCache.markExists,
+    );
+  }
+
   void _initializePageController() {
     if (_isPageControllerInitialized) return;
     _isPageControllerInitialized = true;
@@ -384,6 +534,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
 
   @override
   void dispose() {
+    SpotifyAccountService.libraryVersion.removeListener(_spotifyLibraryListener);
     _hideSelectionOverlay();
     _hidePlaylistSelectionOverlay();
     _fileExistsCache.dispose();
@@ -1564,6 +1715,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                         ? context.l10n.searchPlaylists
                         : context.l10n.searchSongs,
                   ),
+
+                if (widget.librarySection == null)
+                  _buildSpotifyPlaylistsSliver(context),
 
                 if (shouldShowLibraryControls || hasQueueItems)
                   SliverToBoxAdapter(
