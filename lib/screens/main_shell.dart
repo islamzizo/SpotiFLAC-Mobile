@@ -12,6 +12,7 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/screens/upgrade_intro_screen.dart';
 import 'package:spotiflac_android/services/upgrade_intro_service.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/providers/playback_notification_provider.dart';
@@ -164,6 +165,7 @@ class _MainShellState extends ConsumerState<MainShell>
       _initialSafRepairComplete = true;
       if (!mounted) return;
       unawaited(restorePersistedPlaybackSession());
+      unawaited(_syncSpotifyAtStartup());
       await _checkUpgradeIntro();
       if (!mounted) return;
       _setupShareListener();
@@ -203,6 +205,17 @@ class _MainShellState extends ConsumerState<MainShell>
       unawaited(_repairSafAccessIfNeeded());
     } else if (state == AppLifecycleState.paused) {
       unawaited(persistCurrentPlaybackSession());
+    }
+  }
+
+  Future<void> _syncSpotifyAtStartup() async {
+    try {
+      if (await SpotifyAccountService.instance.isSignedIn()) {
+        await SpotifyAccountService.instance.syncLibrary();
+      }
+    } catch (_) {
+      // Keep the last successful Spotify library visible when the network or
+      // Spotify's private web API is temporarily unavailable.
     }
   }
 
