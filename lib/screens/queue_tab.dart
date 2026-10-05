@@ -336,6 +336,11 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   @override
   void initState() {
     super.initState();
+    _spotifyLibraryListener = _loadSpotifyPlaylists;
+    SpotifyAccountService.libraryVersion.addListener(_spotifyLibraryListener);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSpotifyPlaylists();
+    });
     _completionBridgePlayableProbe = CompletionBridgePlayableProbeCache(
       onPlayable: _fileExistsCache.markExists,
     );
@@ -466,19 +471,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
           ],
         ),
       ),
-    );
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _spotifyLibraryListener = _loadSpotifyPlaylists;
-    SpotifyAccountService.libraryVersion.addListener(_spotifyLibraryListener);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadSpotifyPlaylists();
-    });
-    _completionBridgePlayableProbe = CompletionBridgePlayableProbeCache(
-      onPlayable: _fileExistsCache.markExists,
     );
   }
 
