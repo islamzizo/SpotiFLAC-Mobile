@@ -224,11 +224,13 @@ void main() {
       );
 
       await tester.pumpWidget(
-        MaterialApp(
-          theme: MornyeTheme.build(Brightness.dark),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: const Scaffold(body: SettingsTab()),
+        ProviderScope(
+          child: MaterialApp(
+            theme: MornyeTheme.build(Brightness.dark),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(body: SettingsTab()),
+          ),
         ),
       );
       await tester.pumpAndSettle();
