@@ -34,6 +34,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   @override
   void initState() {
     super.initState();
+    _spotify.playlistsNotifier.addListener(_onSpotifyPlaylistsChanged);
     _web = WebViewController()
       ..setUserAgent('Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36')
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -47,6 +48,16 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       ))
       ..loadRequest(Uri.parse(SpotifyAccountService.loginUrl));
     _loadSavedState();
+  }
+
+  void _onSpotifyPlaylistsChanged() {
+    if (!mounted) return;
+    final playlists = _spotify.playlistsNotifier.value;
+    if (playlists.isEmpty) return;
+    setState(() {
+      _playlists = playlists;
+      _signedIn = true;
+    });
   }
 
   Future<void> _loadSavedState() async {
