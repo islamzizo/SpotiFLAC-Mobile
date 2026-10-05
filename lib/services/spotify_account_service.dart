@@ -200,6 +200,8 @@ class SpotifyAccountService {
     String? fallbackProfileName = syncedProfile?.displayName;
     String? fallbackProfileImage = syncedProfile?.imageUrl;
     final result = <String, SpotifyPlaylist>{};
+    String? libraryOwnerName;
+    String? libraryOwnerImage;
     var offset = 0;
     const limit = 50;
     while (true) {
@@ -227,8 +229,16 @@ class SpotifyAccountService {
         final name = d['name']?.toString() ?? '';
         if (id.isEmpty || name.isEmpty) continue;
         final ownerData = _map(_map(d['ownerV2'])?['data']);
-        fallbackProfileName ??= ownerData?['name']?.toString();
-        fallbackProfileImage ??= _image(ownerData?['images'] ?? ownerData?['image']);
+        final ownerName = ownerData?['name']?.toString().trim();
+        final ownerImage = _image(ownerData?['images'] ?? ownerData?['image']);
+        if (ownerName?.isNotEmpty == true) {
+          libraryOwnerName ??= ownerName;
+        }
+        if (ownerImage?.isNotEmpty == true) {
+          libraryOwnerImage ??= ownerImage;
+        }
+        fallbackProfileName ??= ownerName;
+        fallbackProfileImage ??= ownerImage;
         final content = _map(d['content']);
         result[id] = SpotifyPlaylist(
           id: id, name: name, url: 'https://open.spotify.com/playlist/$id',
@@ -246,17 +256,21 @@ class SpotifyAccountService {
       throw const SpotifyAccountException('Spotify returned no playlists. The web session or library query may have changed.');
     }
     final playlists = result.values.toList(growable: false);
-    if (fallbackProfileName?.trim().isNotEmpty == true) {
-      final profileImage = syncedProfile?.imageUrl ?? fallbackProfileImage;
-      final profileNeedsMerge =
-          syncedProfile == null ||
-          (syncedProfile.imageUrl == null && profileImage != null);
-      if (profileNeedsMerge) {
-        final mergedProfile = SpotifyAccountProfile(
-          displayName: syncedProfile?.displayName ?? fallbackProfileName!.trim(),
-          username: syncedProfile?.username,
-          imageUrl: profileImage,
-        );
+    final bestName = libraryOwnerName ?? fallbackProfileName;
+    final bestImage = libraryOwnerImage ?? fallbackProfileImage;
+    final syncedName = syncedProfile?.displayName?.trim();
+    final nameLooksLikeId =
+        syncedName != null &&
+        syncedProfile?.username != null &&
+        syncedName == syncedProfile!.username;
+    if (bestName?.isNotEmpty == true || syncedName?.isNotEmpty == true) {
+      final mergedProfile = SpotifyAccountProfile(
+        displayName: (bestName?.isNotEmpty == true && (nameLooksLikeId || syncedName == null))
+            ? bestName!.trim()
+            : syncedName!,
+        username: syncedProfile?.username,
+        imageUrl: syncedProfile?.imageUrl ?? bestImage,
+      );
         await _storage.write(
           key: _profileKey,
           value: jsonEncode(mergedProfile.toJson()),
