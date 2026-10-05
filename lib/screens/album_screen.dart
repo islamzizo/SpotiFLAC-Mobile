@@ -30,6 +30,7 @@ import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/widgets/playlist_picker_sheet.dart';
 import 'package:spotiflac_android/utils/clickable_metadata.dart';
+import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 import 'package:spotiflac_android/widgets/cross_extension_share_sheet.dart';
 import 'package:spotiflac_android/widgets/track_list_tile.dart';
 import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
@@ -614,7 +615,7 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
           ? Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildLoveAllButton(),
+                _buildSpotifyOrLoveButton(tracks),
                 const SizedBox(width: 16),
                 Flexible(
                   child: SizedBox(
@@ -855,6 +856,13 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
       artistNameForPicker: widget.albumName,
       recommendedService: _recommendedDownloadService(),
     );
+  }
+
+  Widget _buildSpotifyOrLoveButton(List<Track> tracks) {
+    if (SpotifyNavigationScope.maybeOf(context) != null) {
+      return SpotifySaveButton(tracks: tracks);
+    }
+    return _buildLoveAllButton();
   }
 
   Widget _buildLoveAllButton() {
