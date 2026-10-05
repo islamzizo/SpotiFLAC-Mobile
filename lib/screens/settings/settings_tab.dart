@@ -460,46 +460,54 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             ),
           ),
           SliverToBoxAdapter(
-            child: Consumer(
-              builder: (context, ref, _) {
-                final profile = ref.watch(userProfileProvider).value;
-                return SettingsGroup(
-                  margin: margin,
-                  children: [
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
+            child: ValueListenableBuilder<int>(
+              valueListenable: SpotifyAccountService.libraryVersion,
+              builder: (context, _, __) => FutureBuilder<SpotifyAccountProfile?>(
+                future: SpotifyAccountService.instance.getProfile(),
+                builder: (context, snapshot) {
+                  final spotifyProfile = snapshot.data;
+                  final signedIn = spotifyProfile != null;
+                  return SettingsGroup(
+                    margin: margin,
+                    children: [
+                      ListTile(
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 16,
+                        ),
+                        leading: CircleAvatar(
+                          radius: 32,
+                          backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          foregroundImage: spotifyProfile?.imageUrl?.isNotEmpty == true
+                              ? NetworkImage(spotifyProfile!.imageUrl!)
+                              : null,
+                          child: Icon(
+                            signedIn ? Icons.music_note : Icons.person,
+                            color: signedIn
+                                ? Colors.green
+                                : Theme.of(context).colorScheme.onSurfaceVariant,
+                            size: 32,
+                          ),
+                        ),
+                        title: Text(
+                          signedIn ? spotifyProfile!.name : 'Spotify Account',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        subtitle: Text(
+                          signedIn ? 'Spotify account' : 'Connect your Spotify account',
+                        ),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => _navigateTo(
+                          context,
+                          const SpotifyAccountScreen(),
+                        ),
                       ),
-                      leading: ProfileAvatar(
-                        name: profile?.name ?? '',
-                        photoPath: profile?.photoPath,
-                        size: 64,
-                      ),
-                      title: Text(
-                        profile?.name.isNotEmpty == true
-                            ? profile!.name
-                            : context.l10n.profileSetUp,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      subtitle:
-                          profile?.name.isNotEmpty == true ||
-                              profile?.photoPath?.isNotEmpty == true
-                          ? null
-                          : Text(context.l10n.profileEdit),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: profile == null
-                          ? null
-                          : () => _navigateTo(
-                              context,
-                              ProfileSettingsPage(profile: profile),
-                            ),
-                    ),
-                  ],
-                );
-              },
+                    ],
+                  );
+                },
+              ),
             ),
           ),
           ...body,
