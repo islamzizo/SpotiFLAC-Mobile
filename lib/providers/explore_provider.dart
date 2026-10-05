@@ -274,9 +274,25 @@ List<ExploreSection> _buildExploreSectionsFromNormalizedPayload(
 }
 
 class ExploreNotifier extends Notifier<ExploreState> {
+  ExploreNotifier({Future<Map<String, Object?>> Function(String)? decodeCache})
+    : _decodeCache =
+          decodeCache ?? ((raw) => compute(_decodeExploreCache, raw));
+
+  final Future<Map<String, Object?>> Function(String) _decodeCache;
   static const _cacheKey = 'explore_home_feed_cache';
   static const _cacheTsKey = 'explore_home_feed_ts';
   int _homeFeedRequestId = 0;
+  int? _activeHomeFeedRequestId;
+  int _cacheRestoreGeneration = 0;
+
+  bool _isRequestValid(int requestId) =>
+      ref.mounted && requestId == _homeFeedRequestId;
+
+  bool _isCacheRestoreValid(int generation) =>
+      ref.mounted &&
+      generation == _cacheRestoreGeneration &&
+      ref.read(settingsProvider).homeFeedProvider !=
+          AppSettings.homeFeedProviderOff;
 
   @override
   ExploreState build() {
@@ -285,6 +301,7 @@ class ExploreNotifier extends Notifier<ExploreState> {
   }
 
   Future<void> _restoreFromCache() async {
+    final generation = _cacheRestoreGeneration;
     try {
       if (ref.read(settingsProvider).homeFeedProvider ==
           AppSettings.homeFeedProviderOff) {
@@ -293,11 +310,13 @@ class ExploreNotifier extends Notifier<ExploreState> {
       }
 
       final prefs = await SharedPreferences.getInstance();
+      if (!_isCacheRestoreValid(generation)) return;
       final cached = prefs.getString(_cacheKey);
       final cachedTs = prefs.getInt(_cacheTsKey);
       if (cached == null || cached.isEmpty) return;
 
-      final cachePayload = await compute(_decodeExploreCache, cached);
+      final cachePayload = await _decodeCache(cached);
+      if (!_isCacheRestoreValid(generation)) return;
       final providerId = cachePayload['provider_id']?.toString().trim();
       final rawSections = cachePayload['sections'];
       var normalizedSections = rawSections is List
@@ -326,16 +345,21 @@ class ExploreNotifier extends Notifier<ExploreState> {
           : null;
 
       _log.i('Restored ${sections.length} cached explore sections');
+      // Cached content can replace the initial spinner while the separate
+      // active request still owns refresh completion and deduplication.
       state = ExploreState(
+        error: state.error,
         greeting: _getLocalGreeting(),
         providerId: resolvedProviderId,
         sections: sections,
         lastFetched: lastFetched,
       );
     } catch (e) {
+      if (!_isCacheRestoreValid(generation)) return;
       _log.w('Failed to restore explore cache: $e');
       try {
         final prefs = await SharedPreferences.getInstance();
+        if (!_isCacheRestoreValid(generation)) return;
         await prefs.remove(_cacheKey);
         await prefs.remove(_cacheTsKey);
         _log.d('Removed invalid explore cache');
@@ -383,9 +407,7 @@ class ExploreNotifier extends Notifier<ExploreState> {
   Future<void> fetchHomeFeed({bool forceRefresh = false}) async {
     if (ref.read(settingsProvider).homeFeedProvider ==
         AppSettings.homeFeedProviderOff) {
-      _homeFeedRequestId++;
-      PlatformBridge.cancelExtensionHomeFeedRequests();
-      state = const ExploreState();
+      clear();
       return;
     }
 
@@ -397,12 +419,13 @@ class ExploreNotifier extends Notifier<ExploreState> {
       return;
     }
 
-    if (state.isLoading && !forceRefresh) {
+    if (_activeHomeFeedRequestId != null && !forceRefresh) {
       _log.d('Home feed fetch already in progress');
       return;
     }
 
     final requestId = ++_homeFeedRequestId;
+    _activeHomeFeedRequestId = requestId;
     final showLoading = !state.hasContent;
     state = state.copyWith(isLoading: showLoading, error: null);
 
@@ -411,7 +434,7 @@ class ExploreNotifier extends Notifier<ExploreState> {
 
       if (targetExt == null) {
         _log.w('No extension with homeFeed capability found');
-        if (requestId != _homeFeedRequestId) return;
+        if (!_isRequestValid(requestId)) return;
         state = state.copyWith(
           isLoading: false,
           error: 'No extension with home feed support enabled',
@@ -423,7 +446,7 @@ class ExploreNotifier extends Notifier<ExploreState> {
         targetExt.id,
         cancelPrevious: forceRefresh,
       );
-      if (requestId != _homeFeedRequestId) return;
+      if (!_isRequestValid(requestId)) return;
 
       if (result == null) {
         state = state.copyWith(
@@ -449,7 +472,7 @@ class ExploreNotifier extends Notifier<ExploreState> {
         normalizedSectionsWithoutProvider,
         targetExt.id,
       );
-      if (requestId != _homeFeedRequestId) return;
+      if (!_isRequestValid(requestId)) return;
       final sections = _buildExploreSectionsFromNormalizedPayload(
         normalizedSections,
       );
@@ -460,6 +483,7 @@ class ExploreNotifier extends Notifier<ExploreState> {
         'sections=${sections.length}',
       );
 
+      _cacheRestoreGeneration++;
       state = ExploreState(
         isLoading: false,
         greeting: localGreeting,
@@ -471,13 +495,19 @@ class ExploreNotifier extends Notifier<ExploreState> {
       _saveToCache(normalizedSections, targetExt.id);
     } catch (e, stack) {
       _log.e('Error fetching home feed: $e', e, stack);
-      if (requestId != _homeFeedRequestId) return;
+      if (!_isRequestValid(requestId)) return;
       state = state.copyWith(isLoading: false, error: e.toString());
+    } finally {
+      if (_activeHomeFeedRequestId == requestId) {
+        _activeHomeFeedRequestId = null;
+      }
     }
   }
 
   void clear() {
     _homeFeedRequestId++;
+    _cacheRestoreGeneration++;
+    _activeHomeFeedRequestId = null;
     PlatformBridge.cancelExtensionHomeFeedRequests();
     state = const ExploreState();
   }
