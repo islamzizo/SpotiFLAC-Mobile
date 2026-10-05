@@ -2,9 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/providers/user_profile_provider.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/services/spotify_account_service.dart';
 
