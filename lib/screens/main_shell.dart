@@ -25,6 +25,7 @@ import 'package:spotiflac_android/screens/queue_tab.dart';
 import 'package:spotiflac_android/screens/settings/settings_tab.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/share_intent_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
@@ -157,6 +158,12 @@ class _MainShellState extends ConsumerState<MainShell>
       currentTabIndex: _currentIndex,
       showRepoTab: false,
     );
+    // Refresh Spotify once when the app opens. The Spotify screen only
+    // reads the persisted cache, so entering it never clears visible playlists.
+    unawaited(
+      SpotifyAccountService.instance.syncSavedLibraryInBackground(),
+    );
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _repairSafAccessIfNeeded(
         knownLost: ref.read(initialSafAccessLostProvider),
@@ -201,6 +208,9 @@ class _MainShellState extends ConsumerState<MainShell>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _initialSafRepairComplete) {
       unawaited(_repairSafAccessIfNeeded());
+      unawaited(
+        SpotifyAccountService.instance.syncSavedLibraryInBackground(),
+      );
     } else if (state == AppLifecycleState.paused) {
       unawaited(persistCurrentPlaybackSession());
     }
