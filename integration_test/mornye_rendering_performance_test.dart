@@ -25,7 +25,8 @@ import 'performance_probe.dart';
 
 void main() {
   final binding = PerformanceTestBinding.ensureInitialized();
-  for (final clarity in [0.0, 0.1, 0.6, 1.0]) {
+  const focused = bool.fromEnvironment('MORNYE_GLASS_FOCUS');
+  for (final clarity in focused ? [0.6, 1.0] : [0.0, 0.1, 0.6, 1.0]) {
     testWidgets('Mornye real rendering at clarity $clarity', (tester) async {
       final probe = PerformanceProbe(
         binding,
@@ -76,16 +77,18 @@ void main() {
       expect(tester.state(find.byType(MiniPlayer)), same(player));
       expect(fixture.chrome.value, isFalse);
 
-      await probe.measure('tab_changes', () async {
-        for (final label in ['Library', 'Repo', 'Search', 'Home']) {
-          final tab = find.descendant(
-            of: find.byType(MornyeTabBar),
-            matching: find.text(label),
-          );
-          await tester.tapAt(tester.getCenter(tab.first));
-          await probe.wait(const Duration(milliseconds: 300));
-        }
-      });
+      if (!focused) {
+        await probe.measure('tab_changes', () async {
+          for (final label in ['Library', 'Repo', 'Search', 'Home']) {
+            final tab = find.descendant(
+              of: find.byType(MornyeTabBar),
+              matching: find.text(label),
+            );
+            await tester.tapAt(tester.getCenter(tab.first));
+            await probe.wait(const Duration(milliseconds: 300));
+          }
+        });
+      }
       expect(fixture.activeTab.value, 0);
 
       if (clarity > 0.2) {
@@ -103,6 +106,15 @@ void main() {
             (widget) => widget is MornyeLiquidBackdrop && widget.interaction,
           );
           if (ui.ImageFilter.isShaderFilterSupported) {
+            // Await the final painted pose even if the emulator delays a frame.
+            for (
+              var attempt = 0;
+              tester.widget<MornyeLiquidBackdrop>(lens).progress < 1 &&
+                  attempt < 20;
+              attempt++
+            ) {
+              await probe.wait(const Duration(milliseconds: 100));
+            }
             expect(tester.widget<MornyeLiquidBackdrop>(lens).progress, 1);
           }
           for (var step = 1; step <= 60; step++) {
@@ -123,14 +135,17 @@ void main() {
       });
       fixture.setLongTitle(false);
       await probe.wait(const Duration(milliseconds: 400));
-      await probe.measure('short_title_idle', () async {
-        await probe.wait(const Duration(milliseconds: 1500));
-      }, allowIdle: true);
+      if (!focused) {
+        await probe.measure('short_title_idle', () async {
+          await probe.wait(const Duration(milliseconds: 1500));
+        }, allowIdle: true);
+      }
       expect(tester.takeException(), isNull);
       await probe.finish(
         metadata: {
           'glass_clarity': clarity,
           'glass_level': 'liquid',
+          'focused': focused,
           'tracks': 2000,
           'unique_local_covers': fixture.covers.length,
           'scope':
