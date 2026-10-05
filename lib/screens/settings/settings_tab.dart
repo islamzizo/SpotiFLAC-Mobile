@@ -93,7 +93,18 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   @override
   void initState() {
     super.initState();
+    SpotifyAccountService.instance.profileNotifier.addListener(
+      _onSpotifyProfileChanged,
+    );
     _loadSpotifyProfile();
+  }
+
+  void _onSpotifyProfileChanged() {
+    if (!mounted) return;
+    setState(() {
+      _spotifyProfile = SpotifyAccountService.instance.profileNotifier.value;
+      _spotifySignedIn = _spotifyProfile != null;
+    });
   }
 
   Future<void> _loadSpotifyProfile() async {
@@ -128,6 +139,9 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
 
   @override
   void dispose() {
+    SpotifyAccountService.instance.profileNotifier.removeListener(
+      _onSpotifyProfileChanged,
+    );
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
