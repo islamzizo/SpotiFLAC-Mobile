@@ -24,6 +24,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   bool _signedIn = false;
   bool _loading = false;
   bool _capturing = false;
+  bool _savedStateLoaded = false;
   int _progress = 0;
   String? _error;
   String? _openingId;
@@ -53,16 +54,26 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       final signed = await _spotify.isSignedIn();
       final playlists = await _spotify.getPlaylists();
       if (!mounted) return;
-      setState(() { _signedIn = signed; _playlists = playlists; });
-      // Refresh the saved Spotify library whenever this screen is opened.
-      if (signed) await _syncPlaylists();
+      setState(() {
+        _signedIn = signed;
+        _playlists = playlists;
+        _savedStateLoaded = true;
+      });
     } catch (error) {
       if (mounted) setState(() => _error = 'Could not load saved Spotify session: $error');
     }
   }
 
   Future<void> _onPageFinished(String url) async {
-    if (_signedIn || _capturing || _loading || !url.contains('spotify.com')) return;
+    // A reopened Spotify screen must not race its persisted library with the
+    // login WebView. Startup sync is owned by MainShell instead.
+    if (!_savedStateLoaded ||
+        _signedIn ||
+        _capturing ||
+        _loading ||
+        !url.contains('spotify.com')) {
+      return;
+    }
     if (await _hasSessionCookie()) await _syncPlaylists();
   }
 
@@ -114,8 +125,13 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
           merged.insert(0, const SpotifyPlaylist(id: 'liked-songs', name: 'Liked Songs', url: 'https://open.spotify.com/collection/tracks'));
         }
       }
+      await _spotify.savePlaylists(merged);
       if (!mounted) return;
-      setState(() { _playlists = merged; _signedIn = true; _loading = false; });
+      setState(() {
+        _playlists = merged;
+        _signedIn = true;
+        _loading = false;
+      });
     } catch (error) {
       if (!mounted) return;
       setState(() { _loading = false; _error = error.toString(); });
@@ -206,6 +222,11 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
 
   Widget _buildSpotifyHome() => Scaffold(
     appBar: AppBar(
+      leading: IconButton(
+        tooltip: 'Back',
+        onPressed: () => context.go('/'),
+        icon: const Icon(Icons.arrow_back),
+      ),
       title: const Text('Spotify'),
       actions: [
         if (_signedIn) IconButton(
@@ -302,18 +323,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
             child: Text(_error!, textAlign: TextAlign.center,
               style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
-          if (_signedIn && _loading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2)),
-                  SizedBox(width: 8),
-                  Text('Syncing Spotify library…'),
-                ],
-              ),
-            ),
+          // Startup sync runs silently while the cached library stays visible.
           if (!_signedIn)
             SizedBox(
               width: double.infinity,
