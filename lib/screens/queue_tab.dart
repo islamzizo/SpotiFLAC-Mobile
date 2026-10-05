@@ -51,6 +51,7 @@ import 'package:spotiflac_android/services/cover_cache_manager.dart';
 import 'package:spotiflac_android/screens/library_tracks_folder_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
 import 'package:spotiflac_android/screens/mornye_library_screen.dart';
+import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/screens/queue_library_refresh_policy.dart';
 import 'package:spotiflac_android/utils/clickable_metadata.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
@@ -1563,6 +1564,34 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                     title: widget.librarySection == 'playlists'
                         ? context.l10n.searchPlaylists
                         : context.l10n.searchSongs,
+                  ),
+
+                if (widget.librarySection == null)
+                  SliverToBoxAdapter(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 8,
+                      ),
+                      leading: Icon(
+                        Icons.music_note,
+                        color: Theme.of(context).colorScheme.primary,
+                        size: 28,
+                      ),
+                      title: const Text(
+                        'Spotify Playlists',
+                        style: TextStyle(fontSize: 20),
+                      ),
+                      trailing: Icon(
+                        Icons.chevron_right,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SpotifyAccountScreen(),
+                        ),
+                      ),
+                    ),
                   ),
 
                 if (shouldShowLibraryControls || hasQueueItems)
