@@ -279,9 +279,26 @@ class SpotifyAccountService {
       );
       profileNotifier.value = mergedProfile;
     }
-    await _storage.write(key: _playlistsKey, value: jsonEncode(playlists.map((p) => p.toJson()).toList()));
+    // Preserve a cached Liked Songs row during silent background refreshes.
+    // The Spotify screen enriches this entry during an explicit refresh.
+    final cachedPlaylists = await getPlaylists();
+    final cachedLikedSongs = cachedPlaylists.where(
+      (playlist) => playlist.id == 'liked-songs',
+    );
+    final persistedPlaylists = <SpotifyPlaylist>[
+      ...cachedLikedSongs,
+      ...playlists.where((playlist) => playlist.id != 'liked-songs'),
+    ];
+    await savePlaylists(persistedPlaylists);
     await _storage.write(key: _signedInKey, value: 'true');
-    return playlists;
+    return persistedPlaylists;
+  }
+
+  Future<void> savePlaylists(List<SpotifyPlaylist> playlists) async {
+    await _storage.write(
+      key: _playlistsKey,
+      value: jsonEncode(playlists.map((p) => p.toJson()).toList()),
+    );
   }
 
   Future<String> _validToken(String spDc, String spKey) async {
