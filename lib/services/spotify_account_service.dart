@@ -151,9 +151,9 @@ class SpotifyAccountService {
           'Accept': 'application/json',
         },
       );
-      if (response.statusCode != 200) return getProfile();
+      if (response.statusCode != 200) return await getProfile();
       final decoded = jsonDecode(response.body);
-      if (decoded is! Map) return getProfile();
+      if (decoded is! Map) return await getProfile();
       final images = decoded['images'];
       final imageUrl = images is List && images.isNotEmpty
           ? (_map(images.first)?['url']?.toString())
@@ -173,7 +173,7 @@ class SpotifyAccountService {
       profileNotifier.value = profile;
       return profile;
     } catch (_) {
-      return getProfile();
+      return await getProfile();
     }
   }
 
