@@ -11,6 +11,9 @@ import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/widgets/download_service_picker.dart';
 import 'package:spotiflac_android/widgets/view_queue_snackbar_action.dart';
+import 'package:spotiflac_android/widgets/album_detail_header.dart';
+import 'package:spotiflac_android/widgets/spotify_logo_icon.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 
 /// Shared single-track "add to queue" flow for detail screens: shows the
@@ -79,6 +82,71 @@ void downloadSingleTrack(
           playlistPosition: playlistPosition,
         );
     notifyQueued();
+  }
+}
+
+/// Saves the tracks shown by a Spotify detail screen to the signed-in
+/// Spotify account. This deliberately replaces the local "Loved" action only
+/// inside the Spotify navigation flow.
+class SpotifySaveButton extends StatefulWidget {
+  const SpotifySaveButton({
+    super.key,
+    required this.tracks,
+  });
+
+  final List<Track> tracks;
+
+  @override
+  State<SpotifySaveButton> createState() => _SpotifySaveButtonState();
+}
+
+class _SpotifySaveButtonState extends State<SpotifySaveButton> {
+  bool _saving = false;
+
+  Future<void> _save() async {
+    if (_saving || widget.tracks.isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      await SpotifyAccountService.instance.saveTracksToLibrary(
+        widget.tracks.map((track) => track.id),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            widget.tracks.length == 1
+                ? 'Saved to Spotify'
+                : 'Saved ${widget.tracks.length} tracks to Spotify',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save to Spotify: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return HeaderCircleButton(
+      icon: Icons.music_note,
+      iconWidget: _saving
+          ? SizedBox.square(
+              dimension: 22,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            )
+          : const SpotifyLogoIcon(size: 22),
+      tonal: true,
+      tooltip: _saving ? 'Saving to Spotify' : 'Save to Spotify',
+      onPressed: _saving ? null : _save,
+    );
   }
 }
 
