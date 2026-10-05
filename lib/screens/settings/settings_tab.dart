@@ -99,11 +99,30 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   Future<void> _loadSpotifyProfile() async {
     final service = SpotifyAccountService.instance;
     final signedIn = await service.isSignedIn();
-    final profile = signedIn ? await service.syncProfile() : null;
+    if (!signedIn) {
+      if (!mounted) return;
+      setState(() {
+        _spotifySignedIn = false;
+        _spotifyProfile = null;
+      });
+      return;
+    }
+
+    // Show the cached Spotify identity immediately, then refresh it in the
+    // background so Settings never waits on the Spotify web session.
+    final cachedProfile = await service.getProfile();
+    if (mounted) {
+      setState(() {
+        _spotifySignedIn = true;
+        _spotifyProfile = cachedProfile;
+      });
+    }
+
+    final refreshedProfile = await service.syncProfile();
     if (!mounted) return;
     setState(() {
-      _spotifySignedIn = signedIn;
-      _spotifyProfile = profile;
+      _spotifySignedIn = true;
+      _spotifyProfile = refreshedProfile ?? cachedProfile;
     });
   }
 
