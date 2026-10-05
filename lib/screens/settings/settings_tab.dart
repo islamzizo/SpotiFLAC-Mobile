@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/providers/user_profile_provider.dart';
 import 'package:spotiflac_android/screens/settings/profile_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/about_page.dart';
 import 'package:spotiflac_android/screens/settings/app_settings_page.dart';
@@ -22,6 +21,7 @@ import 'package:spotiflac_android/screens/settings/metadata_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/playback_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/settings_search_catalog.dart';
 import 'package:spotiflac_android/screens/spotify_account_screen.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -30,7 +30,6 @@ import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
-import 'package:spotiflac_android/widgets/profile_avatar.dart';
 
 /// One entry on the Settings tab.
 class _Destination {
@@ -89,6 +88,25 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   AppLocalizations? _cachedLocalizations;
   List<_Group>? _cachedGroups;
   String _query = '';
+  SpotifyAccountProfile? _spotifyProfile;
+  bool _spotifySignedIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSpotifyProfile();
+  }
+
+  Future<void> _loadSpotifyProfile() async {
+    final service = SpotifyAccountService.instance;
+    final signedIn = await service.isSignedIn();
+    final profile = signedIn ? await service.getProfile() : null;
+    if (!mounted) return;
+    setState(() {
+      _spotifySignedIn = signedIn;
+      _spotifyProfile = profile;
+    });
+  }
 
   @override
   void dispose() {
@@ -309,6 +327,8 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       context,
     ).push(slidePageRoute<void>(page: MornyeSettingsTheme(child: destination)));
     if (!mounted) return;
+    await _loadSpotifyProfile();
+    if (!mounted) return;
 
     // A route's focus scope remembers its previously focused child. Keep the
     // search field out of that restoration cycle while the child page is open,
@@ -460,46 +480,58 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             ),
           ),
           SliverToBoxAdapter(
-            child: Consumer(
-              builder: (context, ref, _) {
-                final profile = ref.watch(userProfileProvider).value;
-                return SettingsGroup(
-                  margin: margin,
-                  children: [
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      leading: ProfileAvatar(
-                        name: profile?.name ?? '',
-                        photoPath: profile?.photoPath,
-                        size: 64,
-                      ),
-                      title: Text(
-                        profile?.name.isNotEmpty == true
-                            ? profile!.name
-                            : context.l10n.profileSetUp,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      subtitle:
-                          profile?.name.isNotEmpty == true ||
-                              profile?.photoPath?.isNotEmpty == true
-                          ? null
-                          : Text(context.l10n.profileEdit),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: profile == null
-                          ? null
-                          : () => _navigateTo(
-                              context,
-                              ProfileSettingsPage(profile: profile),
+            child: SettingsGroup(
+              margin: margin,
+              children: [
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
+                  leading: ${_spotifyProfile?.imageUrl?.isNotEmpty == true
+                      ? ClipOval(
+                          child: Image.network(
+                            _spotifyProfile!.imageUrl!,
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => const CircleAvatar(
+                              radius: 32,
+                              child: Icon(Icons.person),
                             ),
-                    ),
-                  ],
-                );
-              },
+                          ),
+                        )
+                      : CircleAvatar(
+                          radius: 32,
+                          child: Icon(
+                            Icons.person,
+                            color: _spotifySignedIn
+                                ? Colors.green
+                                : Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                  title: Text(
+                    ${_spotifyProfile?.displayName.isNotEmpty == true
+                        ? _spotifyProfile!.displayName
+                        : 'Spotify Account'},
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  subtitle: Text(
+                    ${_spotifyProfile?.username?.isNotEmpty == true
+                        ? '@${_spotifyProfile!.username}'
+                        : _spotifySignedIn
+                            ? 'Spotify account connected'
+                            : 'Connect your Spotify account'},
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _navigateTo(
+                    context,
+                    const SpotifyAccountScreen(),
+                  ),
+                ),
+              ],
             ),
           ),
           ...body,
