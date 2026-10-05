@@ -101,7 +101,11 @@ class SpotifyAccountService {
   static const _profileKey = 'spotify_web_profile';
 
   final _storage = const FlutterSecureStorage();
-  Future<bool> isSignedIn() async => await _storage.read(key: _signedInKey) == 'true';
+  final ValueNotifier<SpotifyAccountProfile?> profileNotifier =
+      ValueNotifier<SpotifyAccountProfile?>(null);
+
+  Future<bool> isSignedIn() async =>
+      await _storage.read(key: _signedInKey) == 'true';
 
   Future<void> saveWebSession({required String spDc, String? spKey}) async {
     await _storage.write(key: _signedInKey, value: 'true');
@@ -121,7 +125,11 @@ class SpotifyAccountService {
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return null;
-      return SpotifyAccountProfile.fromJson(Map<String, dynamic>.from(decoded));
+      final profile = SpotifyAccountProfile.fromJson(
+        Map<String, dynamic>.from(decoded),
+      );
+      profileNotifier.value = profile;
+      return profile;
     } catch (_) {
       return null;
     }
@@ -161,6 +169,7 @@ class SpotifyAccountService {
         key: _profileKey,
         value: jsonEncode(profile.toJson()),
       );
+      profileNotifier.value = profile;
       return profile;
     } catch (_) {
       return getProfile();
@@ -250,6 +259,7 @@ class SpotifyAccountService {
           key: _profileKey,
           value: jsonEncode(mergedProfile.toJson()),
         );
+        profileNotifier.value = mergedProfile;
       }
     }
     await _storage.write(key: _playlistsKey, value: jsonEncode(playlists.map((p) => p.toJson()).toList()));
@@ -358,5 +368,6 @@ class SpotifyAccountService {
     for (final key in [_signedInKey,_spDcKey,_spKeyKey,accessTokenKey,_expiryKey,_playlistsKey,_profileKey]) {
       await _storage.delete(key:key);
     }
+    profileNotifier.value = null;
   }
 }
