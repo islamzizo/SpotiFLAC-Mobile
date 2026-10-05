@@ -50,6 +50,16 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
     _loadSavedState();
   }
 
+  void _onSpotifyPlaylistsChanged() {
+    if (!mounted) return;
+    final playlists = _spotify.playlistsNotifier.value;
+    if (playlists.isEmpty) return;
+    setState(() {
+      _playlists = playlists;
+      _signedIn = true;
+    });
+  }
+
   Future<void> _loadSavedState() async {
     try {
       final signed = await _spotify.isSignedIn();
@@ -124,6 +134,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
           merged.insert(0, const SpotifyPlaylist(id: 'liked-songs', name: 'Liked Songs', url: 'https://open.spotify.com/collection/tracks'));
         }
       }
+      await _spotify.savePlaylists(merged);
       if (!mounted) return;
       setState(() { _playlists = merged; _signedIn = true; _loading = false; });
     } catch (error) {
@@ -195,6 +206,12 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
     if (!mounted) return;
     setState(() { _signedIn = false; _playlists = const []; _error = null; });
     await _startLogin();
+  }
+
+  @override
+  void dispose() {
+    _spotify.playlistsNotifier.removeListener(_onSpotifyPlaylistsChanged);
+    super.dispose();
   }
 
   @override
