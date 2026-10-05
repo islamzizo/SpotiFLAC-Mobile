@@ -102,7 +102,18 @@ class _HomeProfileButtonState extends State<HomeProfileButton> {
   @override
   void initState() {
     super.initState();
-    SpotifyAccountService.instance.getProfile();
+    _loadSpotifyProfile();
+  }
+
+  Future<void> _loadSpotifyProfile() async {
+    final service = SpotifyAccountService.instance;
+    final signedIn = await service.isSignedIn();
+    if (!signedIn) return;
+
+    // Restore the cached identity immediately. If it is missing or stale,
+    // refresh it from Spotify without blocking the home screen.
+    await service.getProfile();
+    await service.syncProfile();
   }
 
   @override
