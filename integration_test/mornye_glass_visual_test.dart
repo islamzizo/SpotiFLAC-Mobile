@@ -28,10 +28,10 @@ class _Settings extends SettingsNotifier {
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
-  testWidgets('Android Mornye glass visual poses and attached layers', (
+  testWidgets('native Mornye glass visual poses and attached layers', (
     tester,
   ) async {
-    expect(Platform.isAndroid, isTrue);
+    expect(Platform.isAndroid || Platform.isIOS, isTrue);
     expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     binding.framePolicy = LiveTestWidgetsFlutterBindingFramePolicy.fullyLive;
     final directory = (await tester.runAsync(() async {
@@ -70,6 +70,7 @@ void main() {
       artUri: cover.uri,
     );
     final poses = <String, Object?>{};
+    const flatBackdrop = bool.fromEnvironment('SPOTIFLAC_GLASS_FLAT_BACKDROP');
     Future<void> wait(int milliseconds) async {
       await tester.runAsync(
         () => Future<void>.delayed(Duration(milliseconds: milliseconds)),
@@ -167,10 +168,15 @@ void main() {
             supportedLocales: AppLocalizations.supportedLocales,
             home: Scaffold(
               extendBody: true,
-              body: const CustomPaint(
-                painter: _Pattern(),
-                child: SizedBox.expand(),
-              ),
+              body: flatBackdrop
+                  ? const ColoredBox(
+                      color: Colors.black,
+                      child: SizedBox.expand(),
+                    )
+                  : const CustomPaint(
+                      painter: _Pattern(),
+                      child: SizedBox.expand(),
+                    ),
               bottomNavigationBar: SafeArea(
                 top: false,
                 child: Padding(
@@ -217,7 +223,7 @@ void main() {
         );
       });
       await wait(600);
-      if (clarity == 0.6) {
+      if (Platform.isAndroid && clarity == 0.6) {
         await binding.convertFlutterSurfaceToImage();
         await tester.pump();
       }
@@ -332,10 +338,12 @@ void main() {
     }
     binding.reportData!['mornye_glass_visual'] = {
       'scope':
-          'Production MornyeBottomBar/MiniPlayer over generated stripes/grid; '
+          'Production MornyeBottomBar/MiniPlayer over '
+          '${flatBackdrop ? 'flat black' : 'generated stripes/grid'}; '
           'paused in-memory playback and settings, no persistent data or network.',
       'captureSurface':
-          'Android converted Flutter image view; visual-only, no timings.',
+          '${Platform.isAndroid ? 'Android converted Flutter image view' : 'iOS window'}; '
+          'visual-only, no timings.',
       'halfPose':
           'Production animation controller stopped at linear progress 0.5.',
       'physicalSize': [

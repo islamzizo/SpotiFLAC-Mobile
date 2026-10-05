@@ -12,6 +12,7 @@ class MornyeLiquidBackdrop extends StatelessWidget {
     this.interaction = false,
     this.progress = 1,
     this.refractionDepth = 0.30,
+    this.refractionWidth = 20,
   });
 
   final BorderRadius borderRadius;
@@ -21,6 +22,7 @@ class MornyeLiquidBackdrop extends StatelessWidget {
   final bool interaction;
   final double progress;
   final double refractionDepth;
+  final double refractionWidth;
 
   @override
   Widget build(BuildContext context) {
@@ -48,7 +50,7 @@ class MornyeLiquidBackdrop extends StatelessWidget {
           refractionType: OpticalRefraction(
             refraction: 1.7,
             depth: refractionDepth * effect,
-            refractionWidth: 20,
+            refractionWidth: refractionWidth,
           ),
           chromaticAberration: 0.002 * clarity * effect,
         ),

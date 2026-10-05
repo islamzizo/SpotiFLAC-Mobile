@@ -12,8 +12,8 @@ const _heldWidthGrowth = 0.28;
 const _heldHeightGrowth = 0.24;
 const _pillRadius = 32.0;
 
-/// Selection with a small, transient refractive lens while held. Labels are
-/// rendered once above the lens; it samples the bar's backdrop on the GPU.
+/// Selection with a transient lens over the fixed-size foreground while held.
+/// It refracts both the bar's backdrop and its icons, rendered only once.
 class MornyeSelectionPill extends StatefulWidget {
   const MornyeSelectionPill({
     super.key,
@@ -264,8 +264,6 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
                       ),
                     ),
                   ),
-                if (lensEnabled && selected >= 0 && selected < count)
-                  _interactionLens(selected, count, pressProgress),
                 _foreground(
                   selected,
                   count,
@@ -305,6 +303,10 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
                     ],
                   ),
                 ),
+                // The lens must sample the foreground as well as the page.
+                // Below the icons it would look like a rim on a flat backdrop.
+                if (lensEnabled && selected >= 0 && selected < count)
+                  _interactionLens(selected, count, pressProgress),
               ],
             ),
           ),
@@ -393,6 +395,9 @@ class _MornyeSelectionPillState extends State<MornyeSelectionPill>
                   interaction: true,
                   progress: progress,
                   blurSigma: 0,
+                  // Bend only the bevel; the middle of each glyph stays clear.
+                  refractionDepth: 0.10,
+                  refractionWidth: 12,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(_pillRadius),
