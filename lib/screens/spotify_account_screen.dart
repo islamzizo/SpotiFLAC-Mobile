@@ -23,6 +23,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   List<SpotifyPlaylist> _playlists = const [];
   bool _signedIn = false;
   bool _loading = false;
+  bool _savedStateLoaded = false;
   bool _capturing = false;
   int _progress = 0;
   String? _error;
@@ -33,6 +34,7 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
   @override
   void initState() {
     super.initState();
+    _spotify.playlistsNotifier.addListener(_onSpotifyPlaylistsChanged);
     _web = WebViewController()
       ..setUserAgent('Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36')
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
@@ -53,14 +55,24 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
       final signed = await _spotify.isSignedIn();
       final playlists = await _spotify.getPlaylists();
       if (!mounted) return;
-      setState(() { _signedIn = signed; _playlists = playlists; });
+      setState(() {
+        _signedIn = signed;
+        _playlists = playlists;
+        _savedStateLoaded = true;
+      });
     } catch (error) {
       if (mounted) setState(() => _error = 'Could not load saved Spotify session: $error');
     }
   }
 
   Future<void> _onPageFinished(String url) async {
-    if (_signedIn || _capturing || _loading || !url.contains('spotify.com')) return;
+    if (!_savedStateLoaded ||
+        _signedIn ||
+        _capturing ||
+        _loading ||
+        !url.contains('spotify.com')) {
+      return;
+    }
     if (await _hasSessionCookie()) await _syncPlaylists();
   }
 
