@@ -13,6 +13,7 @@ class ProfileAvatar extends StatelessWidget {
     super.key,
     this.name = '',
     this.photoPath,
+    this.photoUrl,
     this.photo,
     this.size = 40,
   });
