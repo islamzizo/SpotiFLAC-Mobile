@@ -324,8 +324,12 @@ class _SpotifyAccountScreenState extends ConsumerState<SpotifyAccountScreen> {
               ),
             ),
           const SizedBox(height: 6),
-          Text(_signedIn ? 'Library syncs automatically when you open this screen.' : 'Uses the Spotify web login session; no developer client ID is required.',
-            textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
+          if (!_signedIn)
+            const Text(
+              'Uses the Spotify web login session; no developer client ID is required.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12),
+            ),
         ]),
       ),
     ),
