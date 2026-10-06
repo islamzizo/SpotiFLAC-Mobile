@@ -28,12 +28,24 @@ class _Player extends BaseAudioHandler {
   Future<void> skipToPrevious() async => actions.add('previous');
 }
 
+class _WidgetService extends PlayerWidgetService {
+  _WidgetService({required super.channel, required super.loadArtwork});
+
+  int publishes = 0;
+
+  @override
+  Future<void> publish({bool force = false}) {
+    publishes++;
+    return super.publish(force: force);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('test/player_widget');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-  late PlayerWidgetService service;
+  late _WidgetService service;
   late _Player player;
   late List<Map<Object?, Object?>> updates;
   late Map<String, Completer<PlayerWidgetArtwork?>> images;
@@ -84,7 +96,7 @@ void main() {
       return null;
     });
     player = _Player();
-    service = PlayerWidgetService(
+    service = _WidgetService(
       channel: channel,
       loadArtwork: (uri) async => uri == null
           ? null
@@ -147,15 +159,18 @@ void main() {
       );
       await settle();
       final count = updates.length;
+      final publishes = service.publishes;
       for (var second = 1; second < 20; second++) {
         player.playbackState.add(
           player.playbackState.value.copyWith(
             updatePosition: Duration(seconds: second),
+            controls: [...player.playbackState.value.controls],
           ),
         );
       }
       await settle();
       expect(updates.length, count);
+      expect(service.publishes, publishes);
       expect(updates.last['title'], 'Track one');
       expect(updates.last['canNext'], isTrue);
       expect(updates.last.toString(), isNot(contains('/private/music.flac')));
@@ -163,8 +178,75 @@ void main() {
       await settle();
       expect(updates.last['playing'], isFalse);
       expect(updates.last['canPlay'], isTrue);
+      player.playbackState.add(
+        player.playbackState.value.copyWith(
+          controls: const [MediaControl.play],
+        ),
+      );
+      await settle();
+      expect(updates.last['canPrevious'], isFalse);
+      expect(updates.last['canNext'], isFalse);
+      for (final control in [
+        MediaControl.skipToPrevious,
+        MediaControl.skipToNext,
+      ]) {
+        player.playbackState.add(
+          player.playbackState.value.copyWith(controls: [control]),
+        );
+        await settle();
+        expect(
+          updates.last['canPrevious'],
+          control == MediaControl.skipToPrevious,
+        );
+        expect(updates.last['canNext'], control == MediaControl.skipToNext);
+      }
     },
   );
+
+  test('failed updates retry even when transport is unchanged', () async {
+    player.mediaItem.add(item('one'));
+    await settle();
+    var attempts = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'update' && ++attempts == 1) {
+        throw PlatformException(code: 'unavailable');
+      }
+      if (call.method == 'update') {
+        updates.add(Map<Object?, Object?>.from(call.arguments as Map));
+      }
+      return null;
+    });
+    await player.play();
+    await settle();
+    expect(attempts, 1);
+    player.playbackState.add(
+      player.playbackState.value.copyWith(
+        updatePosition: const Duration(seconds: 1),
+      ),
+    );
+    await settle();
+    expect(attempts, 2);
+    expect(updates.last['playing'], isTrue);
+  });
+
+  test('rebinding listens to the new handler transport', () async {
+    player.mediaItem.add(item('one'));
+    await player.play();
+    await settle();
+    final replacement = _Player();
+    replacement.mediaItem.add(item('two'));
+    service.bind(replacement);
+    await settle();
+    expect(updates.last['id'], 'two');
+    expect(updates.last['playing'], isFalse);
+    await replacement.play();
+    await settle();
+    expect(updates.last['playing'], isTrue);
+    final publishes = service.publishes;
+    await player.pause();
+    await settle();
+    expect(service.publishes, publishes);
+  });
 
   test(
     'late artwork from a previous track cannot replace current artwork',
@@ -238,8 +320,10 @@ void main() {
       expect(updates.last['playing'], isTrue);
       expect(await command('toggle'), isTrue);
       expect(updates.last['playing'], isFalse);
+      final beforeSkips = updates.length;
       await command('next');
       await command('previous');
+      expect(updates.length, beforeSkips + 2);
       expect(player.actions, ['play', 'pause', 'next', 'previous']);
       expect(await command('delete'), isFalse);
       expect(player.actions.length, 4);

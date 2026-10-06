@@ -136,7 +136,22 @@ class PlayerWidgetService {
       }),
     );
     _subscriptions.add(
-      handler.playbackState.listen((_) => unawaited(publish())),
+      handler.playbackState
+          .map(
+            (state) => (
+              state.playing,
+              state.controls.any(
+                (control) => control.action == MediaAction.skipToPrevious,
+              ),
+              state.controls.any(
+                (control) => control.action == MediaAction.skipToNext,
+              ),
+            ),
+          )
+          .distinct(
+            (previous, next) => previous == next && _lastPayload != null,
+          )
+          .listen((_) => unawaited(publish())),
     );
   }
 
