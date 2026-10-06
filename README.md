@@ -84,8 +84,10 @@ installation must be regenerated with that setting.
 
 Android release builds, including plain `flutter build apk --release`, keep Dart
 debug data in `build/symbols/android/app.<architecture>.symbols` to reduce APK
-size without obfuscation. An explicit `--split-debug-info` path overrides this
-default; `--analyze-size` retains Flutter's normal behavior. Keep these symbols
+size. The release script also uses `--obfuscate` to shorten internal Dart names;
+when building directly, add `--obfuscate --split-debug-info=build/symbols/android`
+for the smaller APK. An explicit `--split-debug-info` path overrides the default;
+plain `--analyze-size` builds retain Flutter's normal behavior. Keep these symbols
 with the matching APK before another local build replaces them. Decode a trace
 with `flutter symbolize --debug-info=<symbols-file> --input=crash.txt`.
 

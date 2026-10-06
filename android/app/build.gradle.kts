@@ -173,6 +173,17 @@ val buildRustBackend = tasks.register<Exec>("buildRustBackend") {
 }
 tasks.named("preBuild").configure { dependsOn(buildRustBackend) }
 
+// Filter Android's copy only; keep shared bundles and mobile glass shaders intact.
+tasks.withType<org.gradle.api.tasks.Copy>().configureEach {
+    if (name.startsWith("copyFlutterAssets")) {
+        exclude(
+            "flutter_assets/packages/liquid_glass_easy/lib/assets/shaders/liquid_glass_desktop.frag",
+            "flutter_assets/packages/liquid_glass_easy/lib/assets/shaders/metaball_glass_desktop.frag",
+            "flutter_assets/packages/flutter_local_notifications_web/web/notifications_service_worker.js",
+        )
+    }
+}
+
 flutter {
     source = "../.."
 }

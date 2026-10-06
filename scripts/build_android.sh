@@ -94,6 +94,8 @@ fi
 BUILD_GIT_COMMIT="$(git rev-parse --short=8 HEAD)"
 "${FLUTTER_COMMAND[@]}" build apk \
   --release \
+  --obfuscate \
+  --split-debug-info "$PROJECT_DIR/build/symbols/android" \
   --split-per-abi \
   --target-platform "$TARGET_PLATFORM_LIST" \
   --dart-define="GIT_COMMIT=$BUILD_GIT_COMMIT" \
