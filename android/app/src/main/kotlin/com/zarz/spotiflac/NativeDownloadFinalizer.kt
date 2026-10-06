@@ -6,27 +6,16 @@ import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import com.antonkarpenko.ffmpegkit.FFmpegKit
-import com.antonkarpenko.ffmpegkit.FFmpegKitConfig
-import com.antonkarpenko.ffmpegkit.FFmpegSession
 import com.antonkarpenko.ffmpegkit.FFmpegSessionCompleteCallback
-import com.antonkarpenko.ffmpegkit.LogRedirectionStrategy
-import com.antonkarpenko.ffmpegkit.ReturnCode
 import com.zarz.spotiflac.SafDownloadHandler.mimeTypeForExt
 import com.zarz.spotiflac.SafDownloadHandler.normalizeExt
-import com.zarz.spotiflac.NativeFinalizationPolicy.applyQualityVariantFilenameLabel
 import com.zarz.spotiflac.NativeFinalizationPolicy.displayAudioQuality
-import com.zarz.spotiflac.NativeFinalizationPolicy.formatIndexTag
 import com.zarz.spotiflac.NativeFinalizationPolicy.normalizeAudioCodec
 import com.zarz.spotiflac.NativeFinalizationPolicy.resolvePreferredDecryptionExtension
 import org.json.JSONObject
 import java.io.File
-import java.io.RandomAccessFile
-import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.CancellationException
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.pow
 
