@@ -1,5 +1,6 @@
-//! History backup codecs stay on the native worker. Other backup categories,
-//! archive layout and presentation remain owned by Flutter.
+//! History codecs and ZIP payloads stay on the native worker. Backup category
+//! selection, archive layout and presentation remain owned by Flutter.
+mod archive;
 mod legacy;
 
 use crate::native_library::dart_date;
@@ -105,6 +106,8 @@ pub(crate) fn execute(request: &Value, check: Check<'_>) -> Result<Value, String
         "backup_history_export" => export(request, check),
         "backup_history_import" => import(request, check),
         "backup_split_legacy" => legacy::split(request, check),
+        "backup_archive_write" => archive::write(request, check),
+        "backup_archive_read" => archive::read(request, check),
         _ => Err("Unknown native backup operation".into()),
     }
 }

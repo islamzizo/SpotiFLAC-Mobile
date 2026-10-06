@@ -243,7 +243,9 @@ class BackupService {
           if (extensions.isNotEmpty) 'extensions': extensions,
         },
       };
-      await metadataFile.writeAsString(jsonEncode(metadata), flush: true);
+      await Isolate.run(
+        () => metadataFile.writeAsString(jsonEncode(metadata), flush: true),
+      );
 
       if (await partFile.exists()) await partFile.delete();
       final archiveFiles = <({String path, String name, bool store})>[
@@ -262,7 +264,22 @@ class BackupService {
           store: true,
         ));
       }
-      await _encodeArchiveInBackground(partFile.path, archiveFiles);
+      if (PlatformBridge.supportsCoreBackend) {
+        final result = await PlatformBridge.runNativeDataJob({
+          'operation': 'backup_archive_write',
+          'output_path': partFile.path,
+          'files': [
+            for (final file in archiveFiles)
+              {'path': file.path, 'name': file.name, 'store': file.store},
+          ],
+        });
+        if (result['published'] != true ||
+            result['count'] != archiveFiles.length) {
+          throw const FormatException('Incomplete native backup archive');
+        }
+      } else {
+        await _encodeArchiveInBackground(partFile.path, archiveFiles);
+      }
       if (await output.exists()) await output.delete();
       await partFile.rename(output.path);
       _log.i('Streaming backup written to ${output.path}');
@@ -318,10 +335,14 @@ class BackupService {
     Directory? temporaryDirectory,
   }) async {
     final tempRoot = temporaryDirectory ?? await getTemporaryDirectory();
-    final bundle =
-        PlatformBridge.supportsCoreBackend && !await _hasZipHeader(File(path))
-        ? await _parseLegacyNative(path, tempRoot)
-        : await _parseFileInBackground(path, tempRoot.path);
+    final BackupBundle? bundle;
+    if (PlatformBridge.supportsCoreBackend) {
+      bundle = await _hasZipHeader(File(path))
+          ? await _parseArchiveNative(path, tempRoot)
+          : await _parseLegacyNative(path, tempRoot);
+    } else {
+      bundle = await _parseFileInBackground(path, tempRoot.path);
+    }
     if (bundle == null) {
       _log.w('Backup file could not be read: invalid or unsupported contents');
     }
@@ -412,6 +433,65 @@ class BackupService {
     } catch (error) {
       await staging.delete(recursive: true);
       _log.w('Legacy backup native parse failed: $error');
+      return null;
+    }
+  }
+
+  static Future<BackupBundle?> _parseArchiveNative(
+    String path,
+    Directory temporary,
+  ) async {
+    String? stagingPath;
+    try {
+      await temporary.create(recursive: true);
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'backup_archive_read',
+        'input_path': path,
+        'temporary_directory': temporary.path,
+      });
+      stagingPath = result['temporary_directory_path'] as String?;
+      if (result['published'] != true || stagingPath == null) {
+        throw const FormatException('Incomplete native backup staging');
+      }
+      // ZIP decompression and large payloads remain native/on disk; only the
+      // bounded metadata is hydrated into Flutter models on a Dart worker.
+      return await Isolate.run(() {
+        final root =
+            jsonDecode(
+                  File(result['metadata_path'] as String).readAsStringSync(),
+                )
+                as Map;
+        final data = root['data'] as Map;
+        final rawProfile = data['profile'] as Map?;
+        final historyPath = result['history_path'] as String?;
+        return BackupBundle(
+          formatVersion: root['format_version'] as int,
+          appVersion: root['app_version'] as String? ?? '',
+          createdAt: DateTime.tryParse(root['created_at'] as String? ?? ''),
+          settings: _mapOrNull(data['settings']),
+          profile: rawProfile == null
+              ? null
+              : UserProfile(
+                  name: rawProfile['name'] as String,
+                  photoPath: result['profile_photo_path'] as String?,
+                ),
+          history: const [],
+          hasHistory: historyPath != null,
+          historyNdjsonPath: historyPath,
+          historyCount: (root['history_count'] as num?)?.toInt(),
+          collections: _mapOrEmpty(data['collections']),
+          playlistCovers: _mapOrEmpty(result['playlist_covers']),
+          extensions: _mapOrEmpty(data['extensions']),
+          temporaryDirectoryPath: stagingPath,
+        );
+      });
+    } catch (error) {
+      if (stagingPath != null) {
+        try {
+          await Directory(stagingPath).delete(recursive: true);
+        } catch (_) {}
+      }
+      _log.w('Backup archive native parse failed: $error');
       return null;
     }
   }
