@@ -1,8 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/models/library_collections.dart';
+import 'package:spotiflac_android/services/collection_restore_codec.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -488,22 +492,56 @@ class LibraryCollectionsDatabase {
     Map<String, dynamic> collectionsJson,
   ) async {
     final nowIso = DateTime.now().toIso8601String();
+    await replaceDatabaseFromBackup(
+      await database,
+      collectionsJson,
+      nowIso: nowIso,
+    );
+  }
 
-    List<Map<String, dynamic>> listOf(String key) {
-      final raw = collectionsJson[key];
-      if (raw is! List) return const [];
-      return raw
-          .whereType<Map<Object?, Object?>>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList(growable: false);
+  /// Shares the production restore route with isolated database integration
+  /// fixtures. The caller initializes the app-owned schema before native IO.
+  static Future<void> replaceDatabaseFromBackup(
+    Database db,
+    Map<String, dynamic> collectionsJson, {
+    String? nowIso,
+  }) async {
+    final restoreTime = nowIso ?? DateTime.now().toIso8601String();
+    if (PlatformBridge.supportsCoreBackend) {
+      final temporary = await Directory(
+        (await getTemporaryDirectory()).path,
+      ).createTemp('collection-restore-');
+      try {
+        final path = '${temporary.path}/commands.ndjson';
+        final count = await writeCollectionRestoreCommands(
+          path,
+          collectionsJson,
+          restoreTime,
+        );
+        final result = await PlatformBridge.runNativeDataJob({
+          'operation': 'backup_collections_import',
+          'collections_path': db.path,
+          'ndjson_path': path,
+          'expected_count': count,
+        });
+        if (result['committed'] != true) {
+          throw const FormatException('Incomplete collection restore');
+        }
+      } finally {
+        try {
+          await temporary.delete(recursive: true);
+        } on FileSystemException catch (error) {
+          _log.w('Could not remove collection restore staging: $error');
+        }
+      }
+      _log.i('Restored collections from backup');
+      return;
     }
 
-    final wishlist = listOf('wishlist');
-    final loved = listOf('loved');
-    final playlists = listOf('playlists');
-    final favoriteArtists = listOf('favoriteArtists');
-
-    final db = await database;
+    final commands = await prepareCollectionRestoreCommands(
+      collectionsJson,
+      restoreTime,
+    );
     await db.transaction((txn) async {
       await txn.delete(_tablePlaylistTracks);
       await txn.delete(_tablePlaylists);
@@ -511,63 +549,29 @@ class LibraryCollectionsDatabase {
       await txn.delete(_tableLoved);
       await txn.delete(_tableFavoriteArtists);
 
-      Future<void> insertTrackEntries(
-        String table,
-        List<Map<String, dynamic>> entries,
-      ) async {
-        for (final entry in entries) {
-          final key = entry['key'] as String?;
-          final track = entry['track'];
-          if (key == null || key.isEmpty || track is! Map) continue;
-          await txn.insert(table, {
-            'track_key': key,
-            'track_json': jsonEncode(track),
-            'added_at': (entry['addedAt'] as String?) ?? nowIso,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
+      var batch = txn.batch();
+      var pending = 0;
+      for (final command in commands) {
+        final table = switch (command['kind']) {
+          'wishlist' => _tableWishlist,
+          'loved' => _tableLoved,
+          'artist' => _tableFavoriteArtists,
+          'playlist' => _tablePlaylists,
+          'playlist_track' => _tablePlaylistTracks,
+          _ => throw const FormatException('Unknown collection command'),
+        };
+        batch.insert(
+          table,
+          command['values'] as Map<String, dynamic>,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        if (++pending == 500) {
+          await batch.commit(noResult: true);
+          batch = txn.batch();
+          pending = 0;
         }
       }
-
-      await insertTrackEntries(_tableWishlist, wishlist);
-      await insertTrackEntries(_tableLoved, loved);
-
-      for (final artist in favoriteArtists) {
-        final key = artist['key'] as String?;
-        if (key == null || key.isEmpty) continue;
-        await txn.insert(_tableFavoriteArtists, {
-          'artist_key': key,
-          'artist_json': jsonEncode(artist),
-          'added_at': (artist['addedAt'] as String?) ?? nowIso,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
-      }
-
-      for (final playlist in playlists) {
-        final id = playlist['id'] as String?;
-        if (id == null || id.isEmpty) continue;
-        final createdAt = (playlist['createdAt'] as String?) ?? nowIso;
-        final updatedAt = (playlist['updatedAt'] as String?) ?? createdAt;
-        await txn.insert(_tablePlaylists, {
-          'id': id,
-          'name': (playlist['name'] as String?) ?? '',
-          'cover_image_path': playlist['coverImagePath'] as String?,
-          'created_at': createdAt,
-          'updated_at': updatedAt,
-        }, conflictAlgorithm: ConflictAlgorithm.replace);
-
-        final tracksRaw = playlist['tracks'];
-        if (tracksRaw is! List) continue;
-        for (final trackEntry in tracksRaw.whereType<Map<Object?, Object?>>()) {
-          final entry = Map<String, dynamic>.from(trackEntry);
-          final key = entry['key'] as String?;
-          final track = entry['track'];
-          if (key == null || key.isEmpty || track is! Map) continue;
-          await txn.insert(_tablePlaylistTracks, {
-            'playlist_id': id,
-            'track_key': key,
-            'track_json': jsonEncode(track),
-            'added_at': (entry['addedAt'] as String?) ?? nowIso,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-        }
-      }
+      if (pending > 0) await batch.commit(noResult: true);
     });
 
     _log.i('Restored collections from backup');
