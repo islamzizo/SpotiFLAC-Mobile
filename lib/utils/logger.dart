@@ -127,6 +127,8 @@ class LogBuffer extends ChangeNotifier {
   Timer? _goLogTimer;
   int _lastGoLogIndex = 0;
   bool _isFetchingGoLogs = false;
+  int _goLogGeneration = 0;
+  Future<void>? _pendingGoLogClear;
 
   static bool _loggingEnabled = false;
   static bool get loggingEnabled => _loggingEnabled;
@@ -187,11 +189,12 @@ class LogBuffer extends ChangeNotifier {
 
   void startGoLogPolling() {
     _goLogTimer?.cancel();
+    _goLogGeneration++;
     _goLogTimer = Timer.periodic(_goLogPollingInterval, (_) async {
       if (_isFetchingGoLogs) return;
       _isFetchingGoLogs = true;
       try {
-        await _fetchGoLogs();
+        await _fetchGoLogs(_goLogGeneration);
       } finally {
         _isFetchingGoLogs = false;
       }
@@ -201,12 +204,17 @@ class LogBuffer extends ChangeNotifier {
   void stopGoLogPolling() {
     _goLogTimer?.cancel();
     _goLogTimer = null;
-    _isFetchingGoLogs = false;
+    _goLogGeneration++;
+    // The stopped poll still owns the in-flight slot until its call completes.
   }
 
-  Future<void> _fetchGoLogs() async {
+  Future<void> _fetchGoLogs(int generation) async {
     try {
+      final clearing = _pendingGoLogClear;
+      if (clearing != null) await clearing;
+      if (generation != _goLogGeneration) return;
       final result = await _nativeLogs.getSince(_lastGoLogIndex);
+      if (generation != _goLogGeneration) return;
       final logs = result['logs'] as List<dynamic>? ?? [];
       final nextIndex = result['next_index'] as int? ?? _lastGoLogIndex;
       final keepNonErrorLogs = _loggingEnabled;
@@ -254,7 +262,7 @@ class LogBuffer extends ChangeNotifier {
       }
 
       addAll(entries);
-      _lastGoLogIndex = nextIndex;
+      if (generation == _goLogGeneration) _lastGoLogIndex = nextIndex;
     } catch (e) {
       if (kDebugMode) {
         debugPrint('Failed to fetch native backend logs: $e');
@@ -265,7 +273,18 @@ class LogBuffer extends ChangeNotifier {
   void clear() {
     _entries.clear();
     _lastGoLogIndex = 0;
-    _nativeLogs.clear().catchError((_) {});
+    _goLogGeneration++;
+    late final Future<void> clearing;
+    clearing =
+        (_pendingGoLogClear?.then((_) => _nativeLogs.clear()) ??
+                _nativeLogs.clear())
+            .catchError((_) {})
+            .whenComplete(() {
+              if (identical(_pendingGoLogClear, clearing)) {
+                _pendingGoLogClear = null;
+              }
+            });
+    _pendingGoLogClear = clearing;
     notifyListeners();
   }
 
