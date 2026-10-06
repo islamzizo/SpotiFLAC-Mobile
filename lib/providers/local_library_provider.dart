@@ -1685,20 +1685,35 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         return;
       }
 
+      if (!ref.mounted || _scanCancelRequested) return;
+      final native = PlatformBridge.supportsCoreBackend;
       final referencedCoverPaths = <String>{};
-      var offset = 0;
-      const pageSize = 500;
-      while (true) {
-        final page = await _db.getCoverPaths(limit: pageSize, offset: offset);
-        if (page.isEmpty) break;
-        referencedCoverPaths.addAll(page);
-        if (page.length < pageSize) break;
-        offset += pageSize;
+      String? libraryDatabasePath;
+      if (native) {
+        libraryDatabasePath = (await _db.database).path;
+      } else {
+        var offset = 0;
+        const pageSize = 500;
+        while (true) {
+          if (!ref.mounted || _scanCancelRequested) return;
+          final page = await _db.getCoverPaths(limit: pageSize, offset: offset);
+          if (page.isEmpty) break;
+          referencedCoverPaths.addAll(page);
+          if (page.length < pageSize) break;
+          offset += pageSize;
+        }
       }
+      if (!ref.mounted || _scanCancelRequested) return;
 
       final deletedCount = await pruneUnreferencedLibraryCovers(
         libraryCoverDir,
         referencedCoverPaths,
+        libraryDatabasePath: libraryDatabasePath,
+        requestId: _nativeLibraryRequestId,
+        // Avoid removing covers being written by a background producer before
+        // its Library transaction publishes the reference. The scan guard is
+        // still held here; native lookup also holds a SQLite writer barrier.
+        minimumAge: const Duration(minutes: 1),
       );
 
       if (deletedCount > 0) {

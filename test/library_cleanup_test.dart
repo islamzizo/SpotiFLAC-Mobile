@@ -103,6 +103,60 @@ void main() {
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
   test(
+    'native pruning reads the DB without transferring reference lists',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('native-prune-');
+      addTearDown(() => directory.delete(recursive: true));
+      final databasePath = '${directory.path}/local_library.db';
+      final deleted = await pruneUnreferencedLibraryCovers(
+        directory,
+        {'not-transferred'},
+        libraryDatabasePath: databasePath,
+        requestId: 'scan-lease',
+        minimumAge: const Duration(minutes: 1),
+        nativeJobRunner: (request, {requestId}) async {
+          expect(requestId, 'scan-lease');
+          expect(request, {
+            'operation': 'cache_prune_library',
+            'directory': directory.absolute.path,
+            'library_path': databasePath,
+            'minimum_age_us': 60000000,
+          });
+          return {
+            'deleted': 2,
+            'errors': <String>[],
+            'error_count': 0,
+            'committed': true,
+            'cancelled': true,
+          };
+        },
+      );
+      expect(deleted, 2);
+    },
+  );
+
+  test(
+    'cover cleanup retains recent payloads awaiting a DB reference',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('recent-prune-');
+      addTearDown(() => directory.delete(recursive: true));
+      final active = await File('${directory.path}/active').writeAsBytes([1]);
+      final stale = await File('${directory.path}/stale').writeAsBytes([2]);
+      await stale.setLastModified(DateTime(2020));
+      expect(
+        await pruneUnreferencedLibraryCovers(
+          directory,
+          {},
+          minimumAge: const Duration(minutes: 1),
+        ),
+        1,
+      );
+      expect(await active.exists(), true);
+      expect(await stale.exists(), false);
+    },
+  );
+
+  test(
     'cover cleanup preserves references through directory aliases',
     () async {
       final root = await Directory.systemTemp.createTemp(

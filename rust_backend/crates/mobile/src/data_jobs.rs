@@ -131,6 +131,9 @@ fn execute(
         operation if operation.starts_with("backup_") => {
             crate::native_backup::execute(request, check)
         }
+        operation if operation.starts_with("cache_") => {
+            crate::native_cache::execute(request, check)
+        }
         _ => Err(format!("Unknown native data operation: {operation}")),
     }
 }
