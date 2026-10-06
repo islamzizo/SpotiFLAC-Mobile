@@ -874,23 +874,27 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
   }
 
   Widget _buildLoveAllButton() {
-    final collectionsState = ref.watch(libraryCollectionsProvider);
     final tracks = _tracks;
-    final allLoved =
-        tracks != null &&
-        tracks.isNotEmpty &&
-        tracks.every((t) => collectionsState.isLoved(t));
-
-    return HeaderCircleButton(
-      icon: allLoved ? Icons.favorite : Icons.favorite_border,
-      tonal: true,
-      iconColor: allLoved ? Theme.of(context).colorScheme.error : null,
-      tooltip: allLoved
-          ? context.l10n.trackOptionRemoveFromLoved
-          : context.l10n.tooltipLoveAll,
-      onPressed: tracks == null || tracks.isEmpty
-          ? null
-          : () => _loveAll(tracks),
+    return Consumer(
+      builder: (context, ref, _) {
+        ref.watch(libraryCollectionsProvider.select((state) => state.loved));
+        final collectionsState = ref.read(libraryCollectionsProvider);
+        final allLoved =
+            tracks != null &&
+            tracks.isNotEmpty &&
+            tracks.every((t) => collectionsState.isLoved(t));
+        return HeaderCircleButton(
+          icon: allLoved ? Icons.favorite : Icons.favorite_border,
+          tonal: true,
+          iconColor: allLoved ? Theme.of(context).colorScheme.error : null,
+          tooltip: allLoved
+              ? context.l10n.trackOptionRemoveFromLoved
+              : context.l10n.tooltipLoveAll,
+          onPressed: tracks == null || tracks.isEmpty
+              ? null
+              : () => _loveAll(tracks),
+        );
+      },
     );
   }
 

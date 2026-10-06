@@ -47,9 +47,9 @@ class TrackListTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
 
-    final queueItem = ref.watch(
+    final isQueued = ref.watch(
       downloadQueueLookupProvider.select(
-        (lookup) => lookup.byTrackId[track.id],
+        (lookup) => lookup.byTrackId.containsKey(track.id),
       ),
     );
 
@@ -69,8 +69,6 @@ class TrackListTile extends ConsumerWidget {
             ),
           )
         : false;
-
-    final isQueued = queueItem != null;
 
     return TrackCard(
       style: TrackCardStyle.flat,
