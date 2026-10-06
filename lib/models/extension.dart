@@ -1,5 +1,3 @@
-part of 'extension_provider.dart';
-
 // Manifest-backed models: extension metadata, capabilities, health, and
 // install results.
 
@@ -15,39 +13,6 @@ class ExtensionRestoreResult {
     this.failed = 0,
     this.failedIds = const [],
   });
-}
-
-bool _stringListEquals(List<String> a, List<String> b) {
-  if (identical(a, b)) return true;
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
-}
-
-List<String>? _tryDecodeStringListPreference(String rawJson, String key) {
-  try {
-    final decoded = jsonDecode(rawJson);
-    if (decoded is! List) {
-      throw const FormatException('expected a JSON list');
-    }
-
-    final values = <String>[];
-    for (final item in decoded) {
-      if (item is! String) {
-        throw const FormatException('expected string entries');
-      }
-      final trimmed = item.trim();
-      if (trimmed.isNotEmpty) {
-        values.add(trimmed);
-      }
-    }
-    return values;
-  } catch (e) {
-    _log.w('Ignoring invalid $key preference: $e');
-    return null;
-  }
 }
 
 class ExtensionDownloadTransferPolicy {

@@ -4,7 +4,7 @@ import 'dart:math';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/track.dart';
-import 'package:spotiflac_android/providers/extension_provider.dart';
+import 'package:spotiflac_android/models/extension.dart';
 import 'package:spotiflac_android/services/download_metadata_resolver.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';

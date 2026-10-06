@@ -1,4 +1,4 @@
-import 'package:spotiflac_android/providers/extension_provider.dart';
+import 'package:spotiflac_android/models/extension.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
