@@ -1686,33 +1686,19 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       }
 
       if (!ref.mounted || _scanCancelRequested) return;
-      final native = PlatformBridge.supportsCoreBackend;
-      final referencedCoverPaths = <String>{};
-      String? libraryDatabasePath;
-      if (native) {
-        libraryDatabasePath = (await _db.database).path;
-      } else {
-        var offset = 0;
-        const pageSize = 500;
-        while (true) {
-          if (!ref.mounted || _scanCancelRequested) return;
-          final page = await _db.getCoverPaths(limit: pageSize, offset: offset);
-          if (page.isEmpty) break;
-          referencedCoverPaths.addAll(page);
-          if (page.length < pageSize) break;
-          offset += pageSize;
-        }
-      }
+      final libraryDatabase = await _db.database;
       if (!ref.mounted || _scanCancelRequested) return;
 
       final deletedCount = await pruneUnreferencedLibraryCovers(
         libraryCoverDir,
-        referencedCoverPaths,
-        libraryDatabasePath: libraryDatabasePath,
+        const {},
+        libraryDatabase: libraryDatabase,
         requestId: _nativeLibraryRequestId,
+        canPrune: () => ref.mounted && !_scanCancelRequested,
         // Avoid removing covers being written by a background producer before
         // its Library transaction publishes the reference. The scan guard is
-        // still held here; native lookup also holds a SQLite writer barrier.
+        // still held here; the source sqflite transaction holds the writer
+        // barrier while Rust reads its detached, private cover projection.
         minimumAge: const Duration(minutes: 1),
       );
 

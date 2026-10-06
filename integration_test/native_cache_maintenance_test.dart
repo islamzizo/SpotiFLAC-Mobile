@@ -7,6 +7,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/services/library_cleanup.dart';
 import 'package:spotiflac_android/services/library_schema.dart';
+import 'package:spotiflac_android/services/native_cache_maintenance.dart';
 import 'package:spotiflac_android/utils/cache_byte_budget.dart';
 
 Future<File> _payload(
@@ -25,7 +26,9 @@ Future<Database> _library(String path) => openDatabase(
   path,
   version: LibrarySchema.version,
   singleInstance: false,
-  onConfigure: (db) => db.execute('PRAGMA journal_mode=WAL'),
+  onConfigure: (db) async {
+    await db.rawQuery('PRAGMA journal_mode=WAL');
+  },
   onCreate: (db, version) async {
     await LibrarySchema.create(db, version);
   },
@@ -152,7 +155,8 @@ void main() {
           await pruneUnreferencedLibraryCovers(
             Directory(alias.path),
             {},
-            libraryDatabasePath: db.path,
+            libraryDatabase: db,
+            temporaryDirectory: root,
             minimumAge: const Duration(minutes: 1),
           ),
           1,
@@ -168,7 +172,89 @@ void main() {
           ),
           2,
         );
+        expect(await db.rawQuery('PRAGMA integrity_check'), [
+          {'integrity_check': 'ok'},
+        ]);
+        expect(
+          (await db.rawQuery('PRAGMA database_list')).map((row) => row['name']),
+          unorderedEquals(['main', 'temp']),
+        );
+        expect(
+          await root
+              .list()
+              .where(
+                (entry) => entry.path
+                    .split('/')
+                    .last
+                    .startsWith('library-cover-snapshot-'),
+              )
+              .toList(),
+          isEmpty,
+        );
       } finally {
+        await db.close();
+      }
+    },
+  );
+
+  testWidgets(
+    'private native sweep retains source writer barrier and releases it after maintenance',
+    (tester) async {
+      final covers = await Directory('${root.path}/barrier-covers').create();
+      final retained = await _payload(covers, 'retained.jpg');
+      final orphan = await _payload(covers, 'orphan.jpg');
+      final db = await _library('${root.path}/local_library.db');
+      final writer = await openDatabase(
+        db.path,
+        singleInstance: false,
+        onConfigure: (db) async => db.rawQuery('PRAGMA busy_timeout=1'),
+      );
+      try {
+        await _reference(db, 'retained', retained.path);
+        var nativeCalls = 0;
+        expect(
+          await pruneUnreferencedLibraryCovers(
+            covers,
+            const {},
+            libraryDatabase: db,
+            temporaryDirectory: root,
+            minimumAge: const Duration(minutes: 1),
+            nativeJobRunner: (request, {requestId}) async {
+              nativeCalls++;
+              final privatePath = request['library_path'] as String;
+              expect(privatePath, isNot(db.path));
+              expect(await File(privatePath).exists(), true);
+              await expectLater(
+                _reference(
+                  writer,
+                  'during-sweep',
+                  '${covers.path}/waiting.jpg',
+                ),
+                throwsA(isA<DatabaseException>()),
+              );
+              return (await runNativeCacheMaintenance(
+                request,
+                requestId: requestId,
+              ))!;
+            },
+          ),
+          1,
+        );
+        expect(nativeCalls, 1);
+        expect(await retained.exists(), true);
+        expect(await orphan.exists(), false);
+        await _reference(writer, 'after-sweep', '${covers.path}/waiting.jpg');
+        expect(await db.rawQuery('PRAGMA integrity_check'), [
+          {'integrity_check': 'ok'},
+        ]);
+        expect(
+          Sqflite.firstIntValue(
+            await db.rawQuery('SELECT COUNT(*) FROM library'),
+          ),
+          2,
+        );
+      } finally {
+        await writer.close();
         await db.close();
       }
     },
@@ -216,7 +302,8 @@ void main() {
                 deleted = await pruneUnreferencedLibraryCovers(
                   covers,
                   {},
-                  libraryDatabasePath: db.path,
+                  libraryDatabase: db,
+                  temporaryDirectory: root,
                 );
               } else {
                 final references = <String>{};
@@ -257,7 +344,8 @@ void main() {
         }
         final remaining = await covers.list().length;
         expect(remaining, 4000);
-        binding.reportData = {
+        binding.reportData ??= {};
+        binding.reportData!['cache_maintenance'] = {
           'cache_prune_benchmark': {
             'files': 5000,
             'references': 4000,

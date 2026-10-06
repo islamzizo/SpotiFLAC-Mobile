@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'package:sqflite/sqflite.dart';
+import 'package:spotiflac_android/services/library_cover_snapshot.dart';
 import 'package:spotiflac_android/services/native_cache_maintenance.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -54,20 +56,67 @@ Future<void> deleteLibraryItemsByIds(Database db, Iterable<String> ids) async {
 Future<int> pruneUnreferencedLibraryCovers(
   Directory directory,
   Set<String> referencedPaths, {
-  String? libraryDatabasePath,
+  Database? libraryDatabase,
   String? requestId,
   Duration minimumAge = Duration.zero,
   NativeCacheJobRunner? nativeJobRunner,
+  bool Function()? canPrune,
+  Directory? temporaryDirectory,
 }) async {
   if (minimumAge.isNegative) {
     throw ArgumentError.value(minimumAge, 'minimumAge');
   }
+  if (canPrune != null && !canPrune()) return 0;
+  if (libraryDatabase != null) {
+    if (nativeJobRunner == null && !PlatformBridge.supportsCoreBackend) {
+      return libraryDatabase.transaction((txn) async {
+        final paths = await readLibraryCoverReferences(txn);
+        if (canPrune != null && !canPrune()) return 0;
+        return _pruneUnreferencedLibraryCovers(
+          directory,
+          paths,
+          requestId: requestId,
+          minimumAge: minimumAge,
+        );
+      }, exclusive: true);
+    }
+    return withLibraryCoverSnapshot(
+      libraryDatabase,
+      (privatePath) => _pruneUnreferencedLibraryCovers(
+        directory,
+        const {},
+        privateSnapshotPath: privatePath,
+        requestId: requestId,
+        minimumAge: minimumAge,
+        nativeJobRunner: nativeJobRunner,
+      ),
+      canPrune: canPrune,
+      temporaryDirectory: temporaryDirectory,
+    );
+  }
+  return _pruneUnreferencedLibraryCovers(
+    directory,
+    referencedPaths,
+    requestId: requestId,
+    minimumAge: minimumAge,
+    nativeJobRunner: nativeJobRunner,
+  );
+}
+
+Future<int> _pruneUnreferencedLibraryCovers(
+  Directory directory,
+  Set<String> referencedPaths, {
+  String? privateSnapshotPath,
+  String? requestId,
+  required Duration minimumAge,
+  NativeCacheJobRunner? nativeJobRunner,
+}) async {
   final result = await runNativeCacheMaintenance(
     {
       'operation': 'cache_prune_library',
       'directory': directory.absolute.path,
-      'library_path': ?libraryDatabasePath,
-      if (libraryDatabasePath == null)
+      'library_path': ?privateSnapshotPath,
+      if (privateSnapshotPath == null)
         'referenced_paths': referencedPaths.toList(growable: false),
       'minimum_age_us': minimumAge.inMicroseconds,
     },
@@ -90,7 +139,7 @@ Future<int> pruneUnreferencedLibraryCovers(
     }
     return deleted;
   }
-  if (libraryDatabasePath != null) {
+  if (privateSnapshotPath != null) {
     throw StateError(
       'The desktop cache adapter requires explicit cover references',
     );
