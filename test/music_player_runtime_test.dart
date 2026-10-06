@@ -16,6 +16,7 @@ import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
 import 'package:spotiflac_android/services/source_deletion_events.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
+import 'package:spotiflac_android/utils/logger.dart';
 
 class _Deck implements MusicPlaybackDeck {
   @override
@@ -623,6 +624,16 @@ void main() {
       },
     );
     await expectLater(runtime.initialize(), throwsStateError);
+    expect(
+      LogBuffer().entries.any(
+        (entry) =>
+            entry.tag == 'MusicPlayerRuntime' &&
+            entry.level == 'ERROR' &&
+            entry.message == 'Failed to initialize playback' &&
+            entry.error?.contains('Initialization failed') == true,
+      ),
+      isTrue,
+    );
     expect(runtime.handler, isNull);
     expect(decks.single.disposals, 1);
     final retried = await runtime.initialize();

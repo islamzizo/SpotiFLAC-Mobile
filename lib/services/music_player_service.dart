@@ -21,6 +21,8 @@ import 'package:spotiflac_android/services/sqlite_helpers.dart'
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/playback_normalization.dart';
 import 'package:spotiflac_android/services/playback_automation.dart';
+import 'package:spotiflac_android/services/playback_session_writer.dart';
+import 'package:spotiflac_android/services/content_uri_playback_cache.dart';
 import 'package:spotiflac_android/services/music_player_runtime.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/services/automix_analysis.dart';
@@ -321,11 +323,7 @@ class MusicPlayerHandler extends BaseAudioHandler
   int _headphoneMonitoringRevision = 0;
   final List<PlayableMedia> _media = [];
   final List<MediaItem> _queueItems = [];
-  final Map<String, String> _resolvedPathCache = {};
-  final Map<String, int> _resolvedPathSizes = {};
-  final Map<String, Future<String?>> _pendingSourceResolutions = {};
-  final List<String> _resolvedPathOrder = [];
-  final Set<String> _pendingResolvedPathDeletes = {};
+  late final ContentUriPlaybackCache _sourceCache;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   int _index = -1;
   int _playRequestGeneration = 0;
@@ -358,16 +356,12 @@ class MusicPlayerHandler extends BaseAudioHandler
   Duration _lastBroadcastPosition = Duration.zero;
   DateTime? _lastPositionBroadcastAt;
   DateTime? _lastPeriodicPersistAt;
-  Future<void> _sessionWriteTail = Future<void>.value();
-  int _sessionQueueRevision = 0;
-  int _scheduledSessionQueueRevision = -1;
-  int _persistedSessionQueueRevision = -1;
+  late final PlaybackSessionWriter _sessionWriter;
+  int get _sessionQueueRevision => _sessionWriter.queueRevision;
   static const Duration _positionBroadcastInterval = Duration(
     milliseconds: 500,
   );
   static const Duration _positionPersistInterval = Duration(seconds: 10);
-  static const int _maxResolvedPathCacheEntries = 3;
-  static const int _maxResolvedPathCacheBytes = 256 * 1024 * 1024;
 
   DateTime? get sleepTimerEndsAt => _sleepTimerEndsAt;
   bool get isDisposed => _disposed;
@@ -404,6 +398,21 @@ class MusicPlayerHandler extends BaseAudioHandler
     AutoMixEffectRenderer? autoMixEffectRenderer,
     AutoplayLibraryLoader? autoplayLibraryLoader,
   }) : _runtime = runtime ?? musicPlayerRuntime {
+    _sourceCache = ContentUriPlaybackCache(
+      copy: PlatformBridge.copyContentUriToTemp,
+      isDisposed: () => _disposed,
+      isPinned: (path) =>
+          path == _activeResolvedPath || _autoMix.pinnedPaths.contains(path),
+      onResolveError: (error) =>
+          _log.e('Failed to resolve content URI for playback: $error'),
+      onDeleteError: (error) =>
+          _log.w('Failed to delete SAF playback temp file: $error'),
+    );
+    _sessionWriter = PlaybackSessionWriter(
+      database: _dependencies.sessionDatabase,
+      onError: (error) =>
+          _log.w('Failed to update persisted playback session: $error'),
+    );
     _player = _dependencies.createDeck('music-player');
     _normalizationCache = PlaybackNormalizationCache(
       readMetadata: _dependencies.readMetadata,
@@ -912,12 +921,7 @@ class MusicPlayerHandler extends BaseAudioHandler
   Future<void> _refreshNormalizationSource(String source) async {
     _normalizationGeneration++;
     _normalizationCache.invalidate(source);
-    // A copy started before the edit can still contain the old comments.
-    await _pendingSourceResolutions[source];
-    final oldPath = _resolvedPathCache.remove(source);
-    _resolvedPathSizes.remove(source);
-    _resolvedPathOrder.remove(source);
-    if (oldPath != null) await _discardResolvedPath(oldPath);
+    await _sourceCache.invalidate(source, waitForPending: true);
     if (_disposed) return;
     if (_index >= 0 &&
         _index < _media.length &&
@@ -964,7 +968,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       }
       final media = _media[index];
       var resolved = media.isContentUri
-          ? _resolvedPathCache[media.source]
+          ? _sourceCache.cachedPath(media.source)
           : media.source;
       ContentUriPlaybackLease? playbackLease;
       if (resolved == null && media.isContentUri) {
@@ -1009,108 +1013,12 @@ class MusicPlayerHandler extends BaseAudioHandler
       }
     }
     if (!media.isContentUri) return media.source;
-
-    final cached = _resolvedPathCache[media.source];
-    if (cached != null) {
-      if (await File(cached).exists()) return cached;
-      _resolvedPathCache.remove(media.source);
-      _resolvedPathSizes.remove(media.source);
-      _resolvedPathOrder.remove(media.source);
-    }
-    final inFlight = _pendingSourceResolutions[media.source];
-    if (inFlight != null) return inFlight;
-
-    late final Future<String?> resolution;
-    resolution = () async {
-      try {
-        final tempPath = await PlatformBridge.copyContentUriToTemp(
-          media.source,
-        );
-        if (tempPath == null || tempPath.isEmpty) return null;
-        final size = await File(tempPath).length();
-        if (_disposed ||
-            !identical(_pendingSourceResolutions[media.source], resolution)) {
-          await _discardResolvedPath(tempPath);
-          return null;
-        }
-
-        _resolvedPathCache[media.source] = tempPath;
-        _resolvedPathSizes[media.source] = size;
-        _resolvedPathOrder
-          ..remove(media.source)
-          ..add(media.source);
-        while (_resolvedPathOrder.length > _maxResolvedPathCacheEntries ||
-            (_resolvedPathOrder.length > 1 &&
-                _resolvedPathSizes.values.fold<int>(
-                      0,
-                      (sum, size) => sum + size,
-                    ) >
-                    _maxResolvedPathCacheBytes)) {
-          final evictedSource = _resolvedPathOrder.removeAt(0);
-          final evictedPath = _resolvedPathCache.remove(evictedSource);
-          _resolvedPathSizes.remove(evictedSource);
-          if (evictedPath != null) {
-            unawaited(_discardResolvedPath(evictedPath));
-          }
-        }
-        return tempPath;
-      } catch (e) {
-        _log.e('Failed to resolve content URI for playback: $e');
-        return null;
-      }
-    }();
-    _pendingSourceResolutions[media.source] = resolution;
-    try {
-      return await resolution;
-    } finally {
-      if (identical(_pendingSourceResolutions[media.source], resolution)) {
-        _pendingSourceResolutions.remove(media.source);
-      }
-    }
+    return _sourceCache.resolve(media.source);
   }
 
-  Future<void> _discardResolvedPath(String path) async {
-    if (path == _activeResolvedPath || _autoMix.pinnedPaths.contains(path)) {
-      _pendingResolvedPathDeletes.add(path);
-      return;
-    }
-    try {
-      final file = File(path);
-      if (await file.exists()) await file.delete();
-    } catch (e) {
-      _log.w('Failed to delete SAF playback temp file: $e');
-    }
-  }
+  Future<void> _cleanupPendingResolvedPaths() => _sourceCache.releaseUnpinned();
 
-  Future<void> _cleanupPendingResolvedPaths() async {
-    final deletable = _pendingResolvedPathDeletes
-        .where(
-          (path) =>
-              path != _activeResolvedPath &&
-              !_autoMix.pinnedPaths.contains(path),
-        )
-        .toList(growable: false);
-    for (final path in deletable) {
-      _pendingResolvedPathDeletes.remove(path);
-      await _discardResolvedPath(path);
-    }
-  }
-
-  Future<void> _enqueueSessionWrite(Future<void> Function() operation) {
-    final queued = _sessionWriteTail.then((_) async {
-      try {
-        await operation();
-      } catch (e) {
-        _log.w('Failed to update persisted playback session: $e');
-      }
-    });
-    _sessionWriteTail = queued;
-    return queued;
-  }
-
-  void _markSessionQueueChanged() {
-    _sessionQueueRevision++;
-  }
+  void _markSessionQueueChanged() => _sessionWriter.queueChanged();
 
   List<Map<String, dynamic>> _sessionMedia() {
     final original = _originalQueueOrder;
@@ -1193,67 +1101,15 @@ class MusicPlayerHandler extends BaseAudioHandler
   Future<void> _persistSession({Duration? position}) {
     if (_restoringSession) return Future<void>.value();
     if (_media.isEmpty || _index < 0 || _index >= _media.length) {
-      _scheduledSessionQueueRevision = -1;
-      _persistedSessionQueueRevision = -1;
-      return _enqueueSessionWrite(
-        _dependencies.sessionDatabase.clearPlaybackSession,
-      );
+      return _sessionWriter.clear();
     }
-    final queueRevision = _sessionQueueRevision;
-    final index = _index;
-    final positionMs = (position ?? Duration.zero).inMilliseconds;
-    final shuffle = _shuffle;
-    final repeatMode = _repeatMode.name;
-
-    if (_scheduledSessionQueueRevision != queueRevision) {
-      final media = _sessionMedia();
-      _scheduledSessionQueueRevision = queueRevision;
-      return _enqueueSessionWrite(() async {
-        try {
-          await _dependencies.sessionDatabase.savePlaybackSession({
-            'version': 2,
-            'media': media,
-            'index': index,
-            'positionMs': positionMs,
-            'shuffle': shuffle,
-            'repeat': repeatMode,
-          });
-          _persistedSessionQueueRevision = queueRevision;
-        } catch (_) {
-          if (_scheduledSessionQueueRevision == queueRevision) {
-            _scheduledSessionQueueRevision = _persistedSessionQueueRevision;
-          }
-          rethrow;
-        }
-      });
-    }
-
-    return _enqueueSessionWrite(() async {
-      final updated = await _dependencies.sessionDatabase
-          .updatePlaybackSessionState(
-            index: index,
-            positionMs: positionMs,
-            shuffle: shuffle,
-            repeatMode: repeatMode,
-          );
-      if (updated) return;
-      // A newer queue snapshot is already (or is about to be) scheduled. Do
-      // not recreate a missing row from this older scalar snapshot with a
-      // mismatched index; the newer full write will restore it consistently.
-      if (_sessionQueueRevision != queueRevision) return;
-
-      // Defensive recovery for an externally cleared/corrupted row. This is
-      // intentionally the only state-only path that serializes the queue.
-      await _dependencies.sessionDatabase.savePlaybackSession({
-        'version': 2,
-        'media': _sessionMedia(),
-        'index': index,
-        'positionMs': positionMs,
-        'shuffle': shuffle,
-        'repeat': repeatMode,
-      });
-      _persistedSessionQueueRevision = queueRevision;
-    });
+    return _sessionWriter.persist(
+      serializeQueue: _sessionMedia,
+      index: _index,
+      position: position ?? Duration.zero,
+      shuffle: _shuffle,
+      repeatMode: _repeatMode.name,
+    );
   }
 
   Future<Duration> _currentPositionForPersist() async {
@@ -1314,14 +1170,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       _pendingRestorePosition = position > Duration.zero ? position : null;
       _sourceReady = false;
       _lastPeriodicPersistAt = null;
-      _sessionQueueRevision++;
-      if (queueNeedsRewrite) {
-        _scheduledSessionQueueRevision = -1;
-        _persistedSessionQueueRevision = -1;
-      } else {
-        _scheduledSessionQueueRevision = _sessionQueueRevision;
-        _persistedSessionQueueRevision = _sessionQueueRevision;
-      }
+      _sessionWriter.queueRestored(needsRewrite: queueNeedsRewrite);
       queue.add(List<MediaItem>.unmodifiable(_queueItems));
       mediaItem.add(_toMediaItem(_media[_index]));
       if (position > Duration.zero) {
@@ -2073,12 +1922,8 @@ class MusicPlayerHandler extends BaseAudioHandler
     _userPaused = false;
     _playHistory.clear();
     _pendingRestorePosition = null;
-    _scheduledSessionQueueRevision = -1;
-    _persistedSessionQueueRevision = -1;
     // An explicit stop ends the session for good; nothing to restore later.
-    await _enqueueSessionWrite(
-      _dependencies.sessionDatabase.clearPlaybackSession,
-    );
+    await _sessionWriter.clear();
     if (generation != _playRequestGeneration || _disposed) return;
     // A stopped session has no current item; this also hides the mini player.
     mediaItem.add(null);
@@ -2160,15 +2005,7 @@ class MusicPlayerHandler extends BaseAudioHandler
     final target = source.trim();
     if (_disposed || target.isEmpty) return;
 
-    // A provider copy can finish after deletion. Retire its identity so it
-    // discards its result without evicting a later resolution of this source.
-    final pendingResolution = _pendingSourceResolutions.remove(target);
-    final discardedPath = _resolvedPathCache.remove(target);
-    _resolvedPathSizes.remove(target);
-    _resolvedPathOrder.remove(target);
-    if (discardedPath != null) {
-      await _discardResolvedPath(discardedPath);
-    }
+    final hadPendingResolution = await _sourceCache.invalidate(target);
 
     final wasCurrent =
         _index >= 0 &&
@@ -2212,7 +2049,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       _broadcastState();
       unawaited(_persistSession(position: playbackState.value.position));
     }
-    if (pendingResolution == null) {
+    if (!hadPendingResolution) {
       await reaction;
     } else {
       // Queue invalidation must not wait behind an unavailable SAF provider.
@@ -2253,17 +2090,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       await _disposeDeck(player);
     }
     _activeResolvedPath = null;
-    final tempPaths = <String>{
-      ..._resolvedPathCache.values,
-      ..._pendingResolvedPathDeletes,
-    };
-    _resolvedPathCache.clear();
-    _resolvedPathSizes.clear();
-    _resolvedPathOrder.clear();
-    _pendingResolvedPathDeletes.clear();
-    for (final path in tempPaths) {
-      await _discardResolvedPath(path);
-    }
+    await _sourceCache.dispose();
   }
 }
 

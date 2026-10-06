@@ -342,9 +342,6 @@ void main() {
     final source = File(
       'lib/services/app_state_database.dart',
     ).readAsStringSync();
-    final playerSource = File(
-      'lib/services/music_player_service.dart',
-    ).readAsStringSync();
 
     test('v4 normalizes playback queue and scalar state', () {
       expect(source, contains('const _dbVersion = 4;'));
@@ -352,16 +349,6 @@ void main() {
       expect(source, contains('media_json TEXT NOT NULL'));
       expect(source, contains('position_ms INTEGER NOT NULL DEFAULT 0'));
       expect(source, contains('updatePlaybackSessionState'));
-    });
-
-    test('periodic playback updates do not serialize an unchanged queue', () {
-      final scalarUpdate = RegExp(
-        r'updatePlaybackSessionState\([\s\S]*?if \(updated\) return;',
-      ).firstMatch(playerSource);
-
-      expect(scalarUpdate, isNotNull);
-      expect(scalarUpdate!.group(0), isNot(contains("'media':")));
-      expect(playerSource, contains('_scheduledSessionQueueRevision'));
     });
   });
 

@@ -238,7 +238,8 @@ class MusicPlayerRuntime {
         DiscordPresenceService.instance.bind(handler);
       }
       return handler;
-    } catch (_) {
+    } catch (error, stack) {
+      _log.e('Failed to initialize playback', error, stack);
       await created?.dispose();
       rethrow;
     } finally {
