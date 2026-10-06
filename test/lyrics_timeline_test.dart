@@ -26,7 +26,7 @@ void main() {
   });
 
   test(
-    'simultaneous timed singers retain individual ends and shared focus',
+    'simultaneous timed singers hold the primary and respect reply ends',
     () {
       final lines = LyricsParser.parse('''
 [00:01.00]v1:<00:01.00>Lead<00:05.00>
@@ -36,7 +36,7 @@ void main() {
       expect(LyricDisplayLayout(lines).focusForLine, [0, 0, 2]);
       expect(activeLyricIndices(lines, const Duration(seconds: 2), 1), {0, 1});
       expect(activeLyricIndices(lines, const Duration(seconds: 4), 1), {0});
-      expect(activeLyricIndices(lines, const Duration(seconds: 5), 1), isEmpty);
+      expect(activeLyricIndices(lines, const Duration(seconds: 5), 1), {0});
     },
   );
 
@@ -107,16 +107,43 @@ void main() {
     },
   );
 
-  test(
-    'overlapping singers stay active until their ends, including seek back',
-    () {
-      final lines = LyricsParser.parse('''
+  test('overlapping singers retain earlier ends and hold the current lead', () {
+    final lines = LyricsParser.parse('''
 [00:01.00]v1:<00:01.00>Lead<00:05.00>
 [00:02.00]v2:<00:02.00>Guest<00:04.00>
 [00:06.00]v3:Third
 ''').lines;
-      Set<int> active(int seconds) {
-        final position = Duration(seconds: seconds);
+    Set<int> active(int seconds) {
+      final position = Duration(seconds: seconds);
+      return activeLyricIndices(
+        lines,
+        position,
+        LyricsParser.activeIndex(lines, position),
+      );
+    }
+
+    expect(active(0), isEmpty);
+    expect(active(1), {0});
+    expect(active(3), {0, 1});
+    expect(active(4), {0, 1});
+    expect(active(5), {1});
+    expect(active(6), {2});
+    expect(active(3), {0, 1});
+    expect(active(1), {0});
+  });
+
+  for (final timed in [false, true]) {
+    test('holds the last vocal through a countdown and seeks ($timed)', () {
+      final lines = lyricsTimelineWithGaps(
+        LyricsParser.parse(
+          timed
+              ? '[00:01.00]v1:<00:01.00>Held<00:02.00>\n'
+                    '[00:07.00]v2:<00:07.00>Next<00:08.00>'
+              : '[00:01.00]Held\n[00:02.00]\n[00:07.00]Next',
+        ).lines,
+      );
+      Set<int> active(int milliseconds) {
+        final position = Duration(milliseconds: milliseconds);
         return activeLyricIndices(
           lines,
           position,
@@ -124,16 +151,32 @@ void main() {
         );
       }
 
+      expect(lines.map((line) => line.text), ['Held', '', 'Next']);
       expect(active(0), isEmpty);
-      expect(active(1), {0});
-      expect(active(3), {0, 1});
-      expect(active(4), {0});
-      expect(active(5), isEmpty);
-      expect(active(6), {2});
-      expect(active(3), {0, 1});
-      expect(active(1), {0});
-    },
-  );
+      expect(active(1000), {0});
+      expect(active(2000), {0, 1});
+      expect(active(6999), {0, 1});
+      expect(active(7000), {2});
+      expect(active(8000), {2});
+      expect(active(6999), {0, 1});
+      expect(active(1000), {0});
+      expect(active(0), isEmpty);
+    });
+  }
+
+  test('an ended backing part cannot replace the held lead', () {
+    final lines = lyricsTimelineWithGaps(
+      LyricsParser.parse('''
+[00:01.00]v1:<00:01.00>Lead<00:02.00>
+[bg:<00:03.00>Echo<00:04.00>]
+[00:07.00]v2:<00:07.00>Next<00:08.00>
+''').lines,
+    );
+    expect(lines.map((line) => line.text), ['Lead', 'Echo', '', 'Next']);
+    expect(activeLyricIndices(lines, const Duration(seconds: 3), 1), {0, 1});
+    expect(activeLyricIndices(lines, const Duration(seconds: 5), 2), {0, 2});
+    expect(activeLyricIndices(lines, const Duration(seconds: 7), 3), {3});
+  });
 
   List<(int, int)> gaps(String text) =>
       lyricsTimelineWithGaps(LyricsParser.parse(text).lines)

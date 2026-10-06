@@ -3248,7 +3248,7 @@ void main() {
             lessThan(tester.getSize(timed('Lead')).height * 0.8),
           );
           await seek(6500);
-          expect(timed('Lead'), findsNothing);
+          expect(timed('Lead'), findsOneWidget);
           expect(timed('Echo'), findsOneWidget);
           expect(offset(), closeTo(leadOffset, 0.1));
           await seek(7500);
@@ -3261,7 +3261,7 @@ void main() {
           if (mornye) {
             expect(
               tester.getTopLeft(find.text('Echo')).dy -
-                  tester.getBottomLeft(find.text('Lead')).dy,
+                  tester.getBottomLeft(timed('Lead')).dy,
               closeTo(6, 0.1),
             );
           }
@@ -3367,6 +3367,12 @@ void main() {
         expect(find.textContaining('v1:'), findsNothing);
         expect(find.textContaining('v2:'), findsNothing);
 
+        Finder timed(String text) => find.descendant(
+          of: find.byWidgetPredicate(
+            (widget) => widget is Semantics && widget.properties.label == text,
+          ),
+          matching: find.byType(CustomPaint),
+        );
         playback.add(
           PlaybackState(
             processingState: AudioProcessingState.ready,
@@ -3376,13 +3382,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         for (final text in ['Lead', 'Guest']) {
-          final paint = find.descendant(
-            of: find.byWidgetPredicate(
-              (widget) =>
-                  widget is Semantics && widget.properties.label == text,
-            ),
-            matching: find.byType(CustomPaint),
-          );
+          final paint = timed(text);
           expect(
             paint,
             findsOneWidget,
@@ -3433,7 +3433,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.text('Guest'), findsOneWidget);
+        expect(timed('Guest'), findsOneWidget);
         expect(find.text('Lead'), findsNothing);
         playback.add(
           PlaybackState(
@@ -3444,6 +3444,7 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.text('Lead'), findsOneWidget);
+        expect(timed('Guest'), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
     );
@@ -3578,6 +3579,57 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('finished lyric stays bright until the next lead ($mornye)', (
+      tester,
+    ) async {
+      metadataOverrides['lyrics'] =
+          '[00:01.00]v1:<00:01.00>Held<00:02.00>\n'
+          '[00:07.00]v2:<00:07.00>Next<00:08.00>';
+      final playback = StreamController<PlaybackState>.broadcast();
+      addTearDown(playback.close);
+      await pumpNowPlaying(
+        tester,
+        theme: mornye ? MornyeTheme.build(Brightness.dark) : null,
+        size: const Size(390, 844),
+        playbackEvents: playback.stream,
+      );
+      mediaItems.add(item('first'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        mornye
+            ? find.byIcon(CupertinoIcons.quote_bubble)
+            : find.byKey(const ValueKey('material-lyrics-toggle')),
+      );
+      await tester.pumpAndSettle();
+
+      Finder timed(String text) => find.descendant(
+        of: find.byWidgetPredicate(
+          (widget) => widget is Semantics && widget.properties.label == text,
+        ),
+        matching: find.byType(CustomPaint),
+      );
+      for (final milliseconds in [1500, 2500, 6999, 7000, 8000, 6999]) {
+        playback.add(
+          PlaybackState(
+            playing: false,
+            processingState: AudioProcessingState.ready,
+            updatePosition: Duration(milliseconds: milliseconds),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final text = milliseconds < 7000 ? 'Held' : 'Next';
+        expect(timed(text), findsOneWidget);
+        final opacity = tester.widget<AnimatedOpacity>(
+          find
+              .ancestor(of: timed(text), matching: find.byType(AnimatedOpacity))
+              .first,
+        );
+        expect(opacity.opacity, 1, reason: 'At $milliseconds ms');
+        expect(timed(text == 'Held' ? 'Next' : 'Held'), findsNothing);
+      }
+      expect(tester.takeException(), isNull);
+    });
 
     testWidgets(
       'original and romanization follow word timing and pauses ($mornye)',

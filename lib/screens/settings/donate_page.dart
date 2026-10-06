@@ -80,6 +80,8 @@ class _DonatePageState extends State<DonatePage> {
                   ],
                   _DonateLinksCard(colorScheme: colorScheme, config: _config),
                   const SizedBox(height: 16),
+                  _RecentSupportersCard(supporters: _config.supporters),
+                  const SizedBox(height: 16),
                   _DonateNoticeCard(
                     colorScheme: colorScheme,
                     notices: _config.notices,
@@ -304,6 +306,103 @@ class _DonateLinksCard extends StatelessWidget {
                 ),
             ],
         ],
+      ),
+    );
+  }
+}
+
+class _RecentSupportersCard extends StatelessWidget {
+  const _RecentSupportersCard({required this.supporters});
+
+  final List<String> supporters;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Card(
+      elevation: 0,
+      color: Color.alphaBlend(
+        (isDark ? Colors.white : Colors.black).withValues(
+          alpha: isDark ? 0.08 : 0.04,
+        ),
+        colorScheme.surface,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.star_rounded, size: 20, color: colorScheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Recent Supporters',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Thank you for your generosity!',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (supporters.isEmpty)
+              Text(
+                'No recent supporters to show.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final name in supporters)
+                    Chip(
+                      backgroundColor: colorScheme.secondaryContainer,
+                      side: BorderSide.none,
+                      shape: const StadiumBorder(),
+                      avatar: CircleAvatar(
+                        backgroundColor: colorScheme.primary.withValues(
+                          alpha: 0.2,
+                        ),
+                        child: Text(
+                          name.isEmpty
+                              ? '?'
+                              : name.characters.first.toUpperCase(),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      label: Text(
+                        name,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: colorScheme.onSecondaryContainer,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+          ],
+        ),
       ),
     );
   }
