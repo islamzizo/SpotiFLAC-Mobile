@@ -16,6 +16,7 @@ import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/image_cache_utils.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
+import 'package:spotiflac_android/models/album_track_order.dart';
 import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
@@ -62,8 +63,10 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
     with
         SelectionModeMixin<LocalAlbumScreen>,
         CollapsingHeaderScrollMixin<LocalAlbumScreen> {
-  late List<LocalLibraryItem> _sortedTracksCache;
-  late Map<int, List<LocalLibraryItem>> _discGroupsCache;
+  late AlbumTrackOrder<LocalLibraryItem> _trackOrder;
+  List<LocalLibraryItem> get _sortedTracksCache => _trackOrder.tracks;
+  Map<int, List<LocalLibraryItem>> get _discGroupsCache =>
+      _trackOrder.discGroups;
   List<LocalLibraryItem>? _loadedTracks;
   bool _loadingTracks = false;
   Object? _loadError;
@@ -75,8 +78,8 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
     );
   }
 
-  late List<int> _sortedDiscNumbersCache;
-  late bool _hasMultipleDiscsCache;
+  List<int> get _sortedDiscNumbersCache => _trackOrder.discNumbers;
+  bool get _hasMultipleDiscsCache => _trackOrder.discGroups.length > 1;
   String? _commonQualityCache;
   String? _commonQualityModeCache;
 
@@ -120,38 +123,15 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
     }
   }
 
-  List<LocalLibraryItem> _buildSortedTracks() {
-    final tracks = List<LocalLibraryItem>.from(_loadedTracks ?? widget.tracks);
-    tracks.sort((a, b) {
-      final aDisc = a.discNumber ?? 1;
-      final bDisc = b.discNumber ?? 1;
-      if (aDisc != bDisc) return aDisc.compareTo(bDisc);
-      final aNum = a.trackNumber ?? 999;
-      final bNum = b.trackNumber ?? 999;
-      if (aNum != bNum) return aNum.compareTo(bNum);
-      return a.trackName.compareTo(b.trackName);
-    });
-    return tracks;
-  }
-
   void _rebuildTrackCaches() {
-    _sortedTracksCache = _buildSortedTracks();
-    _discGroupsCache = _groupTracksByDisc(_sortedTracksCache);
-    _sortedDiscNumbersCache = _discGroupsCache.keys.toList()..sort();
-    _hasMultipleDiscsCache = _discGroupsCache.length > 1;
+    _trackOrder = AlbumTrackOrder(
+      _loadedTracks ?? widget.tracks,
+      discNumber: (track) => track.discNumber,
+      trackNumber: (track) => track.trackNumber,
+      trackName: (track) => track.trackName,
+    );
     _commonQualityCache = null;
     _commonQualityModeCache = null;
-  }
-
-  Map<int, List<LocalLibraryItem>> _groupTracksByDisc(
-    List<LocalLibraryItem> tracks,
-  ) {
-    final discMap = <int, List<LocalLibraryItem>>{};
-    for (final track in tracks) {
-      final discNumber = track.discNumber ?? 1;
-      discMap.putIfAbsent(discNumber, () => []).add(track);
-    }
-    return discMap;
   }
 
   Future<void> _deleteSelected(List<LocalLibraryItem> currentTracks) async {

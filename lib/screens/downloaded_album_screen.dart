@@ -11,6 +11,7 @@ import 'package:spotiflac_android/services/deleted_library_files.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
 import 'package:spotiflac_android/services/local_track_batch_actions.dart';
 import 'package:spotiflac_android/models/unified_library_item.dart';
+import 'package:spotiflac_android/models/album_track_order.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/utils/audio_quality_badge_policy.dart';
@@ -65,10 +66,7 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
         CollapsingHeaderScrollMixin<DownloadedAlbumScreen> {
   bool _embeddedCoverRefreshScheduled = false;
   List<DownloadHistoryItem>? _albumTracksSourceCache;
-  List<DownloadHistoryItem>? _albumTracksCache;
-  List<DownloadHistoryItem>? _discGroupingSourceCache;
-  Map<int, List<DownloadHistoryItem>>? _discGroupingCache;
-  List<int>? _sortedDiscNumbersCache;
+  AlbumTrackOrder<DownloadHistoryItem>? _albumTrackOrderCache;
   List<DownloadHistoryItem>? _commonQualitySourceCache;
   String? _commonQualityCache;
   String? _commonQualityModeCache;
@@ -85,78 +83,47 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
     if (oldWidget.albumName != widget.albumName ||
         oldWidget.artistName != widget.artistName) {
       _albumTracksSourceCache = null;
-      _albumTracksCache = null;
       _invalidateDerivedTrackCaches();
     }
   }
 
-  List<DownloadHistoryItem> _getAlbumTracks(
+  AlbumTrackOrder<DownloadHistoryItem> _getAlbumOrder(
     List<DownloadHistoryItem> allItems,
   ) {
-    final cached = _albumTracksCache;
+    final cached = _albumTrackOrderCache;
     if (cached != null && identical(allItems, _albumTracksSourceCache)) {
       return cached;
     }
 
-    final tracks =
-        allItems.where((item) {
-          final itemArtist =
-              (item.albumArtist != null && item.albumArtist!.isNotEmpty)
-              ? item.albumArtist!
-              : item.artistName;
-          final itemKey =
-              '${item.albumName.toLowerCase()}|${itemArtist.toLowerCase()}';
-          return itemKey == _albumLookupKey;
-        }).toList()..sort((a, b) {
-          final aDisc = a.discNumber ?? 1;
-          final bDisc = b.discNumber ?? 1;
-          if (aDisc != bDisc) return aDisc.compareTo(bDisc);
-          final aNum = a.trackNumber ?? 999;
-          final bNum = b.trackNumber ?? 999;
-          if (aNum != bNum) return aNum.compareTo(bNum);
-          return a.trackName.compareTo(b.trackName);
-        });
+    final order = AlbumTrackOrder(
+      allItems.where((item) {
+        final itemArtist =
+            (item.albumArtist != null && item.albumArtist!.isNotEmpty)
+            ? item.albumArtist!
+            : item.artistName;
+        final itemKey =
+            '${item.albumName.toLowerCase()}|${itemArtist.toLowerCase()}';
+        return itemKey == _albumLookupKey;
+      }),
+      discNumber: (track) => track.discNumber,
+      trackNumber: (track) => track.trackNumber,
+      trackName: (track) => track.trackName,
+    );
 
     _albumTracksSourceCache = allItems;
-    _albumTracksCache = tracks;
     _invalidateDerivedTrackCaches();
-    return tracks;
+    _albumTrackOrderCache = order;
+    return order;
   }
 
   void _invalidateDerivedTrackCaches() {
-    _discGroupingSourceCache = null;
-    _discGroupingCache = null;
-    _sortedDiscNumbersCache = null;
+    _albumTrackOrderCache = null;
     _commonQualitySourceCache = null;
     _commonQualityCache = null;
     _commonQualityModeCache = null;
     _embeddedCoverSourceCache = null;
     _embeddedCoverPathCache = null;
     _embeddedCoverPathResolved = false;
-  }
-
-  Map<int, List<DownloadHistoryItem>> _getDiscGroups(
-    List<DownloadHistoryItem> tracks,
-  ) {
-    final cached = _discGroupingCache;
-    if (cached != null && identical(tracks, _discGroupingSourceCache)) {
-      return cached;
-    }
-
-    final discMap = <int, List<DownloadHistoryItem>>{};
-    for (final track in tracks) {
-      final discNumber = track.discNumber ?? 1;
-      discMap.putIfAbsent(discNumber, () => []).add(track);
-    }
-    _discGroupingSourceCache = tracks;
-    _discGroupingCache = discMap;
-    _sortedDiscNumbersCache = discMap.keys.toList()..sort();
-    return discMap;
-  }
-
-  List<int> _getSortedDiscNumbers(List<DownloadHistoryItem> tracks) {
-    _getDiscGroups(tracks);
-    return _sortedDiscNumbersCache ?? const [];
   }
 
   Future<void> _deleteSelected(List<DownloadHistoryItem> currentTracks) async {
@@ -262,38 +229,42 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
         ),
       ),
     );
-    final tracks = tracksValue.maybeWhen(
-      data: (items) => _getAlbumTracks(items),
-      orElse: () => const <DownloadHistoryItem>[],
+    final order = tracksValue.maybeWhen(
+      data: (items) => _getAlbumOrder(items),
+      orElse: () => null,
     );
 
-    if (tracks.isEmpty && tracksValue.isLoading) {
-      return Scaffold(
-        appBar: AppBar(title: Text(widget.albumName)),
-        body: const Center(child: AppLoadingIndicator()),
-      );
-    }
-
-    if (tracks.isEmpty) {
+    if (order == null || order.tracks.isEmpty) {
+      if (tracksValue.isLoading) {
+        return Scaffold(
+          appBar: AppBar(title: Text(widget.albumName)),
+          body: const Center(child: AppLoadingIndicator()),
+        );
+      }
       return Scaffold(
         appBar: AppBar(title: Text(widget.albumName)),
         body: Center(child: Text(context.l10n.noTracksFoundForAlbum)),
       );
     }
 
+    final tracks = order.tracks;
     pruneSelection(tracks.map((t) => t.id).toSet());
 
     if (context.isMornye) {
       return MornyeArtistSurface(
         imageSource: _resolveAlbumEmbeddedCoverPath(tracks) ?? widget.coverUrl,
         neutralActions: true,
-        child: Builder(builder: (context) => _buildPage(context, tracks)),
+        child: Builder(builder: (context) => _buildPage(context, order)),
       );
     }
-    return _buildPage(context, tracks);
+    return _buildPage(context, order);
   }
 
-  Widget _buildPage(BuildContext context, List<DownloadHistoryItem> tracks) {
+  Widget _buildPage(
+    BuildContext context,
+    AlbumTrackOrder<DownloadHistoryItem> order,
+  ) {
+    final tracks = order.tracks;
     final colorScheme = Theme.of(context).colorScheme;
     final qualityLabelMode = ref.watch(
       settingsProvider.select((s) => s.libraryQualityLabelMode),
@@ -307,7 +278,7 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
       isSelectionMode: isSelectionMode,
       onExitSelectionMode: exitSelectionMode,
       appBar: _buildAppBar(context, colorScheme, tracks, qualityLabelMode),
-      slivers: [_buildTrackList(context, colorScheme, tracks)],
+      slivers: [_buildTrackList(context, colorScheme, order)],
       selectionBar: _buildSelectionBottomBar(
         context,
         colorScheme,
@@ -560,9 +531,10 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
   Widget _buildTrackList(
     BuildContext context,
     ColorScheme colorScheme,
-    List<DownloadHistoryItem> tracks,
+    AlbumTrackOrder<DownloadHistoryItem> order,
   ) {
-    final discMap = _getDiscGroups(tracks);
+    final tracks = order.tracks;
+    final discMap = order.discGroups;
 
     if (discMap.length <= 1) {
       return SliverPadding(
@@ -588,7 +560,7 @@ class _DownloadedAlbumScreenState extends ConsumerState<DownloadedAlbumScreen>
       );
     }
 
-    final discNumbers = _getSortedDiscNumbers(tracks);
+    final discNumbers = order.discNumbers;
     final navigationIndexById = <String, int>{
       for (var index = 0; index < tracks.length; index++)
         tracks[index].id: index,
