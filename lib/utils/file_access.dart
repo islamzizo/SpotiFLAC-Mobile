@@ -404,7 +404,17 @@ Future<FileAccessStat?> fileStat(String? path) async {
   }
 
   final stat = await FileStat.stat(realPath);
-  if (stat.type == FileSystemEntityType.notFound) return null;
+  if (stat.type == FileSystemEntityType.notFound) {
+    // Dart stat hides every OS error behind notFound. A metadata-only lookup
+    // exposes the errno without opening or copying audio on the normal path.
+    try {
+      return FileAccessStat(size: await File(realPath).length());
+    } on FileSystemException catch (error) {
+      final code = error.osError?.errorCode;
+      if (code == 2 || code == (Platform.isWindows ? 3 : 20)) return null;
+      rethrow;
+    }
+  }
   return FileAccessStat(size: stat.size, modified: stat.modified);
 }
 

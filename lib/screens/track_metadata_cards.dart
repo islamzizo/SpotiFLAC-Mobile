@@ -72,6 +72,15 @@ extension _TrackMetadataCards on _TrackMetadataScreenState {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (_fileAccessMessage(context) case final message?
+                when !context.isMornye)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Text(
+                  message,
+                  style: TextStyle(color: colorScheme.error),
+                ),
+              ),
             _buildMetadataCard(context, colorScheme, _fileSize),
 
             const SizedBox(height: 16),
@@ -286,16 +295,7 @@ extension _TrackMetadataCards on _TrackMetadataScreenState {
                 const SizedBox(height: 12),
                 HeaderPalette(
                   scheme: _trackMetadataHeroScheme,
-                  child: HeaderMetaRow(
-                    items: [
-                      ..._headerMetadataItems(context),
-                      if (_hasCheckedFile && !_fileExists)
-                        HeaderMetaItem(
-                          context.l10n.trackFileNotFound,
-                          icon: Icons.warning_rounded,
-                        ),
-                    ],
-                  ),
+                  child: HeaderMetaRow(items: _headerMetadataItems(context)),
                 ),
               ],
             ),

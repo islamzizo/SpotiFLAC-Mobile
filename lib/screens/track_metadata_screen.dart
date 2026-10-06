@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/services/conversion_library_service.dart';
 import 'package:spotiflac_android/services/deleted_library_files.dart';
+import 'package:spotiflac_android/services/file_access_check.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/re_enrich_result.dart';
@@ -152,10 +153,19 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
   static final Map<String, _EmbeddedCoverPreviewCacheEntry>
   _embeddedCoverPreviewCache = {};
 
-  bool _fileExists = false;
+  FileAccessCheck? _fileAccess;
+  bool get _fileExists => _fileAccess is FileAccessFound;
   bool get _isNetworkItem => cleanFilePath.startsWith('network://');
-  bool _hasCheckedFile = false;
-  int? _fileSize;
+  int? get _fileSize => switch (_fileAccess) {
+    FileAccessFound(:final stat) => stat.size,
+    _ => null,
+  };
+
+  String? _fileAccessMessage(BuildContext context) => switch (_fileAccess) {
+    FileAccessMissing() => context.l10n.trackFileNotFound,
+    FileAccessUnavailable() => context.l10n.trackFileUnavailable,
+    _ => null,
+  };
   String? _lyrics;
   String? _rawLyrics;
   bool _lyricsLoading = false;
@@ -212,49 +222,25 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
     final generation = _metadataLoadGeneration;
     final filePath = cleanFilePath;
 
-    bool exists = false;
-    int? size;
-    try {
-      final stat = await fileStat(filePath);
-      if (stat != null) {
-        exists = true;
-        size = stat.size;
-      }
-    } catch (_) {}
-
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        (exists != _fileExists || size != _fileSize || !_hasCheckedFile)) {
-      setState(() {
-        _fileExists = exists;
-        _fileSize = size;
-        _hasCheckedFile = true;
-      });
+    final check = await checkFileAccess(filePath);
+    if (!mounted ||
+        generation != _metadataLoadGeneration ||
+        filePath != cleanFilePath) {
+      return;
     }
-
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        exists &&
-        _lyrics == null &&
-        !_lyricsLoading) {
-      _checkEmbeddedLyrics();
+    if (check case FileAccessUnavailable(:final error, :final stack)) {
+      _log.e('Unable to inspect track file: $filePath', error, stack);
     }
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        exists &&
-        !_isCueVirtualTrack &&
-        !_hasLoadedResolvedAudioMetadata) {
+    setState(() => _fileAccess = check);
+    if (!_fileExists) return;
+
+    if (_lyrics == null && !_lyricsLoading) {
+      unawaited(_checkEmbeddedLyrics());
+    }
+    if (!_isCueVirtualTrack && !_hasLoadedResolvedAudioMetadata) {
       unawaited(_refreshResolvedAudioMetadataFromFile());
     }
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        exists &&
-        !_isNetworkItem &&
-        !_hasPath(_embeddedCoverPreviewPath)) {
+    if (!_isNetworkItem && !_hasPath(_embeddedCoverPreviewPath)) {
       // The information card reports artwork embedded in the audio file, not
       // a resized Library thumbnail or remote cover. The shared resolver owns
       // extraction; this screen only caches validation data and dimensions.
@@ -654,9 +640,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
           _currentDownloadItem = null;
           _currentLocalLibraryItem = widget.localNavigationItems![targetIndex];
         }
-        _fileExists = false;
-        _hasCheckedFile = false;
-        _fileSize = null;
+        _fileAccess = null;
         _lyrics = null;
         _rawLyrics = null;
         _lyricsLoading = false;

@@ -1316,21 +1316,7 @@ class MainActivity: FlutterFragmentActivity() {
                         "safStat" -> {
                             val uriStr = call.argument<String>("uri") ?: ""
                             val response = withContext(Dispatchers.IO) {
-                                val uri = Uri.parse(uriStr)
-                                val doc = DocumentFile.fromSingleUri(this@MainActivity, uri)
-                                val obj = JSONObject()
-                                if (doc != null && doc.exists()) {
-                                    obj.put("exists", true)
-                                    obj.put("size", doc.length())
-                                    obj.put("modified", doc.lastModified())
-                                    obj.put("mime_type", doc.type ?: contentResolver.getType(uri) ?: "")
-                                } else {
-                                    obj.put("exists", false)
-                                    obj.put("size", 0)
-                                    obj.put("modified", 0)
-                                    obj.put("mime_type", "")
-                                }
-                                obj.toString()
+                                querySafDocumentStat(contentResolver, Uri.parse(uriStr)).toString()
                             }
                             result.success(response)
                         }

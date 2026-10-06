@@ -1737,6 +1737,10 @@
   "@trackFileNotFound": {
     "description": "Error - file doesn't exist"
   },
+  "trackFileUnavailable": "File is currently unavailable. Check storage access and try again.",
+  "@trackFileUnavailable": {
+    "description": "File access failed; this does not mean the file was deleted"
+  },
   "trackOpenInDeezer": "Open in Deezer",
   "@trackOpenInDeezer": {
     "description": "Action - open track in Deezer app"
