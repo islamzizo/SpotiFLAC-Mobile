@@ -302,10 +302,26 @@ final class RustCoreBackend: CoreBackend {
             throw failure("Missing native data job lease")
         }
         defer { finishDataJob(id, lease) }
-        guard let raw = args["request_json"] as? String else {
+        guard let raw = args["request_json"] as? String,
+              var request = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any] else {
             throw failure("Missing native data job request")
         }
         let bytes = (args["bytes"] as? FlutterStandardTypedData)?.data ?? Data()
+        if request["operation"] as? String == "library_scan_incremental" {
+            guard let folder = request["folder_path"] as? String else { throw failure("Missing library folder") }
+            return try withLibraryDirectories([folder]) { current in
+                let staged = root.appendingPathComponent("files", isDirectory: true)
+                    .appendingPathComponent("library_snapshot_\(UUID().uuidString).tsv")
+                defer { try? FileManager.default.removeItem(at: staged) }
+                if let snapshot = request["snapshot_path"] as? String, !snapshot.isEmpty {
+                    try FileManager.default.copyItem(atPath: snapshot, toPath: staged.path)
+                    request["snapshot_path"] = staged.path
+                }
+                request["folder_path"] = URL(fileURLWithPath: folder).resolvingSymlinksInPath().standardizedFileURL.path
+                let encoded = String(decoding: try JSONSerialization.data(withJSONObject: request), as: UTF8.self)
+                return try current.runNativeDataJob(requestJson: encoded, bytes: bytes, lease: lease)
+            }
+        }
         return try SpotiFLACBackend.runNativeDataJob(requestJson: raw, bytes: bytes, lease: lease)
     }
 

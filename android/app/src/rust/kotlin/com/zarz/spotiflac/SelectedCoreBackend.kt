@@ -137,7 +137,21 @@ internal object RustCoreBackend : CoreBackend {
         owner() to requestRegistry().acquire(id)
 
     internal fun runDataJob(request: JSONObject, bytes: ByteArray, lease: RequestLease): String {
-        return com.spotiflac.backend.runNativeDataJob(request.toString(), bytes, lease)
+        if (request.optString("operation") != "library_scan_incremental") {
+            return com.spotiflac.backend.runNativeDataJob(request.toString(), bytes, lease)
+        }
+        val folder = request.getString("folder_path")
+        return withLibraryDirectories(listOf(folder)) { current ->
+            val snapshot = request.optString("snapshot_path")
+            val staged = if (snapshot.isEmpty()) null else workspace.createTemporaryFile("library_snapshot_", ".tsv")
+            try {
+                if (staged != null) {
+                    File(snapshot).copyTo(staged, overwrite = true)
+                    request.put("snapshot_path", staged.canonicalPath)
+                }
+                current.runNativeDataJob(request.toString(), bytes, lease)
+            } finally { staged?.delete() }
+        }
     }
 
     @Synchronized

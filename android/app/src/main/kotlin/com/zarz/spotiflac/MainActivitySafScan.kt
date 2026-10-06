@@ -571,11 +571,11 @@ private const val SAF_SCAN_PAUSE_POLL_MS = 100L
  * Holds a SAF scan at its checkpoint while paused, keeping its position in
  * memory. Returns true when the scan should stop because it was cancelled.
  */
-internal fun MainActivity.safScanStopRequested(): Boolean {
-    while (safScanPaused && !safScanCancel) {
+internal fun MainActivity.safScanStopRequested(cancelled: () -> Boolean = { false }): Boolean {
+    while (safScanPaused && !safScanCancel && !cancelled()) {
         Thread.sleep(SAF_SCAN_PAUSE_POLL_MS)
     }
-    return safScanCancel
+    return safScanCancel || cancelled()
 }
 
 /**
@@ -1287,6 +1287,7 @@ internal fun MainActivity.scanSafTreeIncremental(treeUriStr: String, existingFil
 internal fun MainActivity.scanSafTreeIncremental(
         treeUriStr: String,
         existingFiles: Map<String, Long>,
+        cancelled: () -> Boolean = { false },
     ): Any {
         val (_, root, rootChildren) = resolveReadableSafTreeOrThrow(treeUriStr)
 
@@ -1329,7 +1330,7 @@ internal fun MainActivity.scanSafTreeIncremental(
         val lister = SafTreeLister(this)
 
         while (queue.isNotEmpty()) {
-            if (safScanStopRequested()) {
+            if (safScanStopRequested(cancelled)) {
                 updateSafScanProgress { it.isComplete = true }
                 val result = JSONObject()
                 result.put("files", JSONArray())
@@ -1361,7 +1362,7 @@ internal fun MainActivity.scanSafTreeIncremental(
             rememberCueDirectoryListing(dir, children, safChildLookupCache)
 
             for (child in children) {
-                if (safScanStopRequested()) {
+                if (safScanStopRequested(cancelled)) {
                     updateSafScanProgress { it.isComplete = true }
                     val result = JSONObject()
                     result.put("files", JSONArray())
@@ -1462,7 +1463,7 @@ internal fun MainActivity.scanSafTreeIncremental(
         val cueReferencedAudioUris = mutableSetOf<String>()
 
         for ((cueDoc, parentDir, cueName, cueLastModified) in cueFilesToScan) {
-            if (safScanStopRequested()) {
+            if (safScanStopRequested(cancelled)) {
                 updateSafScanProgress { it.isComplete = true }
                 spill.abandon()
                 val result = JSONObject()
@@ -1602,7 +1603,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
         val pendingAudio = mutableListOf<ChangedAudio>()
         for (audio in audioFiles) {
-            if (safScanStopRequested()) return cancelledIncrementalResult()
+            if (safScanStopRequested(cancelled)) return cancelledIncrementalResult()
             if (cueReferencedAudioUris.contains(audio.doc.uri.toString())) {
                 scanned++
                 reportProcessed()
@@ -1613,7 +1614,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
         val completed = runSafReadsInOrder(
             pendingAudio,
-            cancelled = { safScanStopRequested() },
+            cancelled = { safScanStopRequested(cancelled) },
             task = { audio ->
                 val ext = audio.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 val fallbackExt = if (ext.isNotBlank()) ".${ext}" else null

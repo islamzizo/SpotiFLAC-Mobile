@@ -13,6 +13,7 @@ import 'package:spotiflac_android/services/library_search.dart';
 import 'package:spotiflac_android/services/library_database_models.dart';
 import 'package:spotiflac_android/services/library_row_mapper.dart';
 import 'package:spotiflac_android/services/library_schema.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 
 export 'library_database_models.dart';
@@ -75,6 +76,118 @@ class LibraryDatabase {
   }
 
   bool get searchFtsAvailable => _searchFtsAvailable ?? false;
+
+  Future<Map<String, dynamic>> _nativeScanRequest(String sourceId) async {
+    final db = await database;
+    final history = await HistoryDatabase.instance.database;
+    final sources = await db.query(
+      'library_sources',
+      columns: ['path', 'enabled'],
+      where: 'id = ?',
+      whereArgs: [sourceId],
+      limit: 1,
+    );
+    if (sources.isEmpty || sources.single['enabled'] != 1) {
+      throw StateError('Library source changed or was removed during scan');
+    }
+    return {
+      'library_path': db.path,
+      'history_path': history.path,
+      'source_id': sourceId,
+      'expected_source_path': sources.single['path'],
+      'platform': Platform.isAndroid ? 'android' : 'ios',
+    };
+  }
+
+  /// Keeps native scan output native through parsing, indexing and the atomic
+  /// source swap. The stream implementation remains the desktop/test adapter.
+  Future<({int inserted, int skipped})> replaceSourceScanFile(
+    String sourceId,
+    LibraryScanNDJSONFile scan, {
+    required String requestId,
+    required bool Function() isCancelled,
+  }) async {
+    if (isCancelled()) throw StateError('Library scan cancelled');
+    if (PlatformBridge.supportsCoreBackend) {
+      final request = await _nativeScanRequest(sourceId);
+      if (isCancelled()) throw StateError('Library scan cancelled');
+      final result = await PlatformBridge.runNativeDataJob({
+        ...request,
+        'operation': 'library_full_import',
+        'ndjson_path': scan.file.path,
+        'expected_count': scan.expectedCount,
+        'error_count': scan.errorCount,
+      }, requestId: requestId);
+      return (
+        inserted: (result['inserted'] as num).toInt(),
+        skipped: (result['skipped'] as num).toInt(),
+      );
+    }
+    Stream<Map<String, dynamic>> validatedRows() async* {
+      var count = 0;
+      await for (final row in scan.rows()) {
+        if (isCancelled()) {
+          throw StateError('Library scan cancelled during ingestion');
+        }
+        count++;
+        yield row;
+      }
+      if (count != scan.expectedCount) {
+        throw FormatException(
+          'Library scan row count mismatch: decoded $count, '
+          'expected ${scan.expectedCount}',
+        );
+      }
+    }
+
+    return replaceSourceStream(
+      sourceId,
+      validatedRows(),
+      preserveMissing: scan.errorCount > 0,
+    );
+  }
+
+  /// Exports timestamps directly from the DB on the worker. Android's adapter
+  /// backfills zero SAF timestamps in bounded ContentResolver batches first.
+  Future<String> writeNativeFileModTimesSnapshot(
+    String sourceId, {
+    required String requestId,
+    required bool Function() isCancelled,
+  }) async {
+    final request = await _nativeScanRequest(sourceId);
+    if (isCancelled()) throw StateError('Library scan cancelled');
+    final directory = await getTemporaryDirectory();
+    if (isCancelled()) throw StateError('Library scan cancelled');
+    final result = await PlatformBridge.runNativeDataJob({
+      ...request,
+      'operation': 'library_snapshot',
+      'snapshot_path': join(
+        directory.path,
+        'library_file_mod_times_${DateTime.now().microsecondsSinceEpoch}.tsv',
+      ),
+    }, requestId: requestId);
+    return result['path'] as String;
+  }
+
+  /// Native folder scanning and delta ingestion share one operation, so delta
+  /// track maps never return to Flutter. SAF traversal stays in its OS adapter.
+  Future<Map<String, dynamic>> scanIncrementalNative(
+    String sourceId,
+    String folderPath,
+    String snapshotPath, {
+    required bool isSaf,
+    required String requestId,
+    required bool Function() isCancelled,
+  }) async {
+    final request = await _nativeScanRequest(sourceId);
+    if (isCancelled()) throw StateError('Library scan cancelled');
+    return PlatformBridge.runNativeDataJob({
+      ...request,
+      'operation': 'library_scan_incremental',
+      if (isSaf) 'tree_uri': folderPath else 'folder_path': folderPath,
+      'snapshot_path': snapshotPath,
+    }, requestId: requestId);
+  }
 
   Future<List<LibrarySearchHit>> searchLibrary({
     required String query,

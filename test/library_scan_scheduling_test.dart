@@ -10,6 +10,7 @@ import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 
 class _Settings extends SettingsNotifier {
   @override
@@ -25,6 +26,8 @@ class _Database implements LibraryDatabase {
   List<LocalLibrarySource> sources;
   Future<List<LocalLibrarySource>> Function()? sourceRead;
   bool failLookup = false;
+  int? countOverride;
+  Future<({int inserted, int skipped})> Function()? fullReplacement;
 
   @override
   Future<List<LocalLibrarySource>> getSources() async =>
@@ -38,7 +41,16 @@ class _Database implements LibraryDatabase {
 
   @override
   Future<int> getCount() async =>
+      countOverride ??
       sources.where((source) => source.enabled && source.available).length;
+
+  @override
+  Future<({int inserted, int skipped})> replaceSourceScanFile(
+    String sourceId,
+    LibraryScanNDJSONFile scan, {
+    required String requestId,
+    required bool Function() isCancelled,
+  }) => fullReplacement!();
 
   @override
   Future<LocalLibraryLookupIndex> getLookupIndex() async =>
@@ -327,5 +339,55 @@ void main() {
     scans.single.$2.complete(jsonEncode({'cancelled': true}));
     await retry;
     expect(container.read(localLibraryProvider).isScanning, isFalse);
+  });
+
+  test(
+    'cancel after incremental native commit publishes the changed index',
+    () async {
+      final version = container.read(localLibraryProvider).loadedIndexVersion;
+      final active = library.startSourceScan('active');
+      await _waitFor(() => scans.length == 1);
+      await library.cancelScan();
+      database.countOverride = 7;
+      scans.single.$2.complete(jsonEncode({'committed': true, 'skipped': 2}));
+      await active;
+      final state = container.read(localLibraryProvider);
+      expect(state.totalCount, 7);
+      expect(state.loadedIndexVersion, greaterThan(version));
+      expect(state.excludedDownloadedCount, 2);
+      expect(state.scanWasCancelled, isTrue);
+      expect(state.isScanning, isFalse);
+    },
+  );
+
+  test('cancel after full replacement publishes the committed index', () async {
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    database.fullReplacement = () async {
+      entered.complete();
+      await release.future;
+      database.countOverride = 7;
+      return (inserted: 7, skipped: 2);
+    };
+    messenger.setMockMethodCallHandler(backend, (call) async {
+      if (call.method == 'scanLibraryFolderToNDJSONFile') {
+        final path = (call.arguments as Map)['output_path'] as String;
+        await File(path).writeAsString('');
+        return {'path': path, 'count': 0, 'error_count': 0};
+      }
+      return null;
+    });
+    final version = container.read(localLibraryProvider).loadedIndexVersion;
+    final active = library.startSourceScan('active', forceFullScan: true);
+    await entered.future;
+    await library.cancelScan();
+    release.complete();
+    await active;
+    final state = container.read(localLibraryProvider);
+    expect(state.totalCount, 7);
+    expect(state.loadedIndexVersion, greaterThan(version));
+    expect(state.excludedDownloadedCount, 2);
+    expect(state.scanWasCancelled, isTrue);
+    expect(state.isScanning, isFalse);
   });
 }

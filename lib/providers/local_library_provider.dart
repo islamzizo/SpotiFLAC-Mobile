@@ -170,6 +170,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
   bool _scanPauseRequested = false;
   bool _scanInProgress = false;
   Future<void>? _scanCompletion;
+  String? _nativeLibraryRequestId;
   final Set<String> _pendingReconnectScans = {};
   bool _drainingReconnectScans = false;
   StreamSubscription<void>? _storageEventsSubscription;
@@ -194,6 +195,16 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       _scanPauseRequested = false;
       _pendingReconnectScans.clear();
       if (_scanInProgress) {
+        final requestId = _nativeLibraryRequestId;
+        if (requestId != null) {
+          unawaited(
+            PlatformBridge.cancelNativeDataJob(requestId).catchError((
+              Object error,
+            ) {
+              _log.w('Failed to cancel disposed library ingestion: $error');
+            }),
+          );
+        }
         unawaited(
           PlatformBridge.cancelLibraryScan().catchError((Object error) {
             _log.w('Failed to cancel disposed library scan: $error');
@@ -783,27 +794,11 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         scannedFiles: scanFile.expectedCount,
         scanErrorCount: scanFile.errorCount,
       );
-      Stream<Map<String, dynamic>> validatedRows() async* {
-        var decodedRows = 0;
-        await for (final json in scanFile.rows()) {
-          if (_scanCancelRequested) {
-            throw StateError('Library scan cancelled during ingestion');
-          }
-          decodedRows++;
-          yield json;
-        }
-        if (decodedRows != scanFile.expectedCount) {
-          throw FormatException(
-            'Library scan row count mismatch: decoded $decodedRows, '
-            'expected ${scanFile.expectedCount}',
-          );
-        }
-      }
-
-      final result = await _db.replaceSourceStream(
+      final result = await _db.replaceSourceScanFile(
         sourceId,
-        validatedRows(),
-        preserveMissing: scanFile.errorCount > 0,
+        scanFile,
+        requestId: _nativeLibraryRequestId ?? 'desktop-library-scan',
+        isCancelled: () => _scanCancelRequested || !ref.mounted,
       );
       _log.i(
         'Stream-ingested ${result.inserted}/${scanFile.expectedCount} scan rows '
@@ -836,6 +831,9 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
     if (sourceId != null) _pendingReconnectScans.remove(sourceId);
     _scanCancelRequested = false;
     _scanPauseRequested = false;
+    _nativeLibraryRequestId = PlatformBridge.supportsCoreBackend
+        ? 'library-scan-${DateTime.now().microsecondsSinceEpoch}'
+        : null;
     try {
       await _runScan(
         folderPath,
@@ -854,6 +852,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
       }
       _scanInProgress = false;
       _scanCompletion = null;
+      _nativeLibraryRequestId = null;
       completion.complete();
     }
   }
@@ -991,6 +990,12 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         );
         if (!ref.mounted) return;
         if (scanResult == null || _scanCancelRequested) {
+          if (scanResult != null) {
+            await _refreshSummaryFromStorage(
+              excludedDownloadedCount: scanResult.skipped,
+            );
+          }
+          if (!ref.mounted) return;
           state = state.copyWith(
             isScanning: false,
             scanIsFinalizing: false,
@@ -1060,26 +1065,34 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           errorCount: state.scanErrorCount,
         );
       } else {
-        final existingFiles = await _db.getFileModTimes(
-          sourceId: activeSourceId,
-        );
-        _log.i(
-          'Incremental scan: ${existingFiles.length} existing files in database',
-        );
-
-        final backfilledModTimes = await _backfillLegacyFileModTimes(
-          isSaf: isSaf,
-          existingFiles: existingFiles,
-        );
-        if (backfilledModTimes.isNotEmpty) {
-          await _db.updateFileModTimes(backfilledModTimes);
-          existingFiles.addAll(backfilledModTimes);
-          _log.i('Backfilled ${backfilledModTimes.length} legacy mod times');
+        final nativeIngestion = PlatformBridge.supportsCoreBackend;
+        final existingFiles = nativeIngestion
+            ? const <String, int>{}
+            : await _db.getFileModTimes(sourceId: activeSourceId);
+        if (!nativeIngestion) {
+          _log.i(
+            'Incremental scan: ${existingFiles.length} existing files in database',
+          );
+          final backfilledModTimes = await _backfillLegacyFileModTimes(
+            isSaf: isSaf,
+            existingFiles: existingFiles,
+          );
+          if (backfilledModTimes.isNotEmpty) {
+            await _db.updateFileModTimes(backfilledModTimes);
+            existingFiles.addAll(backfilledModTimes);
+            _log.i('Backfilled ${backfilledModTimes.length} legacy mod times');
+          }
         }
 
         final useSnapshotBridge =
             Platform.isAndroid && existingFiles.isNotEmpty;
-        final snapshotPath = useSnapshotBridge
+        final snapshotPath = nativeIngestion
+            ? await _db.writeNativeFileModTimesSnapshot(
+                activeSourceId,
+                requestId: _nativeLibraryRequestId!,
+                isCancelled: () => _scanCancelRequested || !ref.mounted,
+              )
+            : useSnapshotBridge
             ? await _db.writeFileModTimesSnapshot(existingFiles)
             : null;
 
@@ -1090,7 +1103,16 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
               !ref.mounted) {
             return;
           }
-          if (isSaf) {
+          if (nativeIngestion) {
+            result = await _db.scanIncrementalNative(
+              activeSourceId,
+              effectiveFolderPath,
+              snapshotPath!,
+              isSaf: isSaf,
+              requestId: _nativeLibraryRequestId!,
+              isCancelled: () => _scanCancelRequested || !ref.mounted,
+            );
+          } else if (isSaf) {
             result = useSnapshotBridge && snapshotPath != null
                 ? await PlatformBridge.scanSafTreeIncrementalFromSnapshot(
                     effectiveFolderPath,
@@ -1121,6 +1143,12 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
         if (!ref.mounted) return;
         if (_scanCancelRequested || result['cancelled'] == true) {
+          if (result['committed'] == true) {
+            await _refreshSummaryFromStorage(
+              excludedDownloadedCount: (result['skipped'] as num?)?.toInt(),
+            );
+          }
+          if (!ref.mounted) return;
           state = state.copyWith(
             isScanning: false,
             scanIsFinalizing: false,
@@ -1151,15 +1179,24 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
             [];
         final skippedCount = result['skippedCount'] as int? ?? 0;
         final totalFiles = result['totalFiles'] as int? ?? 0;
+        final scannedCount = nativeIngestion
+            ? (result['scanned_count'] as num).toInt()
+            : scannedList.length;
+        final deletedCount = nativeIngestion
+            ? (result['deleted_count'] as num).toInt()
+            : deletedPaths.length;
+        if (nativeIngestion && result['committed'] != true) {
+          throw StateError('Native Library scan did not commit its index');
+        }
 
         _log.i(
-          'Incremental result: ${scannedList.length} scanned, '
-          '$skippedCount skipped, ${deletedPaths.length} deleted, $totalFiles total',
+          'Incremental result: $scannedCount scanned, '
+          '$skippedCount skipped, $deletedCount deleted, $totalFiles total',
         );
 
-        final removedDownloaded = await _db.deleteDownloadedRowsForSource(
-          activeSourceId,
-        );
+        final removedDownloaded = nativeIngestion
+            ? 0
+            : await _db.deleteDownloadedRowsForSource(activeSourceId);
         if (removedDownloaded > 0) {
           _log.i(
             'Removed $removedDownloaded downloaded tracks already present in '
@@ -1168,8 +1205,10 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
         }
 
         final updatedItems = <LocalLibraryItem>[];
-        var skippedDownloads = removedDownloaded;
-        if (scannedList.isNotEmpty) {
+        var skippedDownloads = nativeIngestion
+            ? (result['skipped'] as num).toInt()
+            : removedDownloaded;
+        if (!nativeIngestion && scannedList.isNotEmpty) {
           for (final json in scannedList) {
             final map = json as Map<String, dynamic>;
             final item = LocalLibraryItem.fromJson(map);
@@ -1190,7 +1229,7 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
           }
         }
 
-        if (deletedPaths.isNotEmpty) {
+        if (!nativeIngestion && deletedPaths.isNotEmpty) {
           final deleteCount = await _db.deleteByPaths(deletedPaths);
           _log.i('Deleted $deleteCount items from database');
         }
@@ -1229,8 +1268,8 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
         final summary =
             'Incremental scan complete: ${state.totalCount} total tracks '
-            '(${scannedList.length} new/updated, $skippedCount unchanged, '
-            '${deletedPaths.length} removed, $skippedDownloads already in downloads, '
+            '($scannedCount new/updated, $skippedCount unchanged, '
+            '$deletedCount removed, $skippedDownloads already in downloads, '
             '${state.scanErrorCount} errors)';
         if (state.scanErrorCount > 0) {
           _log.e(summary);
@@ -1408,6 +1447,14 @@ class LocalLibraryNotifier extends Notifier<LocalLibraryState> {
 
     _log.i('Cancelling library scan');
     _scanCancelRequested = true;
+    final requestId = _nativeLibraryRequestId;
+    if (requestId != null) {
+      try {
+        await PlatformBridge.cancelNativeDataJob(requestId);
+      } catch (error) {
+        _log.w('Failed to cancel library data job: $error');
+      }
+    }
     _pendingReconnectScans.clear();
     _availabilityRequestVersion++;
     _scanReconnectedOnRefresh = false;

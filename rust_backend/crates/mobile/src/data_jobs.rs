@@ -55,7 +55,7 @@ fn execute(
     request: &Value,
     bytes: &[u8],
     check: &(dyn Fn() -> Result<(), String> + Sync),
-    _manager: Option<&ExtensionManager>,
+    manager: Option<&ExtensionManager>,
 ) -> Result<Value, String> {
     let operation = string(request, "operation")?;
     match operation {
@@ -119,6 +119,14 @@ fn execute(
                 check,
             )?;
             Ok(json!({"cutoff": cutoff}))
+        }
+        "library_scan_incremental" => crate::native_library::scan_incremental(
+            manager.ok_or("Library scan requires the initialized backend")?,
+            request,
+            check,
+        ),
+        operation if operation.starts_with("library_") => {
+            crate::native_library::execute(request, check)
         }
         _ => Err(format!("Unknown native data operation: {operation}")),
     }
