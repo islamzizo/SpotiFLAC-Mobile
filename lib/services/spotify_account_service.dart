@@ -330,6 +330,49 @@ class SpotifyAccountService {
     );
   }
 
+  Future<void> saveAlbumToLibrary(String albumId) async {
+    final normalizedId = albumId.trim();
+    if (normalizedId.isEmpty) {
+      throw const SpotifyAccountException('Spotify album ID is missing.');
+    }
+    final spDc = await _storage.read(key: _spDcKey);
+    if (spDc == null || spDc.isEmpty) {
+      throw const SpotifyAccountException('Log in to Spotify first.');
+    }
+    final token = await _validToken(
+      spDc,
+      await _storage.read(key: _spKeyKey) ?? '',
+    );
+    final httpResponse = await http.put(
+      Uri.parse('https://api.spotify.com/v1/me/library'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: jsonEncode({
+        'uris': ['spotify:album:$normalizedId'],
+      }),
+    );
+    if (httpResponse.statusCode != 200) {
+      String? message;
+      try {
+        final decoded = jsonDecode(httpResponse.body);
+        if (decoded is Map) {
+          final error = decoded['error'];
+          if (error is Map) message = error['message']?.toString();
+        }
+      } catch (_) {}
+      throw SpotifyAccountException(
+        message == null || message.isEmpty
+            ? 'Spotify could not save this album (' +
+                httpResponse.statusCode.toString() +
+                ').'
+            : message,
+      );
+    }
+  }
+
   Future<String> _validToken(String spDc, String spKey) async {
     final token = await _storage.read(key: accessTokenKey);
     final expiry = int.tryParse(await _storage.read(key: _expiryKey) ?? '');
