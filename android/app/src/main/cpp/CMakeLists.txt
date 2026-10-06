@@ -24,4 +24,12 @@ add_library(spotiflac_audio SHARED native_audio.cpp)
 target_compile_features(spotiflac_audio PRIVATE cxx_std_17)
 target_compile_options(spotiflac_audio PRIVATE -Wall -Wextra -Werror -fvisibility=hidden)
 target_link_libraries(spotiflac_audio PRIVATE oboe WavPack::WavPack log)
-target_link_options(spotiflac_audio PRIVATE "-Wl,-z,max-page-size=16384")
+# Only JNI is public; static Oboe/WavPack/C++ implementation symbols must not
+# keep otherwise unused code alive. APS2 is supported by our minimum API 24.
+target_link_options(spotiflac_audio PRIVATE
+    "-Wl,-z,max-page-size=16384"
+    "-Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/native_audio.map"
+    "-Wl,--icf=safe"
+    "-Wl,--pack-dyn-relocs=android")
+set_property(TARGET spotiflac_audio APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/native_audio.map")

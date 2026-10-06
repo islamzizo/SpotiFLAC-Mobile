@@ -82,6 +82,18 @@ remain the default. To build only ARM64, set
 run CocoaPods and the app build with `SPOTIFLAC_DISCORD_SDK=0`; an existing Pods
 installation must be regenerated with that setting.
 
+Android release builds, including plain `flutter build apk --release`, keep Dart
+debug data in `build/symbols/android/app.<architecture>.symbols` to reduce APK
+size without obfuscation. An explicit `--split-debug-info` path overrides this
+default; `--analyze-size` retains Flutter's normal behavior. Keep these symbols
+with the matching APK before another local build replaces them. Decode a trace
+with `flutter symbolize --debug-info=<symbols-file> --input=crash.txt`.
+
+CI and release jobs retain an `android-symbols-…` artifact with the commit, APK
+SHA-256 hashes, Dart symbols, and R8 mapping, identified by run and attempt.
+Archive it before its 90-day retention expires and match the reported APK hash
+when choosing symbols; equal version numbers do not guarantee a match.
+
 For native iOS codec checks, see the [FFmpeg capability probe](scripts/README_ios_ffmpeg_capabilities.md).
 
 ---

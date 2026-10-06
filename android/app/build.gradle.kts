@@ -8,6 +8,13 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Flutter reads this when configuring variant tasks, after this build script.
+// Keep release AOT debug data outside libapp.so; explicit paths and size analysis take precedence.
+if (!project.hasProperty("split-debug-info") && !project.hasProperty("code-size-directory")) {
+    project.extensions.extraProperties["split-debug-info"] =
+        rootProject.file("../build/symbols/android").absolutePath
+}
+
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {

@@ -227,6 +227,24 @@ jobs:
               "$apk_dir/SpotiFLAC-${VERSION}-${abi}.apk"
           done
 
+      - name: Record Android symbol provenance
+        run: |
+          test -s build/symbols/android/app.android-arm64.symbols
+          test -s build/symbols/android/app.android-arm.symbols
+          test -s build/app/outputs/mapping/release/mapping.txt
+          git rev-parse HEAD > build/symbols/android/commit.txt
+          sha256sum build/app/outputs/flutter-apk/SpotiFLAC-*.apk > build/symbols/android/apk-sha256.txt
+
+      - name: Retain Android debug symbols
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: android-symbols-${{ needs.get-version.outputs.version }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            build/symbols/android/
+            build/app/outputs/mapping/release/mapping.txt
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
