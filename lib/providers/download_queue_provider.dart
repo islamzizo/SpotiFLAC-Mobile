@@ -425,6 +425,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
 
     Future.microtask(() async {
       try {
+        if (!ref.mounted) return;
         updateSettings(ref.read(settingsProvider));
         try {
           await _initOutputDir();
@@ -446,6 +447,11 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   /// teardown, and a pending debounce timer would silently drop the most
   /// recent queue mutations.
   Future<void> flushQueuePersistence() async {
+    // Startup publishes restored items before completing this gate. Capturing
+    // the initial empty state while hydration is in flight would delete the
+    // restored rows when the persistence writer reaches that empty snapshot.
+    await _queueRestored.future;
+    if (!ref.mounted) return;
     await _queuePersistence.flush();
   }
 
@@ -541,12 +547,15 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   Future<void> _loadQueueFromStorage() async {
-    if (_isLoaded) return;
+    if (_isLoaded || !ref.mounted) return;
     _isLoaded = true;
 
     try {
       final restorePaused = await _queuePersistence.loadUserPaused();
-      final pendingItems = (await _queuePersistence.restore()).map((item) {
+      if (!ref.mounted) return;
+      final restoredItems = await _queuePersistence.restore();
+      if (!ref.mounted) return;
+      final pendingItems = restoredItems.map((item) {
         final service = _normalizeQueuedService(item.service);
         return service == item.service ? item : item.copyWith(service: service);
       }).toList();
@@ -570,6 +579,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       if (await _tryAdoptAndroidNativeWorkerSnapshot(normalizedPendingItems)) {
         return;
       }
+      if (!ref.mounted) return;
       if (!restorePaused) {
         Future.microtask(() => _processQueue());
       } else {

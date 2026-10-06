@@ -1225,7 +1225,9 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
         .toList(growable: false);
     if (releasableIds.isEmpty) return;
 
-    await flushQueuePersistence();
+    // Restored state is already published here; startup adoption must not
+    // await the public lifecycle gate whose completion depends on adoption.
+    await _queuePersistence.flush();
     if (!workerRunning) {
       for (final itemId in releasableIds) {
         contexts.remove(itemId);
