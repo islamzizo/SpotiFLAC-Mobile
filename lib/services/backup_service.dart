@@ -17,6 +17,61 @@ import 'package:spotiflac_android/utils/logger.dart';
 typedef BackupHistoryPageLoader =
     Future<List<Map<String, dynamic>>> Function(int limit, int offset);
 
+Future<void> _writeBackupMetadataInBackground(
+  String path,
+  Map<String, dynamic> metadata,
+  String? collectionsJson,
+) => Isolate.run(() {
+  if (collectionsJson == null) {
+    File(path).writeAsStringSync(jsonEncode(metadata), flush: true);
+    return;
+  }
+  // The collections exporter already encoded this trusted object on its
+  // worker. Passing the immutable string avoids cloning its full map graph
+  // onto another worker. Write it directly, preserving metadata key order.
+  final output = File(path).openSync(mode: FileMode.write);
+  final buffer = StringBuffer();
+  try {
+    buffer.write('{');
+    var first = true;
+    for (final entry in metadata.entries) {
+      if (!first) buffer.write(',');
+      first = false;
+      buffer
+        ..write(jsonEncode(entry.key))
+        ..write(':');
+      if (entry.key != 'data') {
+        buffer.write(jsonEncode(entry.value));
+        continue;
+      }
+      final data = entry.value as Map<String, dynamic>;
+      buffer.write('{');
+      var firstData = true;
+      for (final field in data.entries) {
+        if (!firstData) buffer.write(',');
+        firstData = false;
+        buffer
+          ..write(jsonEncode(field.key))
+          ..write(':');
+        if (field.key == 'collections') {
+          output.writeStringSync(buffer.toString());
+          buffer.clear();
+          output.writeStringSync(collectionsJson);
+        } else {
+          buffer.write(jsonEncode(field.value));
+        }
+      }
+      buffer.write('}');
+    }
+    buffer.write('}');
+    output
+      ..writeStringSync(buffer.toString())
+      ..flushSync();
+  } finally {
+    output.closeSync();
+  }
+});
+
 /// Parsed contents of a backup file. ZIP backups keep large history and cover
 /// payloads on disk until restore consumes them.
 class BackupBundle {
@@ -154,6 +209,7 @@ class BackupService {
     required Map<String, dynamic>? settings,
     required BackupHistoryPageLoader loadHistoryPage,
     required Map<String, dynamic> collections,
+    String? collectionsJson,
     required Map<String, Map<String, String>> playlistCoverFiles,
     required Map<String, dynamic> extensions,
     Directory? outputDirectory,
@@ -161,6 +217,9 @@ class BackupService {
     bool includeHistory = true,
     UserProfile? profile,
   }) async {
+    if (collectionsJson != null && collections.isNotEmpty) {
+      throw ArgumentError('Provide collections as a map or encoded JSON');
+    }
     final output = await _newBackupFile(outputDirectory);
     final tempRoot = temporaryDirectory ?? await getTemporaryDirectory();
     final staging = await Directory(
@@ -229,13 +288,16 @@ class BackupService {
               'name': profile.name,
               if (photoPath != null) 'photo': _profilePhotoEntry,
             },
-          if (collections.isNotEmpty) 'collections': collections,
+          if (collectionsJson != null || collections.isNotEmpty)
+            'collections': collections,
           if (coverManifest.isNotEmpty) 'playlist_covers': coverManifest,
           if (extensions.isNotEmpty) 'extensions': extensions,
         },
       };
-      await Isolate.run(
-        () => metadataFile.writeAsString(jsonEncode(metadata), flush: true),
+      await writeBackupMetadata(
+        metadataFile.path,
+        metadata,
+        collectionsJson: collectionsJson,
       );
 
       if (await partFile.exists()) await partFile.delete();
@@ -726,6 +788,15 @@ class BackupService {
       output.closeSync();
     }
   }
+
+  /// [collectionsJson] is the trusted JSON object from the collection export
+  /// worker. Its empty placeholder in metadata retains the normal key order.
+  @visibleForTesting
+  static Future<void> writeBackupMetadata(
+    String path,
+    Map<String, dynamic> metadata, {
+    String? collectionsJson,
+  }) => _writeBackupMetadataInBackground(path, metadata, collectionsJson);
 
   static BackupBundle? parse(String content) {
     dynamic decoded;

@@ -196,6 +196,87 @@ void main() {
     }
   });
 
+  testWidgets(
+    'direct collection JSON round trips through production native ZIP',
+    (tester) async {
+      expect(PlatformBridge.supportsCoreBackend, isTrue);
+      final cover = await File(
+        '${root.path}/raw-cover.jpg',
+      ).writeAsBytes([255, 216, 255, 217]);
+      final photo = await File(
+        '${root.path}/raw-avatar.png',
+      ).writeAsBytes([1, 2, 3]);
+      for (final collections in <Map<String, dynamic>>[
+        {
+          'wishlist': <dynamic>[],
+          'loved': <dynamic>[],
+          'playlists': <dynamic>[],
+          'favoriteArtists': <dynamic>[],
+        },
+        {
+          'loved': [
+            {'opaque': '日本語 🎵 \\ "\n', 'nil': null},
+          ],
+          'playlists': [
+            {'id': 'playlist', 'name': '音楽 "quoted"', 'unknown': null},
+          ],
+          'future"key': {'collections': '__raw_collections__', 'value': true},
+        },
+      ]) {
+        final archiveFile = await BackupService.writeBackupArchive(
+          settings: const {'theme': 'mornye', 'nil': null},
+          includeHistory: false,
+          loadHistoryPage: (_, _) async =>
+              throw StateError('Disabled history must not be loaded'),
+          collections: const {},
+          collectionsJson: jsonEncode(collections),
+          playlistCoverFiles: {
+            'playlist': {'ext': '.jpg', 'path': cover.path},
+          },
+          extensions: const {'items': <dynamic>[]},
+          profile: UserProfile(name: '日本語 🎵', photoPath: photo.path),
+          outputDirectory: root,
+          temporaryDirectory: root,
+        );
+        final archive = ZipDecoder().decodeBytes(
+          await archiveFile.readAsBytes(),
+        );
+        final metadata =
+            jsonDecode(utf8.decode(archive.find('metadata.json')!.content))
+                as Map<String, dynamic>;
+        final data = metadata['data'] as Map<String, dynamic>;
+        expect(data.keys, [
+          'settings',
+          'profile',
+          'collections',
+          'playlist_covers',
+          'extensions',
+        ]);
+        expect(data['collections'], collections);
+        expect(archive.find('history.ndjson'), isNull);
+        final bundle = await BackupService.parseFile(
+          archiveFile.path,
+          temporaryDirectory: root,
+        );
+        expect(bundle, isNotNull);
+        expect(bundle!.formatVersion, 3);
+        expect(bundle.hasCollections, isTrue);
+        expect(bundle.hasHistory, isFalse);
+        expect(bundle.collections, collections);
+        expect(bundle.profile!.name, '日本語 🎵');
+        expect(await File(bundle.profile!.photoPath!).readAsBytes(), [1, 2, 3]);
+        final restoredCover = bundle.playlistCovers['playlist'] as Map;
+        expect(await File(restoredCover['path'] as String).readAsBytes(), [
+          255,
+          216,
+          255,
+          217,
+        ]);
+        await bundle.cleanup();
+      }
+    },
+  );
+
   testWidgets('ZIP compression parity, latency and UI-isolate heartbeat', (
     tester,
   ) async {
@@ -258,7 +339,8 @@ void main() {
         }
       }
     }
-    binding.reportData = {
+    binding.reportData ??= {};
+    binding.reportData!['native_backup_archive'] = {
       'platform': Platform.operatingSystem,
       'mode':
           'same-file end-to-end ZIP worker, seven alternating paired samples',
