@@ -7,11 +7,14 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
+import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/widgets/app_action_button.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
+
+final _log = AppLogger('PlaylistPicker');
 
 Future<void> showAddTrackToPlaylistSheet(
   BuildContext context,
@@ -68,6 +71,7 @@ class _PlaylistPickerSheetContentState
   late final PlaylistPickerSummaryRequest _summaryRequest;
   final Set<String> _selectedPlaylistIds = {};
   final Set<String> _committedPlaylistIds = {};
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -75,7 +79,9 @@ class _PlaylistPickerSheetContentState
     _summaryRequest = PlaylistPickerSummaryRequest.fromTracks(widget.tracks);
   }
 
-  void _handleDone(List<PlaylistPickerSummary> playlists) async {
+  Future<void> _handleDone(List<PlaylistPickerSummary> playlists) async {
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
     final notifier = ref.read(libraryCollectionsProvider.notifier);
     final effectiveDisabledIds = <String>{
       ..._committedPlaylistIds,
@@ -88,12 +94,23 @@ class _PlaylistPickerSheetContentState
     };
     final addedNames = <String>[];
 
-    for (final playlistId in idsToAdd) {
-      final playlistName = playlistNamesById[playlistId];
-      if (playlistName != null && playlistName.isNotEmpty) {
-        addedNames.add(playlistName);
+    try {
+      for (final playlistId in idsToAdd) {
+        await notifier.addTracksToPlaylist(playlistId, widget.tracks);
+        _committedPlaylistIds.add(playlistId);
+        final playlistName = playlistNamesById[playlistId];
+        if (playlistName != null && playlistName.isNotEmpty) {
+          addedNames.add(playlistName);
+        }
       }
-      await notifier.addTracksToPlaylist(playlistId, widget.tracks);
+    } catch (error, stack) {
+      _log.e('Failed to add tracks to selected playlists', error, stack);
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(context.friendlyError(error))));
+      return;
     }
 
     if (!mounted) return;
@@ -134,9 +151,11 @@ class _PlaylistPickerSheetContentState
     final hasNewSelections = idsToAdd.isNotEmpty;
 
     void onDone() {
+      if (_isSubmitting) return;
       if (hasNewSelections) {
         _handleDone(resolvedPlaylists);
       } else {
+        setState(() => _isSubmitting = true);
         Navigator.of(context).pop();
       }
     }
@@ -187,7 +206,9 @@ class _PlaylistPickerSheetContentState
               color: Theme.of(context).colorScheme.primary,
             ),
             title: Text(context.l10n.collectionCreatePlaylist),
+            enabled: !_isSubmitting,
             onTap: () async {
+              if (_isSubmitting) return;
               final name = await _promptPlaylistName(
                 context,
                 widget.playlistNamePrefill,
@@ -250,10 +271,11 @@ class _PlaylistPickerSheetContentState
                             playlist.trackCount,
                           ),
                         ),
-                        enabled: !isAlreadyIn,
+                        enabled: !isAlreadyIn && !_isSubmitting,
                         selected: isSelected,
-                        onTap: !isAlreadyIn
+                        onTap: !isAlreadyIn && !_isSubmitting
                             ? () {
+                                if (_isSubmitting) return;
                                 setState(() {
                                   if (_selectedPlaylistIds.contains(
                                     playlist.id,
@@ -295,12 +317,12 @@ class _PlaylistPickerSheetContentState
               width: double.infinity,
               child: context.isMornye
                   ? AppActionButton(
-                      onPressed: onDone,
+                      onPressed: _isSubmitting ? null : onDone,
                       icon: const Icon(CupertinoIcons.checkmark),
                       label: Text(context.l10n.dialogDone),
                     )
                   : FilledButton(
-                      onPressed: onDone,
+                      onPressed: _isSubmitting ? null : onDone,
                       child: Text(context.l10n.dialogDone),
                     ),
             ),
