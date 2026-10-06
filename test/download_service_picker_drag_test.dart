@@ -179,7 +179,7 @@ void main() {
 
   for (final brightness in Brightness.values) {
     testWidgets(
-      'source status stays local and selection keeps chip geometry in $brightness',
+      'source status stays local and checkmark space appears only on selection in $brightness',
       (tester) async {
         tester.view.physicalSize = const Size(393, 852);
         tester.view.devicePixelRatio = 1;
@@ -226,6 +226,10 @@ void main() {
           matching: find.byType(CupertinoButton),
         );
         final sourceRects = [tester.getRect(source1), tester.getRect(source2)];
+        expect(
+          tester.getTopLeft(find.text('Source 1')).dx - sourceRects[1].left,
+          16,
+        );
         extensions.publishHealth('example', 'offline');
         await tester.pumpAndSettle();
         expect(find.byTooltip('Service offline'), findsOneWidget);
@@ -247,7 +251,13 @@ void main() {
         expect(extensions.healthRequests, ['example', 'example-1']);
         await tester.tap(find.text('Source 1'));
         await tester.pumpAndSettle();
-        expect([tester.getRect(source1), tester.getRect(source2)], sourceRects);
+        expect(tester.getSize(source1).width, sourceRects[0].width - 26);
+        expect(tester.getSize(source2).width, sourceRects[1].width + 26);
+        expect(
+          tester.getTopLeft(find.text('Source 1')).dx -
+              tester.getTopLeft(source2).dx,
+          42,
+        );
         await tester.tap(find.text('Quality 1'));
         await tester.pumpAndSettle();
         expect(selection, ('1', 'example-1'));

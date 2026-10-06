@@ -453,20 +453,10 @@ class _ServiceChip extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Reserve selection space so switching sources never reflows
-              // the chips and changes the sheet height under the finger.
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: isSelected
-                    ? Icon(
-                        CupertinoIcons.checkmark,
-                        color: foreground,
-                        size: 18,
-                      )
-                    : null,
-              ),
-              const SizedBox(width: 8),
+              if (isSelected) ...[
+                Icon(CupertinoIcons.checkmark, color: foreground, size: 18),
+                const SizedBox(width: 8),
+              ],
               if (iconPath != null) ...[
                 ClipRRect(
                   borderRadius: BorderRadius.circular(4),
