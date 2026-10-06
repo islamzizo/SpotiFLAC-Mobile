@@ -810,6 +810,9 @@ class HistoryDatabase {
     });
   }
 
+  Future<void> replaceAll(Stream<Map<String, dynamic>> items) async =>
+      replaceHistoryRows(await database, items.map(_jsonToDbRow));
+
   Future<Set<String>> updateExistingBatch(
     List<Map<String, dynamic>> items,
   ) async {
@@ -1155,7 +1158,7 @@ class HistoryDatabase {
     _searchFtsAvailable = null;
   }
 
-  Future<void> updateFilePath(
+  Future<bool> updateFilePath(
     String id,
     String newFilePath, {
     String? newSafFileName,
@@ -1166,6 +1169,8 @@ class HistoryDatabase {
     int? newBitrate,
     String? newFormat,
     bool clearAudioSpecs = false,
+    String? expectedFilePath,
+    String? expectedDownloadedAt,
   }) async {
     final db = await database;
     final values = <String, dynamic>{'file_path': newFilePath};
@@ -1198,11 +1203,21 @@ class HistoryDatabase {
         values['sample_rate'] = newSampleRate;
       }
     }
-    await db.transaction((txn) async {
-      await txn.update('history', values, where: 'id = ?', whereArgs: [id]);
+    return db.transaction((txn) async {
+      final changed = await txn.update(
+        'history',
+        values,
+        where:
+            'id = ?'
+            '${expectedFilePath == null ? '' : ' AND file_path = ?'}'
+            '${expectedDownloadedAt == null ? '' : ' AND downloaded_at = ?'}',
+        whereArgs: [id, ?expectedFilePath, ?expectedDownloadedAt],
+      );
+      if (changed == 0) return false;
       final batch = txn.batch();
       _putPathKeysInBatch(batch, id, newFilePath);
       await batch.commit(noResult: true);
+      return true;
     });
   }
 
@@ -1259,6 +1274,7 @@ class HistoryDatabase {
         'download_tree_uri',
         'saf_relative_dir',
         'saf_file_name',
+        'downloaded_at',
       ],
       where: 'file_path IS NOT NULL AND file_path != ""',
       orderBy: 'sort_added DESC, id DESC',
@@ -1266,6 +1282,36 @@ class HistoryDatabase {
       offset: offset,
     );
     return rows.map((r) => Map<String, dynamic>.from(r)).toList();
+  }
+
+  /// A delayed absence check must not delete a replacement downloaded after
+  /// the inspected snapshot, even when it reused the same ID and path.
+  Future<List<String>> deleteInspectedEntries(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final deletedIds = <String>[];
+      for (final entry in entries) {
+        final id = entry['id'] as String;
+        final downloadedAt = entry['downloaded_at'] as String?;
+        final count = await txn.delete(
+          'history',
+          where:
+              'id = ? AND file_path = ?'
+              '${downloadedAt == null ? '' : ' AND downloaded_at = ?'}',
+          whereArgs: [id, entry['file_path'], ?downloadedAt],
+        );
+        if (count == 0) continue;
+        await txn.delete(
+          'history_path_keys',
+          where: 'item_id = ?',
+          whereArgs: [id],
+        );
+        deletedIds.add(id);
+      }
+      return deletedIds;
+    });
   }
 
   Future<int> deleteByIds(List<String> ids) async {

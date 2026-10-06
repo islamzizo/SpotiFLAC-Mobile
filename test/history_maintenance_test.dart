@@ -10,6 +10,8 @@ import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/services/history_database.dart';
 import 'package:spotiflac_android/services/history_maintenance.dart';
 
+import 'support/sqlite_process_database.dart';
+
 class _ReloadDatabase implements HistoryDatabase {
   _ReloadDatabase(this.rows);
 
@@ -46,12 +48,20 @@ class _ReloadDatabase implements HistoryDatabase {
   }
 
   @override
+  Future<void> clearAll() async {
+    if (failDeletion) throw StateError('database write failed');
+    rows.clear();
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _HistoryNotifier extends DownloadHistoryNotifier {
-  _HistoryNotifier(_ReloadDatabase database)
-    : _initialItems = database.rows.values.toList(),
+  _HistoryNotifier(
+    HistoryDatabase database,
+    Iterable<DownloadHistoryItem> items,
+  ) : _initialItems = items.toList(),
       super(database: database);
 
   final List<DownloadHistoryItem> _initialItems;
@@ -61,6 +71,83 @@ class _HistoryNotifier extends DownloadHistoryNotifier {
     items: _initialItems,
     totalCount: _initialItems.length,
   );
+}
+
+class _MutationDatabase implements HistoryDatabase {
+  _MutationDatabase(DownloadHistoryItem item) : rows = {item.id: item};
+
+  final Map<String, DownloadHistoryItem> rows;
+  final writeStarted = Completer<void>();
+  final releaseWrite = Completer<void>();
+  bool failWrite = false;
+
+  @override
+  Future<Map<String, dynamic>?> getById(String id) async => rows[id]?.toJson();
+
+  @override
+  Future<void> upsert(Map<String, dynamic> json) async {
+    if (!writeStarted.isCompleted) writeStarted.complete();
+    await releaseWrite.future;
+    if (failWrite) throw StateError('database write failed');
+    final item = DownloadHistoryItem.fromJson(json);
+    rows[item.id] = item;
+  }
+
+  @override
+  Future<int> deleteByIds(List<String> ids) async {
+    final previousCount = rows.length;
+    rows.removeWhere((id, _) => ids.contains(id));
+    return previousCount - rows.length;
+  }
+
+  @override
+  Future<int> getCount() async => rows.length;
+
+  @override
+  Future<Set<String>> updateExistingBatch(
+    List<Map<String, dynamic>> items,
+  ) async {
+    final changedIds = <String>{};
+    for (final json in items) {
+      final id = json['id'] as String;
+      if (!rows.containsKey(id)) continue;
+      rows[id] = DownloadHistoryItem.fromJson(json);
+      changedIds.add(id);
+    }
+    return changedIds;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _InspectionDatabase extends _MutationDatabase {
+  _InspectionDatabase(super.item);
+
+  final snapshotRead = Completer<void>();
+  final releaseSnapshot = Completer<void>();
+
+  @override
+  Future<List<Map<String, dynamic>>> getEntriesWithPathsPage({
+    required int limit,
+    int offset = 0,
+  }) async {
+    final snapshot = [
+      for (final item in rows.values)
+        {
+          'id': item.id,
+          'file_path': item.filePath,
+          'storage_mode': item.storageMode,
+          'download_tree_uri': item.downloadTreeUri,
+          'saf_relative_dir': item.safRelativeDir,
+          'saf_file_name': item.safFileName,
+          'downloaded_at': item.downloadedAt.toUtc().toIso8601String(),
+        },
+    ];
+    if (!snapshotRead.isCompleted) snapshotRead.complete();
+    await releaseSnapshot.future;
+    return snapshot;
+  }
 }
 
 class _HistoryRows implements DatabaseExecutor {
@@ -146,7 +233,9 @@ void main() {
     final db = _ReloadDatabase({item.id: item});
     final container = ProviderContainer(
       overrides: [
-        downloadHistoryProvider.overrideWith(() => _HistoryNotifier(db)),
+        downloadHistoryProvider.overrideWith(
+          () => _HistoryNotifier(db, db.rows.values),
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -174,7 +263,9 @@ void main() {
       final db = _ReloadDatabase({item.id: item})..failDeletion = true;
       final container = ProviderContainer(
         overrides: [
-          downloadHistoryProvider.overrideWith(() => _HistoryNotifier(db)),
+          downloadHistoryProvider.overrideWith(
+            () => _HistoryNotifier(db, db.rows.values),
+          ),
         ],
       );
       addTearDown(container.dispose);
@@ -189,6 +280,271 @@ void main() {
       expect(container.read(downloadHistoryProvider).totalCount, 1);
     },
   );
+
+  for (final deletion in ['single', 'many', 'clear']) {
+    Future<void> remove(DownloadHistoryNotifier notifier, String id) =>
+        switch (deletion) {
+          'single' => notifier.removeFromHistory(id),
+          'many' => notifier.removeManyFromHistory([id]),
+          _ => notifier.clearHistory(),
+        };
+
+    test('$deletion deletion waits for an older reload', () async {
+      final item = _track('removed');
+      final db = _ReloadDatabase({item.id: item});
+      final container = ProviderContainer(
+        overrides: [
+          downloadHistoryProvider.overrideWith(
+            () => _HistoryNotifier(db, db.rows.values),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(downloadHistoryProvider.notifier);
+      final reload = notifier.reloadFromStorage();
+      await db.snapshotRead.future;
+      final deletion = remove(notifier, item.id);
+      await Future<void>.delayed(Duration.zero);
+      expect(db.rows.keys, [item.id]);
+      db.count.complete(1);
+      await Future.wait([reload, deletion]);
+      final state = container.read(downloadHistoryProvider);
+      expect(db.rows, isEmpty);
+      expect(state.items, isEmpty);
+      expect(state.lookupItems, isEmpty);
+      expect(state.totalCount, 0);
+    });
+
+    test('failed $deletion deletion keeps the visible record', () async {
+      final item = _track('retained');
+      final db = _ReloadDatabase({item.id: item})..failDeletion = true;
+      final container = ProviderContainer(
+        overrides: [
+          downloadHistoryProvider.overrideWith(
+            () => _HistoryNotifier(db, db.rows.values),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      await remove(container.read(downloadHistoryProvider.notifier), item.id);
+      final state = container.read(downloadHistoryProvider);
+      expect(db.rows.keys, [item.id]);
+      expect(state.items, [item]);
+      expect(state.totalCount, 1);
+      expect(state.loadedIndexVersion, 0);
+    });
+  }
+
+  for (final audioOnly in [false, true]) {
+    Future<void> update(DownloadHistoryNotifier notifier, String id) =>
+        audioOnly
+        ? notifier.updateAudioMetadataForItem(id: id, quality: '24-bit/96kHz')
+        : notifier.updateMetadataForItem(
+            id: id,
+            trackName: 'Updated',
+            artistName: 'Artist',
+            albumName: 'Album',
+          );
+
+    test('failed metadata save keeps state (audio: $audioOnly)', () async {
+      final item = _track('retained');
+      final db = _MutationDatabase(item)..failWrite = true;
+      db.releaseWrite.complete();
+      final container = ProviderContainer(
+        overrides: [
+          downloadHistoryProvider.overrideWith(
+            () => _HistoryNotifier(db, db.rows.values),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      await expectLater(
+        update(container.read(downloadHistoryProvider.notifier), item.id),
+        throwsStateError,
+      );
+      final state = container.read(downloadHistoryProvider);
+      expect(db.rows.values, [item]);
+      expect(state.items, [item]);
+      expect(state.lookupItems, [item]);
+      expect(state.loadedIndexVersion, 0);
+    });
+
+    test(
+      'metadata cannot revive a deleted record (audio: $audioOnly)',
+      () async {
+        final item = _track('removed');
+        final db = _MutationDatabase(item);
+        final container = ProviderContainer(
+          overrides: [
+            downloadHistoryProvider.overrideWith(
+              () => _HistoryNotifier(db, db.rows.values),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        final notifier = container.read(downloadHistoryProvider.notifier);
+        final updating = update(notifier, item.id);
+        await db.writeStarted.future;
+        final deleting = notifier.removeFromHistory(item.id);
+        await Future<void>.delayed(Duration.zero);
+        expect(db.rows.keys, [item.id]);
+        expect(container.read(downloadHistoryProvider).items, [item]);
+        db.releaseWrite.complete();
+        await Future.wait([updating, deleting]);
+        final state = container.read(downloadHistoryProvider);
+        expect(db.rows, isEmpty);
+        expect(state.items, isEmpty);
+        expect(state.lookupItems, isEmpty);
+        expect(state.totalCount, 0);
+      },
+    );
+  }
+
+  test('delayed maintenance preserves newer metadata edits', () async {
+    final original = _track('kept').copyWith(composer: 'Old composer');
+    final db = _MutationDatabase(original);
+    db.releaseWrite.complete();
+    final container = ProviderContainer(
+      overrides: [
+        downloadHistoryProvider.overrideWith(
+          () => _HistoryNotifier(db, db.rows.values),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final notifier = container.read(downloadHistoryProvider.notifier);
+    await notifier.updateMetadataForItem(
+      id: original.id,
+      trackName: 'User title',
+      artistName: original.artistName,
+      albumName: original.albumName,
+      composer: 'User composer',
+    );
+    await notifier.applyMaintenanceUpdates([
+      HistoryMaintenanceUpdate(
+        original: original,
+        updated: original.copyWith(
+          quality: '24-bit/96kHz',
+          composer: 'Probed composer',
+          filePath: '/music/repaired.flac',
+        ),
+      ),
+    ]);
+    final stored = db.rows[original.id]!;
+    final visible = container.read(downloadHistoryProvider).items.single;
+    for (final item in [stored, visible]) {
+      expect(item.trackName, 'User title');
+      expect(item.composer, 'User composer');
+      expect(item.quality, '24-bit/96kHz');
+      expect(item.filePath, '/music/repaired.flac');
+    }
+  });
+
+  test('newer tag scan results survive an older metadata probe', () {
+    final original = _track('kept');
+    final current = original.copyWith(
+      lyricsMetadataScanVersion: 2,
+      replayGainMetadataScanVersion: 2,
+    );
+    final merged = HistoryMaintenanceUpdate(
+      original: original,
+      updated: original.copyWith(
+        hasLyrics: true,
+        lyricsMetadataScanVersion: 1,
+        hasReplayGain: true,
+        replayGainMetadataScanVersion: 1,
+      ),
+    ).mergeInto(current)!;
+    expect(merged.hasLyrics, isFalse);
+    expect(merged.hasReplayGain, isFalse);
+    expect(merged.lyricsMetadataScanVersion, 2);
+    expect(merged.replayGainMetadataScanVersion, 2);
+  });
+
+  for (final replacedPath in [false, true]) {
+    test('old orphan inspection keeps a replacement ($replacedPath)', () async {
+      final original = _track('replaced');
+      final db = _InspectionDatabase(original);
+      db.releaseWrite.complete();
+      final container = ProviderContainer(
+        overrides: [
+          downloadHistoryProvider.overrideWith(
+            () => _HistoryNotifier(db, db.rows.values),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(downloadHistoryProvider.notifier);
+      final cleanup = notifier.cleanupOrphanedDownloads();
+      await db.snapshotRead.future;
+      final replacement = DownloadHistoryItem.fromJson({
+        ...original.toJson(),
+        'filePath': replacedPath ? '/music/new-file.flac' : original.filePath,
+        'downloadedAt': original.downloadedAt
+            .add(const Duration(days: 1))
+            .toUtc()
+            .toIso8601String(),
+      });
+      await notifier.addToHistory(replacement);
+      db.releaseSnapshot.complete();
+      expect(await cleanup, 0);
+      expect(db.rows[original.id]!.filePath, replacement.filePath);
+      expect(
+        container.read(downloadHistoryProvider).items.single.filePath,
+        replacement.filePath,
+      );
+      expect(container.read(downloadHistoryProvider).totalCount, 1);
+    });
+  }
+
+  test('atomic streaming restore rolls back a late stream failure', () async {
+    final db = await SqliteProcessDatabase.open();
+    addTearDown(db.close);
+    await db.execute(
+      'CREATE TABLE history(id TEXT PRIMARY KEY, file_path TEXT NOT NULL)',
+    );
+    await db.execute(
+      'CREATE TABLE history_path_keys(item_id TEXT, path_key TEXT, '
+      'PRIMARY KEY(item_id, path_key))',
+    );
+    await db.insert('history', {
+      'id': 'previous',
+      'file_path': '/music/old.flac',
+    });
+    await db.insert('history_path_keys', {
+      'item_id': 'previous',
+      'path_key': 'old-key',
+    });
+    Stream<Map<String, dynamic>> brokenBackup() async* {
+      for (var i = 0; i < 501; i++) {
+        yield {'id': '$i', 'file_path': '/music/$i.flac'};
+      }
+      throw const FormatException('truncated backup');
+    }
+
+    await expectLater(
+      replaceHistoryRows(db, brokenBackup()),
+      throwsFormatException,
+    );
+    expect(await db.query('history'), [
+      {'id': 'previous', 'file_path': '/music/old.flac'},
+    ]);
+    expect(await db.query('history_path_keys'), [
+      {'item_id': 'previous', 'path_key': 'old-key'},
+    ]);
+    await replaceHistoryRows(
+      db,
+      Stream.fromIterable([
+        {'id': 'restored', 'file_path': '/music/restored.flac'},
+      ]),
+    );
+    expect(await db.query('history'), [
+      {'id': 'restored', 'file_path': '/music/restored.flac'},
+    ]);
+    final keys = await db.query('history_path_keys');
+    expect(keys, isNotEmpty);
+    expect(keys.every((row) => row['item_id'] == 'restored'), isTrue);
+  });
 
   test(
     'late maintenance cannot recreate deleted rows or their path keys',

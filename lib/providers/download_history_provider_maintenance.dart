@@ -4,17 +4,6 @@ part of 'download_history_provider.dart';
 /// Startup maintenance: SAF repair, orphan cleanup, and audio-metadata
 /// backfill that run staggered after the initial history load.
 extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
-  Future<void> _commitMaintenanceUpdates(List<Map<String, dynamic>> updates) =>
-      _enqueueHistoryWrite(() async {
-        final persistedIds = await _db.updateExistingBatch(updates);
-        if (!ref.mounted || persistedIds.isEmpty) return;
-        state = mergeHistoryMaintenanceUpdates(
-          state,
-          updates.map(DownloadHistoryItem.fromJson),
-          persistedIds,
-        );
-      });
-
   void _scheduleStartupMaintenance(List<DownloadHistoryItem> initialItems) {
     if (_startupMaintenanceScheduled) {
       return;
@@ -170,7 +159,7 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
       return;
     }
 
-    final persistedUpdates = <Map<String, dynamic>>[];
+    final persistedUpdates = <HistoryMaintenanceUpdate>[];
     var changed = false;
     var repairedCount = 0;
     var verifiedCount = 0;
@@ -234,11 +223,13 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
         } else {
           repairedCount++;
         }
-        persistedUpdates.add(updated.toJson());
+        persistedUpdates.add(
+          HistoryMaintenanceUpdate(original: item, updated: updated),
+        );
       }
 
       if (changed) {
-        await _commitMaintenanceUpdates(persistedUpdates);
+        await applyMaintenanceUpdates(persistedUpdates);
         _historyLog.i(
           'SAF repair pass: verified=$verifiedCount, repaired=$repairedCount, checked=${selectedIndexes.length}',
         );
@@ -562,7 +553,7 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
         return;
       }
 
-      final persistedUpdates = <Map<String, dynamic>>[];
+      final persistedUpdates = <HistoryMaintenanceUpdate>[];
       var refreshedCount = 0;
 
       for (final index in selectedIndexes) {
@@ -693,12 +684,14 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
           hasReplayGain: resolvedHasReplayGain,
           replayGainMetadataScanVersion: resolvedReplayGainScanVersion,
         );
-        persistedUpdates.add(updated.toJson());
+        persistedUpdates.add(
+          HistoryMaintenanceUpdate(original: item, updated: updated),
+        );
         refreshedCount++;
       }
 
       if (persistedUpdates.isNotEmpty) {
-        await _commitMaintenanceUpdates(persistedUpdates);
+        await applyMaintenanceUpdates(persistedUpdates);
       }
 
       await _writeStartupCursor(

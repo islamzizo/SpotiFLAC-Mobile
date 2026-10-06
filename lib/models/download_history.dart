@@ -1,4 +1,4 @@
-part of 'download_history_provider.dart';
+import 'package:spotiflac_android/utils/string_utils.dart';
 
 class DownloadHistoryItem {
   final String id;
