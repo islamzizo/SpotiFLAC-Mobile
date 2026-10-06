@@ -56,6 +56,26 @@ class NativeFinalizationPolicyTest {
     }
 
     @Test
+    fun matchesSharedContainerConversionCases() {
+        val stream = checkNotNull(javaClass.getResourceAsStream("/finalization_container_cases.tsv"))
+        stream.bufferedReader().useLines { lines ->
+            for (line in lines) {
+                if (line.isBlank() || line.startsWith("#")) continue
+                val fields = line.split('\t')
+                assertEquals("invalid shared fixture: $line", 3, fields.size)
+                assertEquals(
+                    line,
+                    fields[2].toBooleanStrict(),
+                    NativeFinalizationPolicy.shouldAttemptLosslessContainerConversion(
+                        forceConversion = fields[0].toBooleanStrict(),
+                        probedCodec = fields[1],
+                    ),
+                )
+            }
+        }
+    }
+
+    @Test
     fun lateAlbumMetadataResolvesOnlyThePendingFolderLeaf() {
         assertEquals(
             "Playlist/Artist/[2024] Album",

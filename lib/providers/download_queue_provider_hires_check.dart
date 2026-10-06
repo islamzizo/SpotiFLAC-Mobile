@@ -40,7 +40,6 @@ class _FakeHiResRunState {
       actualQuality = run.actualQuality,
       resultOutputExt = run.resultOutputExt,
       shouldPreserveNativeM4a = run.shouldPreserveNativeM4a,
-      decryptionDescriptor = run.decryptionDescriptor,
       probedFinalMetadata = run.probedFinalMetadata,
       externalLrcWritten = run.externalLrcWritten;
 
@@ -59,12 +58,11 @@ class _FakeHiResRunState {
   final String actualQuality;
   final String? resultOutputExt;
   final bool shouldPreserveNativeM4a;
-  final DownloadDecryptionDescriptor? decryptionDescriptor;
   final Map<String, dynamic>? probedFinalMetadata;
   final bool externalLrcWritten;
 
   void restore(_DownloadRun run) {
-    run.result = result;
+    run.result = DownloadResult.fromMap(result);
     run.quality = quality;
     run.safOutputExt = safOutputExt;
     run.safFileName = safFileName;
@@ -79,7 +77,6 @@ class _FakeHiResRunState {
     run.actualQuality = actualQuality;
     run.resultOutputExt = resultOutputExt;
     run.shouldPreserveNativeM4a = shouldPreserveNativeM4a;
-    run.decryptionDescriptor = decryptionDescriptor;
     run.probedFinalMetadata = probedFinalMetadata;
     run.externalLrcWritten = externalLrcWritten;
   }
@@ -152,7 +149,7 @@ extension _DownloadRunFakeHiRes on _DownloadRun {
       ) async {
         fakeHiResOriginalPath = backup;
         trackToDownload = requestTrack;
-        result = <String, dynamic>{};
+        result = DownloadResult.fromMap({});
         filePath = null;
         probedFinalMetadata = null;
         externalLrcWritten = false;
@@ -166,9 +163,9 @@ extension _DownloadRunFakeHiRes on _DownloadRun {
           }
           aborted = await _shouldAbort('during fake Hi-Res re-download');
           if (aborted) return false;
-          final replacementPath = result['file_path'] as String?;
-          if (result['success'] != true ||
-              result['already_exists'] == true ||
+          final replacementPath = result.filePath;
+          if (!result.success ||
+              result.alreadyExists ||
               normalizeOptionalString(replacementPath) == null ||
               isContentUri(replacementPath!)) {
             return false;

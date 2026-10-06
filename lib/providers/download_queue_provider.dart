@@ -10,6 +10,7 @@ import 'package:spotiflac_android/services/network_download_staging.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/models/download_item.dart';
+import 'package:spotiflac_android/models/download_result.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
@@ -19,6 +20,9 @@ import 'package:spotiflac_android/providers/download_verification_retry_guard.da
 import 'package:spotiflac_android/providers/download_queue_state.dart';
 import 'package:spotiflac_android/services/download_queue_persistence.dart';
 import 'package:spotiflac_android/services/download_progress.dart';
+import 'package:spotiflac_android/services/download_file_finalizer.dart';
+import 'package:spotiflac_android/services/download_container_finalizer.dart';
+import 'package:spotiflac_android/services/download_saf_file_replacer.dart';
 import 'package:spotiflac_android/services/download_connectivity_policy.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/download_request_payload.dart';
@@ -34,7 +38,6 @@ import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 import 'package:spotiflac_android/utils/audio_format_utils.dart';
-import 'package:spotiflac_android/utils/audio_conversion_utils.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/extension_auth_launcher.dart';
 import 'package:spotiflac_android/utils/download_error_type.dart';
@@ -314,9 +317,6 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   static const _nativePreparationWindowSize = 128;
   static const _nativeWorkerRunIdPrefsKey =
       'download_queue_native_worker_run_id';
-  static const _decryptStageSafAccess = 'safAccess';
-  static const _decryptStageDecrypt = 'decrypt';
-  static const _decryptStageSafWrite = 'safWrite';
   final NotificationService _notificationService = NotificationService();
   // Shared across tracks in a batch: an album's tracks embed the same cover,
   // so fetch it once instead of once per track. LRU-capped; files are deleted

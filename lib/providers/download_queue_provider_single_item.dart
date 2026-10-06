@@ -85,7 +85,7 @@ class _DownloadRun {
   bool pausedDuringThisRun = false;
 
   late AppSettings settings;
-  late bool metadataEmbeddingEnabled;
+  bool get metadataEmbeddingEnabled => settings.embedMetadata;
   late Track trackToDownload;
   String? resolvedAlbumArtist;
   late String quality;
@@ -110,7 +110,7 @@ class _DownloadRun {
   String? label;
   String? copyright;
 
-  late Map<String, dynamic> result;
+  late DownloadResult result;
 
   // Success-path state shared between finalization stages.
   String? filePath;
@@ -118,7 +118,6 @@ class _DownloadRun {
   String actualQuality = '';
   String? resultOutputExt;
   bool shouldPreserveNativeM4a = false;
-  DownloadDecryptionDescriptor? decryptionDescriptor;
 
   /// Filled by the SAF embed op from the local temp so the final quality
   /// probe doesn't have to copy the published file back out of SAF.
@@ -177,7 +176,6 @@ class _DownloadRun {
 
     try {
       settings = n.ref.read(settingsProvider);
-      metadataEmbeddingEnabled = settings.embedMetadata;
       trackToDownload = item.track;
 
       if (isNetworkDownload) {
@@ -186,7 +184,9 @@ class _DownloadRun {
           trackToDownload = Track.fromJson(
             Map<String, dynamic>.from(prepared['track'] as Map),
           );
-          result = Map<String, dynamic>.from(prepared['result'] as Map);
+          result = DownloadResult.fromMap(
+            Map<String, dynamic>.from(prepared['result'] as Map),
+          );
           filePath = prepared['localPath'] as String;
           actualQuality = prepared['quality'] as String;
           externalLrcWritten = prepared['externalLrcWritten'] == true;
@@ -235,10 +235,10 @@ class _DownloadRun {
       if (!await _downloadAndMaybeFallback()) return;
 
       _log.d(
-        'Native download result: success=${result['success'] == true}, '
-        'service=${result['service'] ?? item.service}, '
+        'Native download result: success=${result.success}, '
+        'service=${result.service ?? item.service}, '
         'errorType=${result['error_type'] ?? 'none'}, '
-        'filePresent=${(result['file_path'] as String?)?.isNotEmpty == true}',
+        'filePresent=${result.filePath?.isNotEmpty == true}',
       );
 
       final extendedMetadata = await extendedMetadataFuture;
@@ -248,9 +248,8 @@ class _DownloadRun {
         copyright = extendedMetadata.copyright;
       }
 
-      final resultFilePath = result['file_path'] as String?;
-      final resultFileToCleanup =
-          (resultFilePath != null && result['success'] == true)
+      final resultFilePath = result.filePath;
+      final resultFileToCleanup = (resultFilePath != null && result.success)
           ? resultFilePath
           : null;
       if (await _shouldAbort(
@@ -260,11 +259,10 @@ class _DownloadRun {
         return;
       }
 
-      if (result['success'] == true) {
-        if (effectiveSafMode && result['saf_relative_dir'] is String) {
-          effectiveOutputDir = n._sanitizeSafRelativeDir(
-            result['saf_relative_dir'] as String,
-          );
+      if (result.success) {
+        final resolvedDirectory = result.resolvedSafDirectory;
+        if (effectiveSafMode && resolvedDirectory != null) {
+          effectiveOutputDir = n._sanitizeSafRelativeDir(resolvedDirectory);
           _log.d('Resolved output dir: $effectiveOutputDir');
         }
         if (!await _handleDownloadSuccess()) return;
@@ -482,7 +480,7 @@ class _DownloadRun {
     return true;
   }
 
-  Future<Map<String, dynamic>> _invokeDownload({
+  Future<DownloadResult> _invokeDownload({
     required bool useSaf,
     required String outputDir,
   }) async {
@@ -531,10 +529,12 @@ class _DownloadRun {
       qualityVariantCollisionOnly: qualityVariantCollisionOnly,
     );
 
-    return PlatformBridge.downloadByStrategy(
-      payload: payload,
-      useExtensions: shouldUseExtensions,
-      useFallback: shouldUseFallback,
+    return DownloadResult.fromMap(
+      await PlatformBridge.downloadByStrategy(
+        payload: payload,
+        useExtensions: shouldUseExtensions,
+        useFallback: shouldUseFallback,
+      ),
     );
   }
 
@@ -545,7 +545,7 @@ class _DownloadRun {
     );
 
     if (!isNetworkDownload &&
-        result['success'] != true &&
+        !result.success &&
         isStorageWriteFailure(
           errorType: result['error_type']?.toString(),
           errorMessage: (result['error'] ?? result['message'])?.toString(),
@@ -559,12 +559,12 @@ class _DownloadRun {
         _log.w(
           'SAF write failed; preserving the selected destination for reauthorization',
         );
-        result = {
+        result = DownloadResult.fromMap({
           ...result,
           'success': false,
           'error': safPermissionLostErrorMessage,
           'error_type': 'permission',
-        };
+        });
         return true;
       }
       _log.w('Storage write failed, retrying with a writable app folder');
@@ -592,7 +592,7 @@ class _DownloadRun {
           outputDir: fallbackDir,
         );
         result = fallbackResult;
-        if (fallbackResult['success'] == true) {
+        if (fallbackResult.success) {
           effectiveSafMode = false;
           effectiveOutputDir = fallbackDir;
           finalSafFileName = null;
@@ -614,19 +614,19 @@ class _DownloadRun {
       stageWatch.reset();
     }
 
-    filePath = result['file_path'] as String?;
-    final reportedFileName = result['file_name'] as String?;
+    filePath = result.filePath;
+    final reportedFileName = result.fileName;
     if (effectiveSafMode &&
         reportedFileName != null &&
         reportedFileName.isNotEmpty) {
       finalSafFileName = reportedFileName;
     }
 
-    wasExisting = result['already_exists'] == true;
+    wasExisting = result.alreadyExists;
     _log.i('Download completed (existing=$wasExisting)');
 
-    final actualBitDepth = result['actual_bit_depth'] as int?;
-    final actualSampleRate = result['actual_sample_rate'] as int?;
+    final actualBitDepth = result.actualBitDepth;
+    final actualSampleRate = result.actualSampleRate;
     actualQuality = quality;
 
     if (actualBitDepth != null && actualBitDepth > 0) {
@@ -640,19 +640,14 @@ class _DownloadRun {
     }
 
     final actualService =
-        ((result['service'] as String?)?.toLowerCase()) ??
-        item.service.toLowerCase();
-    resultOutputExt = n._downloadResultOutputExt(result, filePath: filePath);
-    final resultAudioFormat = normalizeAudioFormatValue(
-      result['audio_codec']?.toString() ??
-          result['actual_audio_codec']?.toString(),
-    );
+        result.service?.toLowerCase() ?? item.service.toLowerCase();
+    resultOutputExt = result.outputExtension(path: filePath);
+    final resultAudioFormat = normalizeAudioFormatValue(result.audioCodec);
     final resultIsKnownLossyAudio =
         isLossyAudioFormat(resultAudioFormat) &&
         !isInconclusiveAudioCodec(resultAudioFormat);
     final requiresContainerConversion =
-        result['requires_container_conversion'] == true ||
-        result['requiresContainerConversion'] == true ||
+        result.requiresContainerConversion ||
         (!resultIsKnownLossyAudio &&
             n._shouldRequestContainerConversion(actualService, safOutputExt));
     final preferredOutputExt = n._extensionPreferredOutputExt(actualService);
@@ -664,9 +659,6 @@ class _DownloadRun {
             preferredOutputExt == '.mp4' ||
             n._extensionPreservesNativeOutputExt(actualService, '.m4a') ||
             n._extensionPreservesNativeOutputExt(actualService, '.mp4'));
-    decryptionDescriptor = DownloadDecryptionDescriptor.fromDownloadResult(
-      result,
-    );
     final requestTrack = trackToDownload;
     trackToDownload = buildTrackForMetadataEmbedding(
       trackToDownload,
@@ -714,7 +706,7 @@ class _DownloadRun {
 
     final deferredSafPublish =
         effectiveSafMode &&
-        result['saf_deferred_publish'] == true &&
+        result.deferredSafPublish &&
         filePath != null &&
         !isContentUri(filePath!);
     if (!deferredSafPublish) {
@@ -738,7 +730,7 @@ class _DownloadRun {
           await deleteFile(hookInput);
         }
         filePath = postProcessedPath;
-        result['file_path'] = postProcessedPath;
+        result.filePath = postProcessedPath;
       }
       if (await _shouldAbort(
         'during post-processing',
@@ -757,7 +749,7 @@ class _DownloadRun {
       final outcome = await n._autoConvertDownloadedFile(
         itemId: item.id,
         filePath: autoConvertInput,
-        fileName: finalSafFileName ?? result['file_name'] as String?,
+        fileName: finalSafFileName ?? result.fileName,
         currentQuality: actualQuality,
         settings: settings,
         track: trackToDownload,
@@ -879,7 +871,7 @@ class _DownloadRun {
 
   Future<bool> _decryptIfNeeded() async {
     final path = filePath;
-    final descriptor = decryptionDescriptor;
+    final descriptor = result.decryption;
     if (wasExisting || descriptor == null || path == null) {
       return true;
     }
@@ -889,24 +881,24 @@ class _DownloadRun {
     n.updateItemStatus(item.id, DownloadStatus.finalizing, progress: 0.9);
 
     final isSafSource = effectiveSafMode && isContentUri(path);
-    final decryptOutcome = await n._finalizeDecryption(
+    final decryptOutcome = await n._fileFinalizer.decrypt(
       result: result,
       filePath: path,
-      storageMode: effectiveSafMode ? 'saf' : 'app',
-      downloadTreeUri: settings.downloadTreeUri,
-      safRelativeDir: effectiveOutputDir,
+      useSaf: effectiveSafMode,
+      treeUri: settings.downloadTreeUri,
+      relativeDir: effectiveOutputDir,
       baseName: safBaseName ?? 'track',
-      extFallback: '.flac',
-      repairAc4: true,
+      extensionFallback: '.flac',
+      repairContainer: true,
     );
     if (decryptOutcome.path == null) {
       final String errorMsg;
-      switch (decryptOutcome.failStage) {
-        case DownloadQueueNotifier._decryptStageSafAccess:
+      switch (decryptOutcome.failure) {
+        case DownloadDecryptionFailure.safAccess:
           _log.e('Failed to copy encrypted SAF file to temp for decrypt');
           errorMsg = 'Failed to access encrypted SAF file';
           break;
-        case DownloadQueueNotifier._decryptStageSafWrite:
+        case DownloadDecryptionFailure.safWrite:
           _log.e('Failed to write decrypted stream back to SAF');
           errorMsg = 'Failed to write decrypted file to storage';
           break;
@@ -928,8 +920,8 @@ class _DownloadRun {
       return false;
     }
     filePath = decryptOutcome.path;
-    if (decryptOutcome.newFileName != null) {
-      finalSafFileName = decryptOutcome.newFileName;
+    if (decryptOutcome.fileName != null) {
+      finalSafFileName = decryptOutcome.fileName;
     }
     _log.i(
       isSafSource ? 'SAF decryption completed' : 'Local decryption completed',
@@ -994,7 +986,7 @@ class _DownloadRun {
     } else if (metadataEmbeddingEnabled &&
         !isContentUriPath &&
         effectiveSafMode &&
-        result['saf_deferred_publish'] == true &&
+        result.deferredSafPublish &&
         !isFlacFile &&
         !isM4aFile &&
         !wasExisting) {
@@ -1012,10 +1004,7 @@ class _DownloadRun {
   }
 
   void _markFinalOutputAsFlac() {
-    result['audio_codec'] = 'flac';
-    result['format'] = 'flac';
-    result['actual_extension'] = '.flac';
-    result['output_extension'] = '.flac';
+    result.markFlacContainer();
     resultOutputExt = '.flac';
   }
 
@@ -1039,8 +1028,7 @@ class _DownloadRun {
       fileName: finalName,
       localPath: localPath,
       fallbackExtension:
-          n._downloadResultOutputExt(result, filePath: localPath) ??
-          safOutputExt,
+          result.outputExtension(path: localPath) ?? safOutputExt,
     );
     final localExt = finalName.substring(finalName.lastIndexOf('.'));
 
@@ -1206,8 +1194,10 @@ class _DownloadRun {
           final isAlreadyNativeFlac =
               codec == 'flac' && await FFmpegService.isNativeFlacFile(tempPath);
           final shouldAttemptConversion =
-              FFmpegService.isLosslessAudioCodec(codec) ||
-              isInconclusiveAudioCodec(codec);
+              shouldAttemptLosslessContainerConversion(
+                forceConversion: true,
+                probedCodec: codec,
+              );
           if (!shouldAttemptConversion) {
             _log.d(
               'Preserving native container; audio codec is ${codec ?? 'unknown'}, '
@@ -1339,8 +1329,10 @@ class _DownloadRun {
               codec == 'flac' &&
               await FFmpegService.isNativeFlacFile(currentFilePath);
           final shouldAttemptConversion =
-              FFmpegService.isLosslessAudioCodec(codec) ||
-              isInconclusiveAudioCodec(codec);
+              shouldAttemptLosslessContainerConversion(
+                forceConversion: true,
+                probedCodec: codec,
+              );
           if (!shouldAttemptConversion) {
             _log.d(
               'Preserving native container; audio codec is ${codec ?? 'unknown'}, '
@@ -1831,13 +1823,10 @@ class _DownloadRun {
       return false;
     }
 
-    var errorMsg = result['error'] as String? ?? 'Download failed';
-    final errorTypeStr = result['error_type'] as String? ?? 'unknown';
-    final retryAfterSeconds = readPositiveInt(result['retry_after_seconds']);
-    if (retryAfterSeconds != null && retryAfterSeconds > 0) {
-      errorMsg = '$errorMsg retry-after: $retryAfterSeconds';
-    }
-    if (errorTypeStr == 'cancelled') {
+    final failure = result.failure!;
+    final errorMsg = failure.retryMessage;
+    final errorTypeStr = failure.backendType;
+    if (failure.cancelled) {
       if (n._isPausePending(item.id)) {
         pausedDuringThisRun = true;
         n._requeueItemForPause(item.id);
@@ -1849,7 +1838,7 @@ class _DownloadRun {
       return false;
     }
 
-    final backendErrorType = downloadErrorTypeFromBackend(errorTypeStr);
+    final backendErrorType = failure.type;
     final errorType =
         backendErrorType ?? n._downloadErrorTypeFromMessage(errorMsg);
 
@@ -1857,7 +1846,7 @@ class _DownloadRun {
       await n._handleVerificationRequiredDownload(
         item,
         errorMsg,
-        result['service'] as String?,
+        failure.service,
       );
       return false;
     }

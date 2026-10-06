@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:ffmpeg_kit_flutter_new_audio/ffprobe_kit.dart';
 import 'package:spotiflac_android/utils/logger.dart';
+import 'package:spotiflac_android/utils/audio_format_utils.dart' as audio;
 
 final _log = AppLogger('FFmpeg');
 
@@ -112,20 +113,8 @@ abstract final class FFmpegProbe {
     return const PrimaryAudioProperties();
   }
 
-  static bool isLosslessAudioCodec(String? codec) {
-    final normalized = codec?.trim().toLowerCase().replaceAll('-', '_') ?? '';
-    return normalized.startsWith('pcm_') ||
-        const {
-          'alac',
-          'flac',
-          'wavpack',
-          'ape',
-          'tta',
-          'mlp',
-          'truehd',
-          'shorten',
-        }.contains(normalized);
-  }
+  static bool isLosslessAudioCodec(String? codec) =>
+      audio.isLosslessAudioCodec(codec);
 
   static Future<bool> isNativeFlacFile(String path) async {
     try {

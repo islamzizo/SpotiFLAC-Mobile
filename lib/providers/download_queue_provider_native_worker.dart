@@ -1247,12 +1247,13 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
 
   Future<void> _completeAndroidNativeWorkerItem(
     _NativeWorkerRequestContext context,
-    Map<String, dynamic> result,
+    Map<String, dynamic> rawResult,
     AppSettings settings,
   ) async {
+    final result = DownloadResult.fromMap(rawResult);
     context = context.withResolvedFolder(result);
     final item = context.item;
-    var filePath = result['file_path'] as String?;
+    var filePath = result.filePath;
     if (filePath == null || filePath.isEmpty) {
       updateItemStatus(
         item.id,
@@ -1264,7 +1265,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       return;
     }
 
-    if (result['native_finalized'] == true) {
+    if (result.nativeFinalized) {
       final nativeFinalizedFilePath = filePath;
       await _saveDownloadedMotionArtwork(ref, item, item.track, result);
       await persistBeforePublishingDownloadCompletion(
@@ -1300,16 +1301,16 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
     }
 
     final rawDecryptFileName =
-        (result['file_name'] as String?) ?? context.safFileName ?? 'track';
-    final decryptOutcome = await _finalizeDecryption(
+        result.fileName ?? context.safFileName ?? 'track';
+    final decryptOutcome = await _fileFinalizer.decrypt(
       result: result,
       filePath: filePath,
-      storageMode: context.storageMode,
-      downloadTreeUri: context.downloadTreeUri,
-      safRelativeDir: context.safRelativeDir ?? '',
+      useSaf: context.storageMode == 'saf',
+      treeUri: context.downloadTreeUri,
+      relativeDir: context.safRelativeDir ?? '',
       baseName: rawDecryptFileName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
-      extFallback: context.outputExt,
-      repairAc4: false,
+      extensionFallback: context.outputExt,
+      repairContainer: false,
       onStart: (strategy) => _log.i(
         'Native-worker encrypted stream detected, decrypting via $strategy...',
       ),
@@ -1325,13 +1326,13 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       return;
     }
     filePath = decryptOutcome.path!;
-    if (decryptOutcome.newFileName != null) {
-      result['file_name'] = decryptOutcome.newFileName;
+    if (decryptOutcome.fileName != null) {
+      result.fileName = decryptOutcome.fileName;
     }
 
     var actualQuality = context.quality;
-    var actualBitDepth = result['actual_bit_depth'] as int?;
-    var actualSampleRate = result['actual_sample_rate'] as int?;
+    var actualBitDepth = result.actualBitDepth;
+    var actualSampleRate = result.actualSampleRate;
     var actualFormat =
         normalizeAudioFormatValue(
           result['audio_codec']?.toString() ?? result['format']?.toString(),
@@ -1392,7 +1393,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
     final autoConvertOutcome = await _autoConvertDownloadedFile(
       itemId: item.id,
       filePath: filePath,
-      fileName: result['file_name'] as String? ?? context.safFileName,
+      fileName: result.fileName ?? context.safFileName,
       currentQuality: actualQuality,
       settings: settings,
       track: trackToDownload,
@@ -1405,7 +1406,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
     filePath = autoConvertOutcome.filePath;
     actualQuality = autoConvertOutcome.quality;
     if (autoConvertOutcome.fileName != null) {
-      result['file_name'] = autoConvertOutcome.fileName;
+      result.fileName = autoConvertOutcome.fileName;
     }
     if (autoConvertOutcome.converted) {
       actualBitDepth = null;
