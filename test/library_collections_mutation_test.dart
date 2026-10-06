@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +13,13 @@ class _CollectionsDatabase implements LibraryCollectionsDatabase {
   final loved = <String, Map<String, dynamic>>{};
   final artists = <String, Map<String, dynamic>>{};
   final playlists = <String, Map<String, dynamic>>{};
+  final playlistTracks = <String, List<Map<String, dynamic>>>{};
+  final playlistReadStarted = Completer<void>();
+  final releasePlaylistRead = Completer<void>();
+  int playlistReads = 0;
+  LibraryPlaylistTracksSnapshot? stagedPlaylistRows;
+  Future<LibraryCollectionsSnapshot>? pendingSnapshot;
+  final snapshotReadStarted = Completer<void>();
   final events = <String>[];
   final writeStarted = Completer<void>();
   final releaseWrite = Completer<void>();
@@ -33,14 +42,56 @@ class _CollectionsDatabase implements LibraryCollectionsDatabase {
   Future<bool> migrateFromSharedPreferences() async => false;
 
   @override
-  Future<LibraryCollectionsSnapshot> loadSnapshot() async =>
-      LibraryCollectionsSnapshot(
-        wishlistRows: wishlist.values.toList(),
-        lovedRows: loved.values.toList(),
-        playlistRows: playlists.values.toList(),
-        playlistTrackRows: const [],
-        favoriteArtistRows: artists.values.toList(),
-      );
+  Future<LibraryCollectionsSnapshot> loadSnapshot() async {
+    if (!snapshotReadStarted.isCompleted) snapshotReadStarted.complete();
+    return pendingSnapshot ??
+        Future.value(
+          LibraryCollectionsSnapshot(
+            wishlistRows: wishlist.values.toList(),
+            lovedRows: loved.values.toList(),
+            playlistRows: playlists.values.toList(),
+            playlistTrackRows: [
+              for (final entry in playlistTracks.entries)
+                for (final row in entry.value)
+                  {'playlist_id': entry.key, 'track_key': row['track_key']},
+            ],
+            favoriteArtistRows: artists.values.toList(),
+          ),
+        );
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> loadPlaylistTracks(
+    String playlistId,
+  ) async {
+    playlistReads++;
+    if (!playlistReadStarted.isCompleted) {
+      playlistReadStarted.complete();
+      await releasePlaylistRead.future;
+    }
+    return playlistTracks[playlistId] ?? const [];
+  }
+
+  @override
+  Future<LibraryPlaylistTracksSnapshot> loadPlaylistTracksSnapshot(
+    String playlistId,
+  ) async {
+    final rows = await loadPlaylistTracks(playlistId);
+    return stagedPlaylistRows ?? LibraryPlaylistTracksSnapshot(rows: rows);
+  }
+
+  @override
+  Future<void> renamePlaylist({
+    required String playlistId,
+    required String name,
+    required String updatedAt,
+  }) => _write('rename:$playlistId', () {
+    playlists[playlistId] = {
+      ...playlists[playlistId]!,
+      'name': name,
+      'updated_at': updatedAt,
+    };
+  });
 
   Future<void> _upsertTrack(
     Map<String, Map<String, dynamic>> rows,
@@ -138,6 +189,108 @@ ProviderContainer _container(_CollectionsDatabase db) {
 }
 
 void main() {
+  test('disposed snapshot read removes native rows before returning', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'collection-read-disposed-',
+    );
+    final path = '${directory.path}/rows.ndjson';
+    await File(path).writeAsString('must never be parsed');
+    final reply = Completer<LibraryCollectionsSnapshot>();
+    final db = _CollectionsDatabase()..pendingSnapshot = reply.future;
+    final container = _container(db);
+    final notifier = container.read(libraryCollectionsProvider.notifier);
+    final done = notifier.ensurePlaylistLoaded('missing');
+    await db.snapshotReadStarted.future;
+    container.dispose();
+    reply.complete(
+      LibraryCollectionsSnapshot(
+        wishlistRows: const [],
+        lovedRows: const [],
+        playlistRows: const [],
+        playlistTrackRows: const [],
+        favoriteArtistRows: const [],
+        nativeRowsPath: path,
+        nativeRowsDirectory: directory.path,
+        nativeRowCount: 1,
+      ),
+    );
+    await done;
+    expect(await directory.exists(), isFalse);
+  });
+
+  test(
+    'playlist worker load is single-flight and retains intervening rename',
+    () async {
+      final db = _CollectionsDatabase();
+      db.playlists['playlist'] = {
+        'id': 'playlist',
+        'name': 'Original',
+        'created_at': '2026-01-01T00:00:00Z',
+        'updated_at': '2026-01-01T00:00:00Z',
+      };
+      db.playlistTracks['playlist'] = List.generate(
+        100,
+        (index) => {
+          'track_key': 'example:$index',
+          'track_json': jsonEncode(_track('$index')),
+          'added_at': '2026-01-01T00:00:00Z',
+        },
+      );
+      final container = _container(db);
+      final notifier = container.read(libraryCollectionsProvider.notifier);
+      await notifier.ensurePlaylistsLoaded(const []);
+      final first = notifier.ensurePlaylistLoaded('playlist');
+      await db.playlistReadStarted.future;
+      final second = notifier.ensurePlaylistLoaded('playlist');
+      final rename = notifier.renamePlaylist('playlist', 'Renamed');
+      await db.writeStarted.future;
+      db.releaseWrite.complete();
+      await rename;
+      db.releasePlaylistRead.complete();
+      await Future.wait([first, second]);
+      final playlist = container
+          .read(libraryCollectionsProvider)
+          .playlistById('playlist')!;
+      expect(db.playlistReads, 1);
+      expect(playlist.name, 'Renamed');
+      expect(playlist.tracksLoaded, isTrue);
+      expect(playlist.trackCount, 100);
+      expect(
+        playlist.tracks.map((entry) => entry.track.id),
+        List.generate(100, (index) => '$index'),
+      );
+    },
+  );
+
+  test('disposed playlist read cannot publish a worker result', () async {
+    final db = _CollectionsDatabase();
+    final directory = await Directory.systemTemp.createTemp(
+      'collection-read-disposed-',
+    );
+    final path = '${directory.path}/rows.ndjson';
+    await File(path).writeAsString('must never be parsed');
+    db.stagedPlaylistRows = LibraryPlaylistTracksSnapshot(
+      nativeRowsPath: path,
+      nativeRowsDirectory: directory.path,
+      nativeRowCount: 1,
+    );
+    db.playlists['playlist'] = {
+      'id': 'playlist',
+      'name': 'Playlist',
+      'created_at': '2026-01-01T00:00:00Z',
+    };
+    final container = _container(db);
+    final notifier = container.read(libraryCollectionsProvider.notifier);
+    await notifier.ensurePlaylistsLoaded(const []);
+    final loading = notifier.ensurePlaylistLoaded('playlist');
+    await db.playlistReadStarted.future;
+    container.dispose();
+    db.releasePlaylistRead.complete();
+    await loading;
+    expect(db.playlistReads, 1);
+    expect(await directory.exists(), isFalse);
+  });
+
   test(
     'late write completion does not publish or start a disposed mutation',
     () async {

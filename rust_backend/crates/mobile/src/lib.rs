@@ -13,6 +13,7 @@ mod manager;
 mod metadata;
 mod native_backup;
 mod native_cache;
+mod native_collections;
 mod native_id3;
 mod native_library;
 mod native_listing;

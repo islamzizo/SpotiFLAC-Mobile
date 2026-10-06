@@ -8,6 +8,7 @@ import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/library_collections_database.dart';
+import 'package:spotiflac_android/services/library_collections_hydration.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 export 'package:spotiflac_android/models/library_collections.dart';
@@ -58,84 +59,16 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
       await _db.migrateFromSharedPreferences();
       if (!ref.mounted) return;
       final snapshot = await _db.loadSnapshot();
-      if (!ref.mounted) return;
-
-      final wishlist = <CollectionTrackEntry>[];
-      for (final row in snapshot.wishlistRows) {
-        final parsed = _parseTrackEntryRow(row);
-        if (parsed != null) {
-          wishlist.add(parsed);
-        }
-      }
-
-      final loved = <CollectionTrackEntry>[];
-      for (final row in snapshot.lovedRows) {
-        final parsed = _parseTrackEntryRow(row);
-        if (parsed != null) {
-          loved.add(parsed);
-        }
-      }
-
-      final favoriteArtists = <CollectionArtistEntry>[];
-      for (final row in snapshot.favoriteArtistRows) {
-        final parsed = _parseArtistEntryRow(row);
-        if (parsed != null) {
-          favoriteArtists.add(parsed);
-        }
-      }
-
-      final trackKeysByPlaylist = <String, Set<String>>{};
-      for (final row in snapshot.playlistTrackRows) {
-        final playlistId = row['playlist_id'] as String?;
-        if (playlistId == null || playlistId.isEmpty) continue;
-        final trackKey = row['track_key'] as String?;
-        if (trackKey == null || trackKey.isEmpty) continue;
-        trackKeysByPlaylist.putIfAbsent(playlistId, () => {}).add(trackKey);
-      }
-
-      final playlists = <UserPlaylistCollection>[];
-      for (final row in snapshot.playlistRows) {
-        final id = row['id'] as String?;
-        if (id == null || id.isEmpty) continue;
-
-        final createdAtRaw = row['created_at'] as String?;
-        final updatedAtRaw = row['updated_at'] as String?;
-        final createdAt =
-            DateTime.tryParse(createdAtRaw ?? '') ?? DateTime.now();
-        final updatedAt = DateTime.tryParse(updatedAtRaw ?? '') ?? createdAt;
-        String? previewCover;
-        final previewTrackJson = row['preview_track_json'] as String?;
-        if (previewTrackJson != null && previewTrackJson.isNotEmpty) {
-          try {
-            final decoded = jsonDecode(previewTrackJson);
-            if (decoded is Map) {
-              previewCover = decoded['coverUrl']?.toString();
-            }
-          } catch (_) {}
-        }
-
-        playlists.add(
-          UserPlaylistCollection(
-            id: id,
-            name: row['name'] as String? ?? '',
-            coverImagePath: row['cover_image_path'] as String?,
-            createdAt: createdAt,
-            updatedAt: updatedAt,
-            tracks: const <CollectionTrackEntry>[],
-            previewCover: previewCover,
-            tracksLoaded: false,
-            trackKeys: trackKeysByPlaylist[id],
-          ),
+      try {
+        if (!ref.mounted) return;
+        final loaded = await hydrateLibraryCollectionsSnapshot(snapshot);
+        if (ref.mounted) state = loaded;
+      } finally {
+        await cleanupCollectionRows(
+          nativeRowsPath: snapshot.nativeRowsPath,
+          nativeRowsDirectory: snapshot.nativeRowsDirectory,
         );
       }
-
-      state = LibraryCollectionsState(
-        wishlist: wishlist,
-        loved: loved,
-        playlists: playlists,
-        favoriteArtists: favoriteArtists,
-        isLoaded: true,
-      );
     } catch (error, stack) {
       _log.e('Failed to load library collections', error, stack);
       if (ref.mounted) state = state.copyWith(isLoaded: true);
@@ -157,16 +90,39 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     final pending = _playlistLoadFutures[playlistId];
     if (pending != null) return pending;
     final load = () async {
-      final rows = await _db.loadPlaylistTracks(playlistId);
-      if (!ref.mounted) return;
-      final tracks = rows
-          .map(_parseTrackEntryRow)
-          .whereType<CollectionTrackEntry>()
-          .toList(growable: false);
-      _replacePlaylistById(
-        playlistId,
-        (current) => current.copyWith(tracks: tracks, tracksLoaded: true),
-      );
+      while (ref.mounted) {
+        final loading = state.playlistById(playlistId);
+        if (loading == null || loading.tracksLoaded) return;
+        final snapshot = await _db.loadPlaylistTracksSnapshot(playlistId);
+        late HydratedPlaylistTracks hydrated;
+        try {
+          if (!ref.mounted) return;
+          hydrated = await hydratePlaylistTracksSnapshot(
+            snapshot,
+            knownKeys: loading.trackKeys,
+          );
+        } finally {
+          await cleanupCollectionRows(
+            nativeRowsPath: snapshot.nativeRowsPath,
+            nativeRowsDirectory: snapshot.nativeRowsDirectory,
+          );
+        }
+        if (!ref.mounted) return;
+        final current = state.playlistById(playlistId);
+        if (current == null || current.tracksLoaded) return;
+        // Metadata-only edits share the index. A restore/reload can replace it
+        // while the worker is running; retry rather than publish stale tracks.
+        if (!current.sharesMembershipIndexWith(loading)) continue;
+        _replacePlaylistById(
+          playlistId,
+          (current) => current.withHydratedTracks(
+            tracks: hydrated.tracks,
+            trackKeys: hydrated.trackKeys,
+            membershipUnchanged: hydrated.membershipUnchanged,
+          ),
+        );
+        return;
+      }
     }();
     _playlistLoadFutures[playlistId] = load;
     try {
@@ -180,53 +136,6 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
 
   Future<void> ensurePlaylistsLoaded(Iterable<String> playlistIds) async {
     await Future.wait(playlistIds.toSet().map(ensurePlaylistLoaded));
-  }
-
-  CollectionTrackEntry? _parseTrackEntryRow(Map<String, dynamic> row) {
-    final key = row['track_key'] as String?;
-    final trackJson = row['track_json'] as String?;
-    if (key == null || key.isEmpty || trackJson == null || trackJson.isEmpty) {
-      return null;
-    }
-
-    try {
-      final decoded = jsonDecode(trackJson);
-      if (decoded is! Map) return null;
-      final track = Track.fromJson(Map<String, dynamic>.from(decoded));
-      final addedAtRaw = row['added_at'] as String?;
-      return CollectionTrackEntry(
-        key: key,
-        track: track,
-        addedAt: DateTime.tryParse(addedAtRaw ?? '') ?? DateTime.now(),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  CollectionArtistEntry? _parseArtistEntryRow(Map<String, dynamic> row) {
-    final key = row['artist_key'] as String?;
-    final artistJson = row['artist_json'] as String?;
-    if (key == null ||
-        key.isEmpty ||
-        artistJson == null ||
-        artistJson.isEmpty) {
-      return null;
-    }
-
-    try {
-      final decoded = jsonDecode(artistJson);
-      if (decoded is! Map) return null;
-      final map = Map<String, dynamic>.from(decoded);
-      final addedAtRaw = row['added_at'] as String?;
-      return CollectionArtistEntry.fromJson({
-        ...map,
-        'key': key,
-        'addedAt': map['addedAt'] ?? addedAtRaw,
-      });
-    } catch (_) {
-      return null;
-    }
   }
 
   bool _replacePlaylistById(
@@ -731,7 +640,13 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
   Future<Map<String, dynamic>> exportCollections() async {
     await _ensureLoaded();
     await ensurePlaylistsLoaded(state.playlists.map((playlist) => playlist.id));
-    return state.toJson();
+    return exportLibraryCollectionsState(state);
+  }
+
+  Future<String> exportCollectionsJson() async {
+    await _ensureLoaded();
+    await ensurePlaylistsLoaded(state.playlists.map((playlist) => playlist.id));
+    return exportLibraryCollectionsJson(state);
   }
 
   /// Exports custom playlist cover images as base64, keyed by playlist id.

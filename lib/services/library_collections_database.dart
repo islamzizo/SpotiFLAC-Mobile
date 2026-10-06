@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -31,6 +32,9 @@ class LibraryCollectionsSnapshot {
   final List<Map<String, dynamic>> playlistRows;
   final List<Map<String, dynamic>> playlistTrackRows;
   final List<Map<String, dynamic>> favoriteArtistRows;
+  final String? nativeRowsPath;
+  final String? nativeRowsDirectory;
+  final int? nativeRowCount;
 
   const LibraryCollectionsSnapshot({
     required this.wishlistRows,
@@ -38,8 +42,27 @@ class LibraryCollectionsSnapshot {
     required this.playlistRows,
     required this.playlistTrackRows,
     required this.favoriteArtistRows,
+    this.nativeRowsPath,
+    this.nativeRowsDirectory,
+    this.nativeRowCount,
   });
 }
+
+class LibraryPlaylistTracksSnapshot {
+  const LibraryPlaylistTracksSnapshot({
+    this.rows = const [],
+    this.nativeRowsPath,
+    this.nativeRowsDirectory,
+    this.nativeRowCount,
+  });
+  final List<Map<String, dynamic>> rows;
+  final String? nativeRowsPath;
+  final String? nativeRowsDirectory;
+  final int? nativeRowCount;
+}
+
+typedef NativeCollectionsJobRunner =
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> request);
 
 class LibraryCollectionsDatabase {
   static int _restoreAttachmentSequence = 0;
@@ -239,58 +262,318 @@ class LibraryCollectionsDatabase {
     }
   }
 
-  Future<LibraryCollectionsSnapshot> loadSnapshot() async {
-    final db = await database;
-    final wishlistRows = await db.query(
-      _tableWishlist,
-      orderBy: 'added_at DESC, rowid DESC',
-    );
-    final lovedRows = await db.query(
-      _tableLoved,
-      orderBy: 'added_at DESC, rowid DESC',
-    );
-    final playlistRows = await db.rawQuery('''
-      SELECT
-        p.*,
+  Future<LibraryCollectionsSnapshot> loadSnapshot() async =>
+      readDatabaseSnapshot(await database);
+
+  static Future<LibraryCollectionsSnapshot> readDatabaseSnapshot(
+    Database db, {
+    NativeCollectionsJobRunner? nativeJobRunner,
+    Directory? temporaryDirectory,
+    bool forceLegacy = false,
+  }) async {
+    if (!forceLegacy &&
+        (nativeJobRunner != null || PlatformBridge.supportsCoreBackend)) {
+      final probe = await db.rawQuery('''
+        SELECT 1 FROM $_tableWishlist UNION ALL SELECT 1 FROM $_tableLoved
+        UNION ALL SELECT 1 FROM $_tablePlaylists
+        UNION ALL SELECT 1 FROM $_tablePlaylistTracks
+        UNION ALL SELECT 1 FROM $_tableFavoriteArtists LIMIT 64
+      ''');
+      if (probe.length == 64) {
+        return _readNativeRows(
+          db,
+          nativeJobRunner: nativeJobRunner,
+          temporaryDirectory: temporaryDirectory,
+        );
+      }
+    }
+    return db.transaction((txn) async {
+      final wishlistRows = await _readDateOrderedRows(
+        txn,
+        _tableWishlist,
+        'added_at',
+      );
+      final lovedRows = await _readDateOrderedRows(
+        txn,
+        _tableLoved,
+        'added_at',
+      );
+      final playlistRows = await _readDateOrderedRows(
+        txn,
+        _tablePlaylists,
+        'created_at',
+        projection:
+            '''p.*,
         CASE WHEN p.cover_image_path IS NULL OR p.cover_image_path = '' THEN (
           SELECT pt.track_json
           FROM $_tablePlaylistTracks pt
           WHERE pt.playlist_id = p.id
           ORDER BY pt.added_at ASC, pt.rowid ASC
           LIMIT 1
-        ) END AS preview_track_json
-      FROM $_tablePlaylists p
-      ORDER BY p.created_at DESC, p.rowid DESC
-    ''');
-    final playlistTrackRows = await db.query(
-      _tablePlaylistTracks,
-      columns: ['playlist_id', 'track_key'],
-      orderBy: 'playlist_id ASC, rowid ASC',
-    );
-    final favoriteArtistRows = await db.query(
-      _tableFavoriteArtists,
-      orderBy: 'added_at DESC, rowid DESC',
-    );
-
-    return LibraryCollectionsSnapshot(
-      wishlistRows: wishlistRows,
-      lovedRows: lovedRows,
-      playlistRows: playlistRows,
-      playlistTrackRows: playlistTrackRows,
-      favoriteArtistRows: favoriteArtistRows,
-    );
+        ) END AS preview_track_json''',
+        alias: 'p',
+      );
+      final playlistTrackRows = <Map<String, dynamic>>[];
+      Object? lastId;
+      int? lastRowId;
+      while (true) {
+        final page = await txn.rawQuery('''
+          SELECT rowid AS __collection_rowid, playlist_id, track_key
+          FROM $_tablePlaylistTracks
+          ${lastRowId == null ? '' : 'WHERE playlist_id>? OR (playlist_id=? AND rowid>?)'}
+          ORDER BY playlist_id ASC,rowid ASC LIMIT 256
+        ''', lastRowId == null ? const [] : [lastId, lastId, lastRowId]);
+        if (page.isEmpty) break;
+        lastId = page.last['playlist_id'];
+        lastRowId = page.last['__collection_rowid'] as int;
+        playlistTrackRows.addAll(page.map(_withoutRowCursor));
+        if (page.length < 256) break;
+      }
+      final favoriteArtistRows = await _readDateOrderedRows(
+        txn,
+        _tableFavoriteArtists,
+        'added_at',
+      );
+      return LibraryCollectionsSnapshot(
+        wishlistRows: wishlistRows,
+        lovedRows: lovedRows,
+        playlistRows: playlistRows,
+        playlistTrackRows: playlistTrackRows,
+        favoriteArtistRows: favoriteArtistRows,
+      );
+    });
   }
 
   Future<List<Map<String, dynamic>>> loadPlaylistTracks(
     String playlistId,
   ) async {
     final db = await database;
-    return db.query(
-      _tablePlaylistTracks,
-      where: 'playlist_id = ?',
-      whereArgs: [playlistId],
-      orderBy: 'added_at ASC, rowid ASC',
+    return db.transaction(
+      (txn) => _readDateOrderedRows(
+        txn,
+        _tablePlaylistTracks,
+        'added_at',
+        ascending: true,
+        where: 'playlist_id=?',
+        whereArgs: [playlistId],
+      ),
     );
+  }
+
+  Future<LibraryPlaylistTracksSnapshot> loadPlaylistTracksSnapshot(
+    String playlistId,
+  ) async => readDatabasePlaylistTracks(await database, playlistId);
+
+  static Future<LibraryPlaylistTracksSnapshot> readDatabasePlaylistTracks(
+    Database db,
+    String playlistId, {
+    NativeCollectionsJobRunner? nativeJobRunner,
+    Directory? temporaryDirectory,
+    bool forceLegacy = false,
+  }) async {
+    if (!forceLegacy &&
+        (nativeJobRunner != null || PlatformBridge.supportsCoreBackend)) {
+      final probe = await db.rawQuery(
+        'SELECT 1 FROM $_tablePlaylistTracks WHERE playlist_id=? LIMIT 64',
+        [playlistId],
+      );
+      if (probe.length == 64) {
+        final snapshot = await _readNativeRows(
+          db,
+          playlistId: playlistId,
+          nativeJobRunner: nativeJobRunner,
+          temporaryDirectory: temporaryDirectory,
+        );
+        return LibraryPlaylistTracksSnapshot(
+          nativeRowsPath: snapshot.nativeRowsPath,
+          nativeRowsDirectory: snapshot.nativeRowsDirectory,
+          nativeRowCount: snapshot.nativeRowCount,
+        );
+      }
+    }
+    final rows = await db.transaction(
+      (txn) => _readDateOrderedRows(
+        txn,
+        _tablePlaylistTracks,
+        'added_at',
+        ascending: true,
+        where: 'playlist_id=?',
+        whereArgs: [playlistId],
+      ),
+    );
+    return LibraryPlaylistTracksSnapshot(rows: rows);
+  }
+
+  static Map<String, dynamic> _withoutRowCursor(Map<String, Object?> row) =>
+      Map<String, dynamic>.from(row)..remove('__collection_rowid');
+
+  static Future<List<Map<String, dynamic>>> _readDateOrderedRows(
+    DatabaseExecutor db,
+    String table,
+    String dateColumn, {
+    bool ascending = false,
+    String projection = '*',
+    String? alias,
+    String? where,
+    List<Object?> whereArgs = const [],
+  }) async {
+    final rows = <Map<String, dynamic>>[];
+    final qualifier = alias == null ? '' : '$alias.';
+    final comparison = ascending ? '>' : '<';
+    final direction = ascending ? 'ASC' : 'DESC';
+    Object? lastDate;
+    int? lastRowId;
+    while (true) {
+      final predicates = [
+        if (where != null) '($where)',
+        if (lastRowId != null)
+          '($qualifier$dateColumn$comparison? OR ($qualifier$dateColumn=? AND ${qualifier}rowid$comparison?))',
+      ];
+      final page = await db.rawQuery(
+        '''
+        SELECT ${qualifier}rowid AS __collection_rowid, $projection
+        FROM $table ${alias ?? ''}
+        ${predicates.isEmpty ? '' : 'WHERE ${predicates.join(' AND ')}'}
+        ORDER BY $qualifier$dateColumn $direction,${qualifier}rowid $direction LIMIT 256
+      ''',
+        [
+          ...whereArgs,
+          if (lastRowId != null) ...[lastDate, lastDate, lastRowId],
+        ],
+      );
+      if (page.isEmpty) break;
+      lastDate = page.last[dateColumn];
+      lastRowId = page.last['__collection_rowid'] as int;
+      rows.addAll(page.map(_withoutRowCursor));
+      if (page.length < 256) break;
+    }
+    return rows;
+  }
+
+  static Future<LibraryCollectionsSnapshot> _readNativeRows(
+    Database db, {
+    String? playlistId,
+    NativeCollectionsJobRunner? nativeJobRunner,
+    Directory? temporaryDirectory,
+  }) async {
+    final temporary =
+        await (temporaryDirectory ?? await getTemporaryDirectory()).createTemp(
+          'collection-read-',
+        );
+    final path = '${temporary.path}/rows.ndjson';
+    try {
+      final snapshotPath = '${temporary.path}/$_dbFileName';
+      await _projectCollectionReadDatabase(
+        db,
+        snapshotPath,
+        playlistId: playlistId,
+      );
+      final request = <String, dynamic>{
+        'operation': 'collections_snapshot',
+        'collections_path': snapshotPath,
+        'output_path': path,
+        'playlist_id': ?playlistId,
+      };
+      final result = await (nativeJobRunner ?? PlatformBridge.runNativeDataJob)(
+        request,
+      );
+      final counts = result['counts'];
+      if (result['published'] != true ||
+          result['rows_path'] != path ||
+          counts is! Map) {
+        throw const FormatException('Invalid native collection snapshot');
+      }
+      var total = 0;
+      for (final count in counts.values) {
+        if (count is! int || count < 0) {
+          throw const FormatException('Invalid native collection row count');
+        }
+        total += count;
+      }
+      return LibraryCollectionsSnapshot(
+        wishlistRows: const [],
+        lovedRows: const [],
+        playlistRows: const [],
+        playlistTrackRows: const [],
+        favoriteArtistRows: const [],
+        nativeRowsPath: path,
+        nativeRowsDirectory: temporary.path,
+        nativeRowCount: total,
+      );
+    } on NativeSqliteSnapshotDetachException {
+      _log.w(
+        'Retaining collection read staging after a failed database detach',
+      );
+      rethrow;
+    } catch (_) {
+      await temporary.delete(recursive: true);
+      rethrow;
+    }
+  }
+
+  static final _collectionProjectionQueue = Expando<Future<void>>();
+  static var _collectionProjectionSequence = 0;
+
+  /// Both the live database and this projection are owned by the same SQLite
+  /// engine during copying. DETACH closes its private file before Rust opens
+  /// it; independent SQLite copies must never share a live app database.
+  static Future<void> _projectCollectionReadDatabase(
+    Database db,
+    String outputPath, {
+    String? playlistId,
+  }) async {
+    final previous = _collectionProjectionQueue[db];
+    final finished = Completer<void>();
+    _collectionProjectionQueue[db] = finished.future;
+    if (previous != null) await previous;
+    final alias = 'collection_read_${_collectionProjectionSequence++}';
+    var attached = false;
+    try {
+      await db.execute('ATTACH DATABASE ? AS $alias', [outputPath]);
+      attached = true;
+      await db.transaction((txn) async {
+        for (final table in [
+          _tableWishlist,
+          _tableLoved,
+          _tableFavoriteArtists,
+          _tablePlaylists,
+          _tablePlaylistTracks,
+        ]) {
+          final where = playlistId == null
+              ? ''
+              : table == _tablePlaylists
+              ? 'WHERE id=?'
+              : table == _tablePlaylistTracks
+              ? 'WHERE playlist_id=?'
+              : 'WHERE 0';
+          // CTAS copies every original column and value. Inserting in original
+          // rowid order preserves all date-tie and membership ordering without
+          // transferring any collection rows through the platform channel.
+          await txn.execute(
+            'CREATE TABLE $alias.$table AS '
+            'SELECT * FROM main.$table $where ORDER BY rowid ASC',
+            where.contains('?') ? [playlistId] : const [],
+          );
+        }
+        await txn.execute('PRAGMA $alias.user_version=$_dbVersion');
+        await txn.execute(
+          'CREATE INDEX $alias.collection_read_members '
+          'ON $_tablePlaylistTracks(playlist_id)',
+        );
+        await txn.execute(
+          'CREATE INDEX $alias.collection_read_preview '
+          'ON $_tablePlaylistTracks(playlist_id,added_at)',
+        );
+      });
+    } finally {
+      try {
+        if (attached) {
+          await detachNativeSqliteSnapshot(db, alias, outputPath);
+        }
+      } finally {
+        finished.complete();
+      }
+    }
   }
 
   Future<List<PlaylistPickerSummary>> loadPlaylistPickerSummaries(

@@ -125,6 +125,7 @@ fn execute(
             request,
             check,
         ),
+        "collections_snapshot" => crate::native_collections::execute(request, check),
         operation if operation.starts_with("library_") => {
             crate::native_library::execute(request, check)
         }
