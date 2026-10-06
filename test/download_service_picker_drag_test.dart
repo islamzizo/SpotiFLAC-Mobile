@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/l10n/app_localizations.dart';
@@ -9,32 +10,81 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/download_service_picker.dart';
 
 class _Extensions extends ExtensionNotifier {
-  _Extensions(this._qualityCount);
+  _Extensions(
+    this._qualityCount, {
+    this.serviceCount = 1,
+    this.hasHealth = false,
+  });
 
   final int _qualityCount;
+  final int serviceCount;
+  final bool hasHealth;
+  final healthRequests = <String>[];
 
   @override
   ExtensionState build() => ExtensionState(
     extensions: [
-      Extension(
-        id: 'example',
-        name: 'example',
-        displayName: 'Example',
-        version: '1.0.0',
-        description: '',
-        enabled: true,
-        status: 'loaded',
-        hasDownloadProvider: true,
-        qualityOptions: List.generate(
-          _qualityCount,
-          (index) => QualityOption(id: '$index', label: 'Quality $index'),
+      for (var service = 0; service < serviceCount; service++)
+        Extension(
+          id: service == 0 ? 'example' : 'example-$service',
+          name: 'example',
+          displayName: service == 0 ? 'Example' : 'Source $service',
+          version: '1.0.0',
+          description: '',
+          enabled: true,
+          status: 'loaded',
+          hasDownloadProvider: true,
+          serviceHealth: hasHealth
+              ? const [
+                  ExtensionServiceHealthCheck(
+                    id: 'health',
+                    url: 'https://example.com/health',
+                  ),
+                ]
+              : const [],
+          qualityOptions: List.generate(
+            _qualityCount,
+            (index) => QualityOption(id: '$index', label: 'Quality $index'),
+          ),
         ),
-      ),
+      if (hasHealth)
+        const Extension(
+          id: 'metadata-only',
+          name: 'metadata-only',
+          displayName: 'Metadata source',
+          version: '1.0.0',
+          description: '',
+          enabled: true,
+          status: 'loaded',
+          hasMetadataProvider: true,
+          serviceHealth: [
+            ExtensionServiceHealthCheck(
+              id: 'health',
+              url: 'https://example.com/health',
+            ),
+          ],
+        ),
     ],
   );
 
   @override
   void refreshEnabledExtensionHealth({bool force = false}) {}
+
+  void publishHealth(String id, String status) => state = state.copyWith(
+    healthStatuses: {
+      ...state.healthStatuses,
+      id: ExtensionHealthStatus(extensionId: id, status: status),
+    },
+  );
+
+  @override
+  Future<ExtensionHealthStatus?> checkExtensionHealth(
+    String extensionId, {
+    bool force = false,
+  }) async {
+    healthRequests.add(extensionId);
+    return state.healthStatuses[extensionId];
+  }
 }
 
 class _Settings extends SettingsNotifier {
@@ -121,6 +171,86 @@ void main() {
         await tester.tap(lastQuality);
         await tester.pumpAndSettle();
         expect(selection, ('${qualityCount - 1}', 'example'));
+        expect(find.byType(DownloadServicePicker), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final brightness in Brightness.values) {
+    testWidgets(
+      'source status stays local and selection keeps chip geometry in $brightness',
+      (tester) async {
+        tester.view.physicalSize = const Size(393, 852);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final extensions = _Extensions(3, serviceCount: 2, hasHealth: true);
+        (String, String)? selection;
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              extensionProvider.overrideWith(() => extensions),
+              settingsProvider.overrideWith(_Settings.new),
+            ],
+            child: MaterialApp(
+              theme: MornyeTheme.build(brightness),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: Builder(
+                  builder: (context) => TextButton(
+                    onPressed: () => DownloadServicePicker.show(
+                      context,
+                      trackName: 'Example track',
+                      onSelect: (quality, service) =>
+                          selection = (quality, service),
+                    ),
+                    child: const Text('Open'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Open'));
+        await tester.pumpAndSettle();
+        final qualityBefore = tester.widget(find.text('Quality 0'));
+        expect(extensions.healthRequests, ['example', 'example-1']);
+        final titleBefore = tester.widget(find.text('Example track'));
+        final source1 = find.ancestor(
+          of: find.text('Example'),
+          matching: find.byType(CupertinoButton),
+        );
+        final source2 = find.ancestor(
+          of: find.text('Source 1'),
+          matching: find.byType(CupertinoButton),
+        );
+        final sourceRects = [tester.getRect(source1), tester.getRect(source2)];
+        extensions.publishHealth('example', 'offline');
+        await tester.pumpAndSettle();
+        expect(find.byTooltip('Service offline'), findsOneWidget);
+        expect(
+          identical(tester.widget(find.text('Quality 0')), qualityBefore),
+          isTrue,
+        );
+        expect(
+          identical(tester.widget(find.text('Example track')), titleBefore),
+          isTrue,
+        );
+        expect([tester.getRect(source1), tester.getRect(source2)], sourceRects);
+        await tester.tap(find.text('Example'));
+        await tester.pumpAndSettle();
+        expect(
+          identical(tester.widget(find.text('Quality 0')), qualityBefore),
+          isTrue,
+        );
+        expect(extensions.healthRequests, ['example', 'example-1']);
+        await tester.tap(find.text('Source 1'));
+        await tester.pumpAndSettle();
+        expect([tester.getRect(source1), tester.getRect(source2)], sourceRects);
+        await tester.tap(find.text('Quality 1'));
+        await tester.pumpAndSettle();
+        expect(selection, ('1', 'example-1'));
         expect(find.byType(DownloadServicePicker), findsNothing);
         expect(tester.takeException(), isNull);
       },
