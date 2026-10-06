@@ -3,8 +3,36 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:material_color_utilities/quantize/quantizer_celebi.dart';
+import 'package:material_color_utilities/score/score.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
+
+Future<List<List<int>>> _quantizePaletteInIsolate(Uint8List bytes) async {
+  final result = await QuantizerCelebi().quantize(
+    bytes.buffer.asUint32List(bytes.offsetInBytes, bytes.lengthInBytes ~/ 4),
+    128,
+  );
+  return [
+    for (final entry in result.colorToCount.entries) [entry.key, entry.value],
+  ];
+}
+
+/// Score remains pinned to Flutter's Material implementation. Quantization
+/// runs on the native worker; the byte-order conversion matches ColorScheme.
+int paletteSeedFromColorCounts(List<List<int>> colors) {
+  final populations = <int, int>{};
+  for (final pair in colors) {
+    final abgr = pair[0];
+    final argb =
+        (abgr & 0xff00ff00) | ((abgr & 255) << 16) | ((abgr >> 16) & 255);
+    populations[argb] = pair[1];
+  }
+  return Score.score(populations, desired: 1).first;
+}
 
 /// Colour scheme derived from cover art, used to theme detail-screen headers.
 ///
@@ -129,10 +157,7 @@ class CoverPalette {
         height: 112,
         policy: ResizeImagePolicy.fit,
       );
-      final scheme = await ColorScheme.fromImageProvider(
-        provider: sample,
-        brightness: brightness,
-      );
+      final scheme = await _schemeFromSample(sample, brightness);
       final sourceColor = await _sampleSourceColor(sample);
       if (sourceColor != null) _sourceColors[key] = sourceColor;
       _cache[key] = scheme;
@@ -148,6 +173,83 @@ class CoverPalette {
       // to the app scheme.
       return null;
     }
+  }
+
+  static Future<ColorScheme> _schemeFromSample(
+    ImageProvider provider,
+    Brightness brightness,
+  ) async {
+    final result = Completer<Uint8List>();
+    final stream = provider.resolve(
+      const ImageConfiguration(size: Size(112, 112)),
+    );
+    late ImageStreamListener listener;
+    late Timer loadFailureTimeout;
+    listener = ImageStreamListener(
+      (info, _) async {
+        loadFailureTimeout.cancel();
+        stream.removeListener(listener);
+        ui.Picture? picture;
+        ui.Image? image;
+        try {
+          final source = info.image;
+          // Mirror Flutter's image-to-palette canvas/readback. Decoding,
+          // filtering and premultiplied alpha remain with Flutter's renderer.
+          final recorder = ui.PictureRecorder();
+          paintImage(
+            canvas: Canvas(recorder),
+            rect: Rect.fromLTWH(
+              0,
+              0,
+              source.width.toDouble(),
+              source.height.toDouble(),
+            ),
+            image: source,
+            filterQuality: FilterQuality.none,
+          );
+          picture = recorder.endRecording();
+          image = await picture.toImage(source.width, source.height);
+          final data = await image.toByteData();
+          if (data == null) throw StateError('Palette readback failed');
+          result.complete(
+            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+          );
+        } catch (error, stack) {
+          result.completeError(error, stack);
+        } finally {
+          image?.dispose();
+          picture?.dispose();
+          info.dispose();
+        }
+      },
+      onError: (Object error, StackTrace? stack) {
+        loadFailureTimeout.cancel();
+        stream.removeListener(listener);
+        result.completeError(error, stack);
+      },
+    );
+    loadFailureTimeout = Timer(const Duration(seconds: 5), () {
+      stream.removeListener(listener);
+      result.completeError(TimeoutException('Palette image loading timed out'));
+    });
+    stream.addListener(listener);
+    final bytes = await result.future;
+    late final List<List<int>> colors;
+    try {
+      final response = await PlatformBridge.runNativeDataJob({
+        'operation': 'palette',
+      }, bytes: bytes);
+      colors = [
+        for (final pair in response['colors'] as List)
+          [for (final value in pair as List) (value as num).toInt()],
+      ];
+    } on MissingPluginException {
+      // Desktop tests and unsupported hosts retain exact Material output,
+      // with the same expensive quantizer moved off the UI isolate.
+      colors = await compute(_quantizePaletteInIsolate, bytes);
+    }
+    final seed = await compute(paletteSeedFromColorCounts, colors);
+    return ColorScheme.fromSeed(seedColor: Color(seed), brightness: brightness);
   }
 
   static Future<Color?> _sampleSourceColor(ImageProvider provider) {

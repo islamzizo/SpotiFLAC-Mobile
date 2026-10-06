@@ -80,6 +80,10 @@ fn execute(
             check,
         ),
         "parse_network_listing" => crate::native_listing::execute(request, Some(bytes)),
+        "palette" => {
+            let colors = spotiflac_core::native_palette::quantize_rgba(bytes, check)?;
+            Ok(json!({"colors": colors}))
+        }
         _ => Err(format!("Unknown native data operation: {operation}")),
     }
 }

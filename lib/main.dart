@@ -52,6 +52,10 @@ void main() {
           'libsmb2',
         ], await rootBundle.loadString('assets/licenses/libsmb2.txt'));
         yield LicenseEntryWithLineBreaks(const [
+          'Material Color Utilities (native palette)',
+          'Dart SDK (native Random compatibility)',
+        ], await rootBundle.loadString('assets/licenses/native_palette.txt'));
+        yield LicenseEntryWithLineBreaks(const [
           'rusqlite',
           'roxmltree',
         ], await rootBundle.loadString('assets/licenses/native_data_jobs.txt'));
