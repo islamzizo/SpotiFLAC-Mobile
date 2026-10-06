@@ -7,21 +7,24 @@ import 'package:sqflite/sqflite.dart';
 /// Executes repository SQL in real SQLite without a platform plugin.
 /// Python's standard-library SQLite is also used by the existing SQL tests.
 class SqliteProcessDatabase implements Database, Transaction {
-  SqliteProcessDatabase._(this._process)
+  SqliteProcessDatabase._(this._process, this.path)
     : _responses = StreamIterator(
         _process.stdout.transform(utf8.decoder).transform(const LineSplitter()),
       );
 
   final Process _process;
   final StreamIterator<String> _responses;
+  @override
+  final String path;
 
-  static Future<SqliteProcessDatabase> open() async => SqliteProcessDatabase._(
-    await Process.start('python3', [
-      '-u',
-      '-c',
-      r'''
+  static Future<SqliteProcessDatabase> open({String path = ':memory:'}) async =>
+      SqliteProcessDatabase._(
+        await Process.start('python3', [
+          '-u',
+          '-c',
+          r'''
 import json, sqlite3, sys
-db = sqlite3.connect(':memory:', isolation_level=None)
+db = sqlite3.connect(sys.argv[1], isolation_level=None)
 db.row_factory = sqlite3.Row
 for line in sys.stdin:
     try:
@@ -34,8 +37,10 @@ for line in sys.stdin:
     except Exception as error:
         print(json.dumps({'error': str(error)}), flush=True)
 ''',
-    ]),
-  );
+          path,
+        ]),
+        path,
+      );
 
   Future<Object?> _request(
     String sql,
@@ -151,7 +156,7 @@ for line in sys.stdin:
     Future<T> Function(Transaction txn) action, {
     bool? exclusive,
   }) async {
-    await execute('BEGIN');
+    await execute(exclusive == true ? 'BEGIN EXCLUSIVE' : 'BEGIN');
     try {
       final result = await action(this);
       await execute('COMMIT');
