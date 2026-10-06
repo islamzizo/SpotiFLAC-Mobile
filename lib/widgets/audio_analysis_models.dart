@@ -145,12 +145,12 @@ class ChannelAnalysisStats {
 class _GeneratedSpectrogram {
   final ui.Image image;
   final Uint8List rgba;
-  final Uint8List? cutoffIntensity;
+  final double? cutoffFrequencyHz;
 
   const _GeneratedSpectrogram({
     required this.image,
     required this.rgba,
-    this.cutoffIntensity,
+    this.cutoffFrequencyHz,
   });
 }
 
@@ -164,25 +164,30 @@ class _AudioAnalysisRunResult {
   });
 }
 
-class _SpectralCutoffParams {
-  final Uint8List intensity;
+class _SpectralCutoffFileParams {
+  final String path;
   final int width;
   final int height;
   final double maxFrequencyHz;
 
-  const _SpectralCutoffParams({
-    required this.intensity,
+  const _SpectralCutoffFileParams({
+    required this.path,
     required this.width,
     required this.height,
     required this.maxFrequencyHz,
   });
 }
 
-double? _estimateEffectiveSpectralCutoffInIsolate(
-  _SpectralCutoffParams params,
+double? _estimateEffectiveSpectralCutoffFileInIsolate(
+  _SpectralCutoffFileParams params,
 ) {
+  final expected = params.width * params.height;
+  final file = File(params.path);
+  if (file.lengthSync() != expected) {
+    throw const FormatException('Incomplete spectral cutoff output');
+  }
   return estimateEffectiveSpectralCutoffHz(
-    intensity: params.intensity,
+    intensity: file.readAsBytesSync(),
     width: params.width,
     height: params.height,
     maxFrequencyHz: params.maxFrequencyHz,

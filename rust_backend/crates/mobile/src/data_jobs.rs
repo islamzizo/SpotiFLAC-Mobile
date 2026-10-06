@@ -84,6 +84,35 @@ fn execute(
             let colors = spotiflac_core::native_palette::quantize_rgba(bytes, check)?;
             Ok(json!({"colors": colors}))
         }
+        "automix" => {
+            let grid = spotiflac_core::native_audio_analysis::analyze_automix_pcm_file(
+                string(request, "path")?,
+                check,
+            )?;
+            serde_json::to_value(grid).map_err(|error| error.to_string())
+        }
+        "spectral_cutoff" => {
+            let width = request
+                .get("width")
+                .and_then(Value::as_u64)
+                .ok_or("Missing width")?;
+            let height = request
+                .get("height")
+                .and_then(Value::as_u64)
+                .ok_or("Missing height")?;
+            let maximum = request
+                .get("max_frequency")
+                .and_then(Value::as_f64)
+                .ok_or("Missing maximum frequency")?;
+            let cutoff = spotiflac_core::native_audio_analysis::estimate_spectral_cutoff_file(
+                string(request, "path")?,
+                usize::try_from(width).map_err(|e| e.to_string())?,
+                usize::try_from(height).map_err(|e| e.to_string())?,
+                maximum,
+                check,
+            )?;
+            Ok(json!({"cutoff": cutoff}))
+        }
         _ => Err(format!("Unknown native data operation: {operation}")),
     }
 }
