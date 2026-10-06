@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/network_storage_service.dart';
 import 'package:spotiflac_android/services/network_metadata_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late NetworkStorageService storage;
   late Directory directory;
   setUp(() async {
@@ -25,9 +27,54 @@ void main() {
     directory = await Directory.systemTemp.createTemp('network-tag-test-');
   });
   tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('com.zarz.spotiflac/backend'),
+          null,
+        );
     await storage.dispose();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'native cache returns a file path and excludes oversized tags from memory',
+    () async {
+      var calls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+            const MethodChannel('com.zarz.spotiflac/backend'),
+            (call) async {
+              expect(call.method, 'runNativeDataJob');
+              final args = call.arguments as Map;
+              final request = jsonDecode(args['request_json'] as String) as Map;
+              expect(request['operation'], 'network_metadata');
+              expect(request['url'], startsWith('http://127.0.0.1:'));
+              expect(
+                request['cache_directory'],
+                '${directory.path}/network_metadata',
+              );
+              expect(args['request_id'], isA<String>());
+              calls++;
+              return jsonEncode({
+                'metadata': {
+                  'title': 'Native tags',
+                  'cover_path': '/native/cover.image',
+                },
+                'cacheable': calls != 1,
+              });
+            },
+          );
+      final reader = NetworkMetadataService(
+        storage: storage,
+        cacheDirectory: () async => directory,
+      );
+      final source = NetworkStorageService.source('nas', 'song.flac');
+      expect((await reader.read(source))['cover_path'], '/native/cover.image');
+      await reader.read(source);
+      await reader.read(source);
+      expect(calls, 2);
+    },
+  );
 
   test(
     'playback and Lyrics share one read and embedded cover is cached as a file',

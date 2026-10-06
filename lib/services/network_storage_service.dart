@@ -5,13 +5,43 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:html/parser.dart' as html;
 import 'package:spotiflac_android/services/network_certificate.dart';
 import 'package:spotiflac_android/services/network_smb_client.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:xml/xml.dart';
 
 part 'network_storage_upload.dart';
+
+List<NetworkEntry> _parseNetworkListingInBackground(
+  Map<String, dynamic> request,
+) {
+  final connection = NetworkConnection(
+    id: 'listing',
+    name: 'listing',
+    protocol: NetworkProtocol.values.byName(request['protocol'] as String),
+    address: request['address'] as String,
+  );
+  return NetworkStorageService.parseListing(
+    connection,
+    request['path'] as String,
+    utf8.decode(request['bytes'] as Uint8List, allowMalformed: true),
+  );
+}
+
+List<NetworkEntry> _hydrateNetworkEntriesInBackground(List<dynamic> entries) =>
+    [
+      for (final raw in entries)
+        NetworkEntry(
+          (raw as Map)['path'] as String,
+          raw['name'] as String,
+          directory: raw['directory'] as bool,
+          size: (raw['size'] as num?)?.toInt(),
+        ),
+    ];
 
 enum NetworkProtocol { smb, webdav, http }
 
@@ -470,11 +500,7 @@ class NetworkStorageService {
         }
         bytes.add(chunk);
       }
-      return parseListing(
-        c,
-        path,
-        utf8.decode(bytes.takeBytes(), allowMalformed: true),
-      );
+      return await parseListingInBackground(c, path, bytes.takeBytes());
     } finally {
       client.close(force: true);
     }
@@ -568,6 +594,41 @@ class NetworkStorageService {
       }
     }
     return _sorted(found.values.toList());
+  }
+
+  /// Keep DOM parsing and sorting away from the Flutter frame while retaining
+  /// the synchronous parser for unsupported native hosts and contract tests.
+  static Future<List<NetworkEntry>> parseListingInBackground(
+    NetworkConnection connection,
+    String path,
+    Uint8List bytes,
+  ) async {
+    List<dynamic> entries;
+    try {
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'parse_network_listing',
+        'protocol': connection.protocol.name,
+        'base_url': networkTarget(connection, path).toString(),
+        'path': path,
+      }, bytes: bytes);
+      entries = result['entries'] as List;
+    } on MissingPluginException {
+      return compute(_parseNetworkListingInBackground, {
+        'protocol': connection.protocol.name,
+        'address': connection.address,
+        'path': path,
+        'bytes': bytes,
+      });
+    } on PlatformException catch (error) {
+      if (error.message?.contains('XML nesting exceeds') != true) rethrow;
+      return compute(_parseNetworkListingInBackground, {
+        'protocol': connection.protocol.name,
+        'address': connection.address,
+        'path': path,
+        'bytes': bytes,
+      });
+    }
+    return compute(_hydrateNetworkEntriesInBackground, entries);
   }
 
   Future<void> _serve(HttpRequest request) async {

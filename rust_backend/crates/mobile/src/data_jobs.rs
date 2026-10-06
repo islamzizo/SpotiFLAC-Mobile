@@ -53,13 +53,33 @@ fn run(
 
 fn execute(
     request: &Value,
-    _bytes: &[u8],
+    bytes: &[u8],
     check: &(dyn Fn() -> Result<(), String> + Sync),
     _manager: Option<&ExtensionManager>,
 ) -> Result<Value, String> {
     let operation = string(request, "operation")?;
     match operation {
         "hash_file" => Ok(json!({"sha256": hash_file(string(request, "path")?, check)?})),
+        "matches_network_upload" => crate::network_tags::matches_upload(request, check),
+        "network_metadata" => {
+            let metadata = crate::network_tags::read_to_cache(
+                string(request, "url")?,
+                string(request, "display_name")?,
+                string(request, "cache_directory")?,
+                check,
+            )?;
+            let cacheable = serde_json::to_vec(&metadata)
+                .map_err(|error| error.to_string())?
+                .len()
+                <= 128 * 1024;
+            Ok(json!({"metadata": metadata, "cacheable": cacheable}))
+        }
+        "promote_network_cover" => crate::network_tags::promote_cover(
+            string(request, "path")?,
+            string(request, "directory")?,
+            check,
+        ),
+        "parse_network_listing" => crate::native_listing::execute(request, Some(bytes)),
         _ => Err(format!("Unknown native data operation: {operation}")),
     }
 }

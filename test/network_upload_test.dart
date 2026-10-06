@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/network_download_staging.dart';
 import 'package:spotiflac_android/services/network_storage_service.dart';
@@ -97,6 +99,10 @@ class _Dav {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  // These integration tests use an authenticated in-process WebDAV server.
+  HttpOverrides.global = null;
+  const channel = MethodChannel('com.zarz.spotiflac/backend');
   late _Dav dav;
   late NetworkStorageService storage;
   late NetworkDownloadStaging staging;
@@ -126,6 +132,8 @@ void main() {
     );
   });
   tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
     await storage.dispose();
     await dav.server.close(force: true);
     await temp.delete(recursive: true);
@@ -324,6 +332,96 @@ void main() {
       await publish();
       expect(dav.puts, 1);
       expect(dav.files.keys.toList(), ['/music/Song #1.flac']);
+    },
+  );
+
+  test(
+    'native recovery receives only the authenticated proxy and local path',
+    () async {
+      final file = await prepare(dir: '');
+      dav.loseMoveResponse = true;
+      await expectLater(publish(), throwsA(anything));
+      var nativeHashes = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = Map<String, dynamic>.from(call.arguments as Map);
+            final request = jsonDecode(args['request_json'] as String) as Map;
+            if (request['operation'] != 'matches_network_upload') {
+              throw MissingPluginException();
+            }
+            final uri = Uri.parse(request['url'] as String);
+            expect(uri.scheme, 'http');
+            expect(uri.host, '127.0.0.1');
+            expect(uri.hasPort, true);
+            expect(uri.path, matches(r'^/[a-f0-9]{48}$'));
+            expect(jsonEncode(request), isNot(contains('secret')));
+            expect(request['length'], await file.length());
+            expect(
+              await File(request['path'] as String).readAsBytes(),
+              await file.readAsBytes(),
+            );
+            expect(request['idle_timeout_ms'], 20000);
+            nativeHashes++;
+            return {'matches': true};
+          });
+      await publish();
+      expect(nativeHashes, 1);
+      expect(dav.puts, 1);
+    },
+  );
+
+  test(
+    'native recovery cancellation keeps staging until the worker completes',
+    () async {
+      final file = await prepare(dir: '');
+      dav.loseMoveResponse = true;
+      await expectLater(publish(), throwsA(anything));
+      final started = Completer<void>();
+      final cancelled = Completer<void>();
+      final worker = Completer<Map<String, dynamic>>();
+      String? requestId;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            final args = Map<String, dynamic>.from(call.arguments as Map);
+            if (call.method == 'cancelNativeDataJob') {
+              expect(args['request_id'], requestId);
+              cancelled.complete();
+              return null;
+            }
+            final request = jsonDecode(args['request_json'] as String) as Map;
+            if (request['operation'] != 'matches_network_upload') {
+              throw MissingPluginException();
+            }
+            requestId = args['request_id'] as String;
+            started.complete();
+            return worker.future;
+          });
+      var stop = false;
+      var completed = false;
+      final originalError = StateError('user cancelled verification');
+      final result = publish(
+        checkpoint: () {
+          if (stop) throw originalError;
+        },
+      );
+      final expectation = expectLater(result, throwsA(same(originalError)));
+      unawaited(
+        result.then(
+          (_) => completed = true,
+          onError: (Object _) {
+            completed = true;
+          },
+        ),
+      );
+      await started.future;
+      stop = true;
+      await cancelled.future;
+      expect(completed, false);
+      expect(await file.exists(), true);
+      worker.completeError(PlatformException(code: 'cancelled'));
+      await expectation;
+      expect(dav.puts, 1);
+      expect(await file.exists(), true);
     },
   );
 

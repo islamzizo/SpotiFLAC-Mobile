@@ -29,6 +29,11 @@ NetworkConnection connection(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  // Listing now crosses a method channel before the isolated host fallback.
+  // Keep the in-process transport fixtures on real HTTP clients.
+  HttpOverrides.global = null;
+
   test('paths retain literal percent, spaces, Unicode, plus and hash', () {
     final c = connection('https://example.test/Music%20Library/');
     const path = '日本語/100% + #1.flac';

@@ -122,10 +122,73 @@ extension NetworkStorageUpload on NetworkStorageService {
     int length,
     void Function() checkpoint,
   ) async {
+    final url = await resolve(source);
+    checkpoint();
+    final requestId = 'upload_hash_${NetworkStorageService.newId()}';
+    Object? cancellationError;
+    StackTrace? cancellationStack;
+    final guard = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      try {
+        checkpoint();
+      } catch (error, stack) {
+        cancellationError = error;
+        cancellationStack = stack;
+        timer.cancel();
+        unawaited(_cancelUploadHash(requestId));
+      }
+    });
+    void checkCancelled() {
+      final error = cancellationError;
+      if (error != null) {
+        Error.throwWithStackTrace(error, cancellationStack!);
+      }
+    }
+
+    try {
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'matches_network_upload',
+        'url': url,
+        'path': file.path,
+        'length': length,
+        'idle_timeout_ms': NetworkStorageService.timeout.inMilliseconds,
+      }, requestId: requestId);
+      checkCancelled();
+      checkpoint();
+      final matches = result['matches'];
+      if (matches is! bool) {
+        throw const FormatException('Invalid native upload verification');
+      }
+      return matches;
+    } on MissingPluginException {
+      guard.cancel();
+      checkCancelled();
+      return _matchesUploadInDart(url, file, length, checkpoint);
+    } catch (_) {
+      checkCancelled();
+      rethrow;
+    } finally {
+      guard.cancel();
+    }
+  }
+
+  Future<void> _cancelUploadHash(String requestId) async {
+    try {
+      await PlatformBridge.cancelNativeDataJob(requestId);
+    } catch (_) {
+      // The worker is still awaited before the caller can release its file.
+    }
+  }
+
+  Future<bool> _matchesUploadInDart(
+    String url,
+    File file,
+    int length,
+    void Function() checkpoint,
+  ) async {
     final client = _client();
     try {
       final request = await client
-          .getUrl(Uri.parse(await resolve(source)))
+          .getUrl(Uri.parse(url))
           .timeout(NetworkStorageService.timeout);
       final response = await request.close().timeout(
         NetworkStorageService.timeout,

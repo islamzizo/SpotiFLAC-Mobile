@@ -7,6 +7,10 @@ import 'package:spotiflac_android/services/network_storage_error.dart';
 import 'package:spotiflac_android/services/network_storage_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  // The native listing fallback needs a binding while TLS must use real I/O.
+  HttpOverrides.global = null;
+
   test(
     'self-signed WebDAV requires explicit trust for listing and streaming',
     () async {

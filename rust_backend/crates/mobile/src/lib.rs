@@ -11,6 +11,8 @@ mod logging;
 mod lyrics;
 mod manager;
 mod metadata;
+mod native_listing;
+mod native_xml;
 mod network_tags;
 mod progress;
 mod repository;

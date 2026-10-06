@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/services/network_metadata_service.dart';
 import 'package:spotiflac_android/services/network_storage_service.dart';
@@ -119,28 +121,28 @@ class NetworkLibraryScanner {
                 await File(cover).exists()) {
               // Identical embedded artwork shares an immutable file, including
               // across albums/sources. Cleanup retains all DB cover references.
-              File? target;
-              File? staged;
               try {
-                final digest = await sha256.bind(File(cover).openRead()).first;
-                target = File('${covers.path}/network_cover_$digest.image');
-                staged = File(
-                  '${target.path}.${NetworkStorageService.newId()}.tmp',
-                );
-                if (!await target.exists() || await target.length() == 0) {
-                  await File(cover).copy(staged.path);
-                  await staged.rename(target.path);
+                try {
+                  if (!PlatformBridge.supportsCoreBackend) {
+                    final directory = covers.path;
+                    coverPath = await Isolate.run(
+                      () => _promoteCover(cover, directory),
+                    );
+                  } else {
+                    final promoted = await PlatformBridge.runNativeDataJob({
+                      'operation': 'promote_network_cover',
+                      'path': cover,
+                      'directory': covers.path,
+                    });
+                    coverPath = promoted['cover_path'] as String;
+                  }
+                } on MissingPluginException {
+                  final directory = covers.path;
+                  coverPath = await Isolate.run(
+                    () => _promoteCover(cover, directory),
+                  );
                 }
-                coverPath = target.path;
-              } catch (_) {
-                if (target != null && await target.exists()) {
-                  coverPath = target.path;
-                }
-              } finally {
-                if (staged != null && await staged.exists()) {
-                  await staged.delete();
-                }
-              }
+              } catch (_) {}
             }
             await checkpoint();
             final row = networkLibraryRow(trackSource, entry, tags)
@@ -170,6 +172,21 @@ class NetworkLibraryScanner {
       if (await file.exists()) await file.delete();
       rethrow;
     }
+  }
+}
+
+Future<String?> _promoteCover(String cover, String directory) async {
+  final digest = await sha256.bind(File(cover).openRead()).first;
+  final target = File('$directory/network_cover_$digest.image');
+  final staged = File('${target.path}.${NetworkStorageService.newId()}.tmp');
+  try {
+    if (!await target.exists() || await target.length() == 0) {
+      await File(cover).copy(staged.path);
+      await staged.rename(target.path);
+    }
+    return target.path;
+  } finally {
+    if (await staged.exists()) await staged.delete();
   }
 }
 
