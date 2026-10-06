@@ -950,9 +950,7 @@ class _SpotifyLogoIcon extends StatelessWidget {
     return CustomPaint(
       size: Size.square(size),
       painter: _SpotifyLogoPainter(
-        color: muted
-            ? Theme.of(context).colorScheme.onSurfaceVariant
-            : const Color(0xFF1DB954),
+        color: muted ? Colors.white54 : Colors.white,
       ),
     );
   }
