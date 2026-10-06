@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/services/app_state_database.dart';
+import 'package:spotiflac_android/utils/logger.dart';
 
 const _maxRecentItems = 20;
+final _log = AppLogger('RecentAccess');
 
 bool isRecentDownloadAfterClear(
   DateTime downloadedAt,
@@ -100,23 +102,55 @@ class RecentAccessState {
 }
 
 class RecentAccessNotifier extends Notifier<RecentAccessState> {
-  final AppStateDatabase _appStateDb = AppStateDatabase.instance;
+  RecentAccessNotifier({AppStateDatabase? database})
+    : _appStateDb = database ?? AppStateDatabase.instance;
+
+  final AppStateDatabase _appStateDb;
+  Future<void> _writeChain = Future<void>.value();
+  final _loadingEdits = <RecentAccessState Function(RecentAccessState)>[];
+  final _clearingEdits =
+      <List<RecentAccessState Function(RecentAccessState)>>[];
 
   @override
   RecentAccessState build() {
-    _loadHistory();
+    _writeChain = _loadHistory();
     return const RecentAccessState();
+  }
+
+  void _editState(RecentAccessState Function(RecentAccessState) edit) {
+    if (!state.isLoaded) _loadingEdits.add(edit);
+    for (final edits in _clearingEdits) {
+      edits.add(edit);
+    }
+    state = edit(state);
+  }
+
+  Future<void> _enqueueWrite(Future<void> Function() write) {
+    final pending = _writeChain.then((_) => write());
+    // The owner logs failures and keeps later edits writable. Awaitable
+    // operations still receive their original persistence error.
+    _writeChain = pending.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {
+        _log.e('Failed to save recent access history', error, stack);
+      },
+    );
+    return pending;
   }
 
   Future<void> _loadHistory() async {
     try {
       await _appStateDb.migrateRecentAccessFromSharedPreferences();
+      if (!ref.mounted) return;
       final rows = await _appStateDb.getRecentAccessRows(
         limit: _maxRecentItems,
       );
+      if (!ref.mounted) return;
       final hiddenIds = await _appStateDb.getHiddenRecentDownloadIds();
+      if (!ref.mounted) return;
       final downloadsClearedAt = await _appStateDb
           .getRecentDownloadsClearedAt();
+      if (!ref.mounted) return;
 
       final items = <RecentAccessItem>[];
       for (final row in rows) {
@@ -133,14 +167,21 @@ class RecentAccessNotifier extends Notifier<RecentAccessState> {
         }
       }
 
-      state = state.copyWith(
+      var loaded = RecentAccessState(
         items: items,
         hiddenDownloadIds: hiddenIds,
         downloadsClearedAt: downloadsClearedAt,
         isLoaded: true,
       );
-    } catch (_) {
-      state = state.copyWith(isLoaded: true);
+      for (final edit in _loadingEdits) {
+        loaded = edit(loaded);
+      }
+      if (ref.mounted) state = loaded;
+    } catch (error, stack) {
+      _log.e('Failed to load recent access history', error, stack);
+      if (ref.mounted) state = state.copyWith(isLoaded: true);
+    } finally {
+      _loadingEdits.clear();
     }
   }
 
@@ -203,56 +244,84 @@ class RecentAccessNotifier extends Notifier<RecentAccessState> {
   }
 
   void _recordAccess(RecentAccessItem item) {
-    final updatedItems = state.items
-        .where((e) => e.uniqueKey != item.uniqueKey)
-        .toList();
-
-    updatedItems.insert(0, item);
-
-    RecentAccessItem? removedTail;
-    if (updatedItems.length > _maxRecentItems) {
-      removedTail = updatedItems.removeLast();
-    }
-
-    state = state.copyWith(items: updatedItems);
-    unawaited(
-      _appStateDb.upsertRecentAccessRow(
-        uniqueKey: item.uniqueKey,
-        itemJson: jsonEncode(item.toJson()),
-        accessedAt: item.accessedAt.toIso8601String(),
+    final previousTail = state.items.length == _maxRecentItems
+        ? state.items.last
+        : null;
+    _editState(
+      (current) => current.copyWith(
+        items: [
+          item,
+          ...current.items.where((e) => e.uniqueKey != item.uniqueKey),
+        ].take(_maxRecentItems).toList(),
       ),
     );
-    if (removedTail != null) {
-      unawaited(_appStateDb.deleteRecentAccessRow(removedTail.uniqueKey));
-    }
+    final removedTail =
+        previousTail != null && !state.items.contains(previousTail)
+        ? previousTail
+        : null;
+    unawaited(
+      _enqueueWrite(() async {
+        await _appStateDb.upsertRecentAccessRow(
+          uniqueKey: item.uniqueKey,
+          itemJson: jsonEncode(item.toJson()),
+          accessedAt: item.accessedAt.toIso8601String(),
+        );
+        if (removedTail != null) {
+          await _appStateDb.deleteRecentAccessRow(removedTail.uniqueKey);
+        }
+      }),
+    );
   }
 
   void removeItem(RecentAccessItem item) {
-    final updatedItems = state.items
-        .where((e) => e.uniqueKey != item.uniqueKey)
-        .toList();
-    state = state.copyWith(items: updatedItems);
-    unawaited(_appStateDb.deleteRecentAccessRow(item.uniqueKey));
-  }
-
-  void hideDownloadFromRecents(String downloadId) {
-    final updatedHidden = {...state.hiddenDownloadIds, downloadId};
-    state = state.copyWith(hiddenDownloadIds: updatedHidden);
-    unawaited(_appStateDb.addHiddenRecentDownloadId(downloadId));
-  }
-
-  Future<void> clearHistory() async {
-    final clearedAt = await _appStateDb.clearAllRecentAccess();
-    state = state.copyWith(
-      items: [],
-      hiddenDownloadIds: {},
-      downloadsClearedAt: clearedAt,
+    _editState(
+      (current) => current.copyWith(
+        items: current.items
+            .where((e) => e.uniqueKey != item.uniqueKey)
+            .toList(),
+      ),
+    );
+    unawaited(
+      _enqueueWrite(() => _appStateDb.deleteRecentAccessRow(item.uniqueKey)),
     );
   }
 
+  void hideDownloadFromRecents(String downloadId) {
+    _editState(
+      (current) => current.copyWith(
+        hiddenDownloadIds: {...current.hiddenDownloadIds, downloadId},
+      ),
+    );
+    unawaited(
+      _enqueueWrite(() => _appStateDb.addHiddenRecentDownloadId(downloadId)),
+    );
+  }
+
+  Future<void> clearHistory() async {
+    final laterEdits = <RecentAccessState Function(RecentAccessState)>[];
+    _clearingEdits.add(laterEdits);
+    try {
+      await _enqueueWrite(() async {
+        final clearedAt = await _appStateDb.clearAllRecentAccess();
+        if (!ref.mounted) return;
+        var cleared = state.copyWith(
+          items: [],
+          hiddenDownloadIds: {},
+          downloadsClearedAt: clearedAt,
+        );
+        for (final edit in laterEdits) {
+          cleared = edit(cleared);
+        }
+        state = cleared;
+      });
+    } finally {
+      _clearingEdits.remove(laterEdits);
+    }
+  }
+
   void clearHiddenDownloads() {
-    state = state.copyWith(hiddenDownloadIds: {});
-    unawaited(_appStateDb.clearHiddenRecentDownloadIds());
+    _editState((current) => current.copyWith(hiddenDownloadIds: {}));
+    unawaited(_enqueueWrite(_appStateDb.clearHiddenRecentDownloadIds));
   }
 }
 
