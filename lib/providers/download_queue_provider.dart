@@ -349,7 +349,10 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   int _failedInSession = 0;
   int _queueItemSequence = 0;
   bool _isLoaded = false;
-  final Completer<void> _queueRestored = Completer<void>();
+  Completer<void> _queueRestored = Completer<void>();
+  bool _queueStartupPending = false;
+  bool _queueStorageReady = true;
+  bool? _startupPausedOverride;
   bool _foregroundResumeScheduled = false;
   bool _iosBackgroundExecutionExpired = false;
   StreamSubscription<List<String>>? _iosBackgroundExpirationSubscription;
@@ -423,23 +426,59 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       _queuePersistence.dispose();
     });
 
+    _queueStorageReady = false;
+    _startQueueRestore(initializeOutputDir: true);
+    return const DownloadQueueState();
+  }
+
+  void _startQueueRestore({bool initializeOutputDir = false}) {
+    if (_queueStartupPending || _queueStorageReady || !ref.mounted) return;
+    _queueStartupPending = true;
+    final restored = _queueRestored = Completer<void>();
     Future.microtask(() async {
       try {
         if (!ref.mounted) return;
         updateSettings(ref.read(settingsProvider));
-        try {
-          await _initOutputDir();
-        } catch (error, stack) {
-          _log.e('Failed to initialize download folder: $error', error, stack);
+        if (initializeOutputDir) {
+          try {
+            await _initOutputDir();
+          } catch (error, stack) {
+            _log.e(
+              'Failed to initialize download folder: $error',
+              error,
+              stack,
+            );
+          }
         }
         await _loadQueueFromStorage();
       } catch (error, stack) {
         _log.e('Failed to initialize download queue: $error', error, stack);
       } finally {
-        if (!_queueRestored.isCompleted) _queueRestored.complete();
+        if (ref.mounted && _queueStorageReady) {
+          // Native adoption can publish an older paused snapshot after a user
+          // has changed this choice while its platform calls were awaiting.
+          final paused = _startupPausedOverride;
+          if (paused != null && state.isPaused != paused) {
+            if (paused && state.isProcessing) {
+              pauseQueue(persistAcrossRestarts: false);
+            } else if (!paused) {
+              resumeQueue();
+            } else {
+              state = state.copyWith(isPaused: true);
+            }
+          }
+          _startupPausedOverride = null;
+        }
+        _queueStartupPending = false;
+        if (ref.mounted && _queueStorageReady) {
+          _saveQueueToStorage();
+          if (!state.isProcessing && !state.isPaused && state.queuedCount > 0) {
+            Future.microtask(_processQueue);
+          }
+        }
+        if (!restored.isCompleted) restored.complete();
       }
     });
-    return const DownloadQueueState();
   }
 
   /// Flush any debounced queue persistence to disk immediately. Called when
@@ -450,13 +489,19 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     // Startup publishes restored items before completing this gate. Capturing
     // the initial empty state while hydration is in flight would delete the
     // restored rows when the persistence writer reaches that empty snapshot.
+    if (!_queueStorageReady) _startQueueRestore();
     await _queueRestored.future;
     if (!ref.mounted) return;
+    if (!_queueStorageReady) {
+      throw StateError('Download queue restoration failed; retry the flush');
+    }
     await _queuePersistence.flush();
   }
 
-  void _persistUserPausedQueue(bool paused) =>
-      _queuePersistence.setUserPaused(paused);
+  void _persistUserPausedQueue(bool paused) {
+    if (_queueStartupPending) _startupPausedOverride = paused;
+    _queuePersistence.setUserPaused(paused);
+  }
 
   /// Restarts a queue that was deliberately left pending because Android did
   /// not allow a foreground service to be launched while the app was hidden.
@@ -536,7 +581,11 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     } else if (!state.isProcessing) {
       state = state.copyWith(isPaused: true, currentDownload: null);
     }
-    unawaited(flushQueuePersistence());
+    unawaited(
+      flushQueuePersistence().catchError((Object error) {
+        _log.e('Failed to flush expired iOS queue: $error');
+      }),
+    );
     // The native expiration callback cancels Go synchronously before this
     // asynchronous event reaches Dart. If foregrounding won that race, still
     // requeue the cancelled item, then immediately let the running queue loop
@@ -548,7 +597,6 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
 
   Future<void> _loadQueueFromStorage() async {
     if (_isLoaded || !ref.mounted) return;
-    _isLoaded = true;
 
     try {
       final restorePaused = await _queuePersistence.loadUserPaused();
@@ -560,19 +608,27 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         return service == item.service ? item : item.copyWith(service: service);
       }).toList();
 
+      final normalizedPendingItems = _normalizeRestoredQueueIds(pendingItems);
+      state = state.copyWith(
+        // Additions remain visible immediately while the database and codec
+        // worker are awaiting. Append them without deduplicating track IDs:
+        // distinct requests/quality variants are deliberately separate items.
+        items: [...normalizedPendingItems, ...state.items],
+        isPaused:
+            _startupPausedOverride ??
+            (normalizedPendingItems.isNotEmpty && restorePaused),
+      );
+      _isLoaded = true;
+      _queueStorageReady = true;
+      _saveQueueToStorage();
       if (pendingItems.isEmpty) {
-        if (restorePaused) _persistUserPausedQueue(false);
+        if (restorePaused && _startupPausedOverride == null) {
+          _queuePersistence.setUserPaused(false);
+        }
         _log.d('No pending items to restore');
         await _queuePersistence.flush();
         return;
       }
-
-      final normalizedPendingItems = _normalizeRestoredQueueIds(pendingItems);
-      state = state.copyWith(
-        items: normalizedPendingItems,
-        isPaused: restorePaused,
-      );
-      _saveQueueToStorage();
       _log.i(
         'Restored ${normalizedPendingItems.length} pending items from storage',
       );
@@ -580,9 +636,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         return;
       }
       if (!ref.mounted) return;
-      if (!restorePaused) {
-        Future.microtask(() => _processQueue());
-      } else {
+      if (state.isPaused) {
         _log.i('Restored queue in user-paused state');
       }
     } catch (e) {
@@ -590,7 +644,16 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     }
   }
 
-  void _saveQueueToStorage() => _queuePersistence.schedule();
+  void _saveQueueToStorage() {
+    // A partial startup snapshot must never enter the writer's debounce or
+    // dispose path: it would otherwise delete the restored IDs later on.
+    if (!_queueStorageReady) {
+      _startQueueRestore();
+      return;
+    }
+    if (_queueStartupPending) return;
+    _queuePersistence.schedule();
+  }
 
   bool _isSafMode(AppSettings settings) {
     return Platform.isAndroid &&
@@ -1157,6 +1220,14 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     bool persistAcrossRestarts = true,
     Set<String> nativeCancelledItemIds = const {},
   }) {
+    if (_queueStartupPending) {
+      _startupPausedOverride = true;
+      if (!state.isProcessing) {
+        state = state.copyWith(isPaused: true, currentDownload: null);
+        if (persistAcrossRestarts) _persistUserPausedQueue(true);
+        return;
+      }
+    }
     if (state.isProcessing && !state.isPaused) {
       final nativeWorkerActive = _hasActiveAndroidNativeWorker;
       if (nativeWorkerActive) {
@@ -1196,6 +1267,11 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   void resumeQueue() {
+    if (_queueStartupPending || !_queueStorageReady) {
+      _startupPausedOverride = false;
+      _persistUserPausedQueue(false);
+      _startQueueRestore();
+    }
     if (state.isPaused) {
       if (_hasActiveAndroidNativeWorker) {
         PlatformBridge.resumeNativeDownloadWorker().catchError((_) {});
@@ -1509,6 +1585,14 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   Future<void> _processQueue() async {
+    // Wait before acquiring the single-flight processing lock. Restoration
+    // may adopt an existing native run and must be free to finish that work.
+    if (_queueStartupPending || !_queueStorageReady) {
+      _startQueueRestore();
+      await _queueRestored.future;
+      if (!ref.mounted || !_queueStorageReady || state.isPaused) return;
+    }
+    if (!ref.mounted) return;
     if (!_queueProcessingGate.tryEnter()) return;
 
     try {

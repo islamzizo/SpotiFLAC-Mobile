@@ -441,7 +441,12 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
       // any debounced download-queue persistence reaches disk.
       if (ref.exists(downloadQueueProvider)) {
         unawaited(
-          ref.read(downloadQueueProvider.notifier).flushQueuePersistence(),
+          ref
+              .read(downloadQueueProvider.notifier)
+              .flushQueuePersistence()
+              .catchError((Object error) {
+                _log.e('Failed to flush background download queue: $error');
+              }),
         );
       }
       // Backgrounded: release idle native runtimes and connections.

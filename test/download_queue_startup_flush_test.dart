@@ -12,6 +12,14 @@ import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/app_state_database.dart';
 
+const _earlyTrack = Track(
+  id: 'example:early',
+  name: 'Immediate addition',
+  artistName: 'Artist',
+  albumName: 'Album',
+  duration: 180,
+);
+
 class _Settings extends SettingsNotifier {
   @override
   AppSettings build() =>
@@ -21,7 +29,7 @@ class _Settings extends SettingsNotifier {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
-    'background flush waits for restored provider state and skips a disposed owner',
+    'startup restores, merges and retries only complete owned snapshots',
     () async {
       SharedPreferences.setMockInitialValues({
         'app_state_migrated_queue_to_sqlite_v1': true,
@@ -70,6 +78,7 @@ void main() {
       var queueReads = 0;
       var deletes = 0;
       var writes = 0;
+      var failRead = false;
       messenger.setMockMethodCallHandler(sqlite, (call) async {
         if (call.method == 'openDatabase') return {'id': 1};
         final arguments = call.arguments as Map? ?? {};
@@ -90,6 +99,9 @@ void main() {
           final snapshot = rows.values.toList();
           started.complete();
           await release.future;
+          if (failRead) {
+            throw PlatformException(code: 'sqlite_error', message: 'Try again');
+          }
           const columns = [
             'id',
             'item_json',
@@ -179,6 +191,208 @@ void main() {
       expect([writes, deletes], [0, 0]);
       release.complete();
       await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      // Both public add paths publish immediately, but neither processing nor
+      // the 350 ms debounce may act on this incomplete startup snapshot.
+      started = Completer();
+      release = Completer();
+      final additions = scope();
+      final additionsQueue = additions.read(downloadQueueProvider.notifier);
+      await started.future;
+      final singleId = additionsQueue.addToQueue(
+        items.first.track,
+        '',
+        qualityOverride: 'lossless',
+      );
+      additionsQueue.addMultipleToQueue(
+        [items.first.track, _earlyTrack],
+        '',
+        qualityOverride: 'high',
+        playlistName: 'Immediate playlist',
+        playlistPositions: [7, 9],
+      );
+      final earlyItems = additions.read(downloadQueueProvider).items.toList();
+      expect(earlyItems.length, 3);
+      expect(earlyItems.first.id, singleId);
+      expect(earlyItems.map((item) => item.qualityOverride), [
+        'lossless',
+        'high',
+        'high',
+      ]);
+      final additionsFlush = additionsQueue.flushQueuePersistence();
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(additions.read(downloadQueueProvider).isProcessing, false);
+      expect(
+        additions.read(downloadQueueProvider).items.map((item) => item.status),
+        everyElement(DownloadStatus.queued),
+      );
+      expect([writes, deletes], [0, 0]);
+      release.complete();
+      await additionsFlush;
+      final merged = additions.read(downloadQueueProvider);
+      expect(merged.items.map((item) => item.id), [
+        ...items.map((item) => item.id),
+        ...earlyItems.map((item) => item.id),
+      ]);
+      for (var index = 0; index < earlyItems.length; index++) {
+        expect(merged.items[items.length + index], same(earlyItems[index]));
+      }
+      expect(merged.items.last.playlistPosition, 9);
+      expect(merged.items.last.fromBatch, true);
+      expect(merged.isPaused, true);
+      expect(rows.keys, merged.items.map((item) => item.id));
+      expect([writes, deletes], [3, 0]);
+      additions.dispose();
+
+      // Even disposal cannot flush an early add over the restored disk rows.
+      final savedIds = rows.keys.toList();
+      started = Completer();
+      release = Completer();
+      final earlyDisposed = scope();
+      final earlyDisposedQueue = earlyDisposed.read(
+        downloadQueueProvider.notifier,
+      );
+      await started.future;
+      earlyDisposedQueue.addToQueue(_earlyTrack, '');
+      final disposeFlush = earlyDisposedQueue.flushQueuePersistence();
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      earlyDisposed.dispose();
+      await disposeFlush;
+      release.complete();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(rows.keys, savedIds);
+      expect([writes, deletes], [3, 0]);
+
+      // A failed restore retains the new UI item and existing disk contents.
+      // A subsequent add starts one fresh attempt shared by concurrent flushes.
+      started = Completer();
+      release = Completer();
+      failRead = true;
+      final recovery = scope();
+      final recoveryQueue = recovery.read(downloadQueueProvider.notifier);
+      await started.future;
+      final firstRecoveryId = recoveryQueue.addToQueue(_earlyTrack, '');
+      recoveryQueue.pauseQueue();
+      final failedFlush = expectLater(
+        recoveryQueue.flushQueuePersistence(),
+        throwsA(isA<StateError>()),
+      );
+      release.complete();
+      await failedFlush;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(rows.keys, savedIds);
+      expect([writes, deletes], [3, 0]);
+      expect(
+        recovery.read(downloadQueueProvider).items.single.id,
+        firstRecoveryId,
+      );
+      expect(recovery.read(downloadQueueProvider).isProcessing, false);
+
+      started = Completer();
+      release = Completer();
+      failRead = false;
+      final readsBeforeRetry = queueReads;
+      final secondRecoveryId = recoveryQueue.addToQueue(_earlyTrack, '');
+      await started.future;
+      recoveryQueue.resumeQueue();
+      expect(recovery.read(downloadQueueProvider).isPaused, false);
+      final retryFlushes = Future.wait([
+        recoveryQueue.flushQueuePersistence(),
+        recoveryQueue.flushQueuePersistence(),
+      ]);
+      bool? resumedPublication;
+      final subscription = recovery.listen(downloadQueueProvider, (_, next) {
+        if (resumedPublication == null &&
+            next.items.length == savedIds.length + 2) {
+          resumedPublication = next.isPaused;
+          // Pause immediately after observing the merged publication so the
+          // fixture never starts extension/download work after gate release.
+          recoveryQueue.pauseQueue();
+        }
+      });
+      release.complete();
+      await retryFlushes;
+      subscription.close();
+      expect(
+        resumedPublication,
+        false,
+        reason: 'newer resume overrides the persisted paused preference',
+      );
+      final recovered = recovery.read(downloadQueueProvider);
+      expect(recovered.items.map((item) => item.id), [
+        ...savedIds,
+        firstRecoveryId,
+        secondRecoveryId,
+      ]);
+      expect(
+        recovered.isPaused,
+        true,
+        reason: 'the latest pause while publishing also wins',
+      );
+      expect(rows.keys, recovered.items.map((item) => item.id));
+      expect(queueReads, readsBeforeRetry + 1);
+      expect([writes, deletes], [5, 0]);
+      recovery.dispose();
+
+      // Explicit flush and resume also retry a failed startup without needing
+      // another addition. Failed attempts may not touch the saved queue.
+      final recoveredIds = rows.keys.toList();
+      started = Completer();
+      release = Completer();
+      failRead = true;
+      final explicitRetry = scope();
+      final explicitQueue = explicitRetry.read(downloadQueueProvider.notifier);
+      await started.future;
+      explicitQueue.pauseQueue();
+      final firstFailure = expectLater(
+        explicitQueue.flushQueuePersistence(),
+        throwsA(isA<StateError>()),
+      );
+      release.complete();
+      await firstFailure;
+      expect(rows.keys, recoveredIds);
+      expect([writes, deletes], [5, 0]);
+
+      started = Completer();
+      release = Completer();
+      final flushRetryReads = queueReads;
+      final secondFailure = expectLater(
+        explicitQueue.flushQueuePersistence(),
+        throwsA(isA<StateError>()),
+      );
+      await started.future;
+      release.complete();
+      await secondFailure;
+      expect(queueReads, flushRetryReads + 1);
+      expect(rows.keys, recoveredIds);
+      expect([writes, deletes], [5, 0]);
+
+      started = Completer();
+      release = Completer();
+      failRead = false;
+      final resumeRetryReads = queueReads;
+      explicitQueue.resumeQueue();
+      await started.future;
+      final resumedFlush = explicitQueue.flushQueuePersistence();
+      bool? explicitResumePublication;
+      final resumedSubscription = explicitRetry.listen(downloadQueueProvider, (
+        _,
+        next,
+      ) {
+        if (explicitResumePublication == null &&
+            next.items.length == recoveredIds.length) {
+          explicitResumePublication = next.isPaused;
+          explicitQueue.pauseQueue();
+        }
+      });
+      release.complete();
+      await resumedFlush;
+      resumedSubscription.close();
+      expect(explicitResumePublication, false);
+      expect(queueReads, resumeRetryReads + 1);
+      expect(rows.keys, recoveredIds);
+      expect([writes, deletes], [5, 0]);
+      explicitRetry.dispose();
       await (await AppStateDatabase.instance.database).close();
     },
   );
