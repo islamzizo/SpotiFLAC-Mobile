@@ -365,9 +365,7 @@ class SpotifyAccountService {
       } catch (_) {}
       throw SpotifyAccountException(
         message == null || message.isEmpty
-            ? 'Spotify could not save this album (' +
-                httpResponse.statusCode.toString() +
-                ').'
+            ? 'Spotify could not save this album (${httpResponse.statusCode}).'
             : message,
       );
     }
