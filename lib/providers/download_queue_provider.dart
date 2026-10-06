@@ -27,6 +27,7 @@ import 'package:spotiflac_android/services/download_metadata_resolver.dart';
 import 'package:spotiflac_android/services/download_metadata_embedding.dart';
 import 'package:spotiflac_android/services/download_saf_file_replacer.dart';
 import 'package:spotiflac_android/services/download_connectivity_policy.dart';
+import 'package:spotiflac_android/services/download_scheduler.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/download_request_payload.dart';
 import 'package:spotiflac_android/services/download_motion_artwork_source.dart';
@@ -1827,86 +1828,39 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   Future<void> _runQueueLoop() async {
-    final activeDownloads = <String, Future<void>>{};
-
     _startMultiProgressPolling();
-
-    while (true) {
-      if (state.isPaused) {
-        if (activeDownloads.isEmpty) {
-          _log.d('Queue is paused and no active download remains');
-          break;
-        }
-        await Future.any([
-          Future.wait(activeDownloads.values),
-          Future<void>.delayed(_queueSchedulingInterval),
-        ]);
-        continue;
-      }
-
-      final maxConcurrent = ref
-          .read(settingsProvider)
-          .concurrentDownloads
-          .clamp(1, 3);
-      if (activeDownloads.length >= maxConcurrent) {
-        // Keep pause/settings changes responsive without rescanning the full
-        // queue while every worker slot is already occupied.
-        await Future.any([
-          Future.any(activeDownloads.values),
-          Future<void>.delayed(_queueSchedulingInterval),
-        ]);
-        continue;
-      }
-
-      final availableSlots = maxConcurrent - activeDownloads.length;
-      final queuedItems = state.items
-          .where(
-            (item) =>
-                item.status == DownloadStatus.queued &&
-                !_pausePendingItemIds.contains(item.id),
-          )
-          .take(availableSlots)
-          .toList(growable: false);
-
-      if (queuedItems.isEmpty && activeDownloads.isEmpty) {
-        _log.d('No more items to process');
-        break;
-      }
-
-      for (final item in queuedItems) {
-        if (state.isPaused) break;
-
-        updateItemStatus(item.id, DownloadStatus.downloading);
-
-        final future = _downloadSingleItem(item).whenComplete(() {
-          activeDownloads.remove(item.id);
-          PlatformBridge.clearItemProgress(item.id).catchError((_) {});
-        });
-
-        activeDownloads[item.id] = future;
-        _log.d('Started download: ${item.track.name}');
-      }
-
-      if (activeDownloads.isNotEmpty) {
-        await Future.any([
-          Future.any(activeDownloads.values),
-          Future<void>.delayed(_queueSchedulingInterval),
-        ]);
-      } else {
-        await Future<void>.delayed(_queueSchedulingInterval);
-      }
+    try {
+      await DownloadScheduler<DownloadItem>(
+        queuedItems: () => state.items.where(
+          (item) =>
+              item.status == DownloadStatus.queued &&
+              !_pausePendingItemIds.contains(item.id),
+        ),
+        idOf: (item) => item.id,
+        isPaused: () => state.isPaused,
+        concurrency: () => ref.read(settingsProvider).concurrentDownloads,
+        checkInterval: _queueSchedulingInterval,
+        start: (item) {
+          updateItemStatus(item.id, DownloadStatus.downloading);
+          _log.d('Started download: ${item.track.name}');
+          return _downloadSingleItem(item);
+        },
+        onFinished: (id) =>
+            PlatformBridge.clearItemProgress(id).catchError((_) {}),
+      ).run();
+      _log.d(
+        state.isPaused
+            ? 'Queue is paused and no active download remains'
+            : 'No more items to process',
+      );
+    } finally {
+      _stopProgressPolling();
+      final remainingIds = state.items.map((item) => item.id).toSet();
+      _locallyCancelledItemIds.removeWhere((id) => !remainingIds.contains(id));
+      _pausePendingItemIds.removeWhere((id) => !remainingIds.contains(id));
+      _verificationRetryGuard.retainItems(remainingIds);
+      _rateLimitRetriedItemIds.removeWhere((id) => !remainingIds.contains(id));
     }
-
-    if (activeDownloads.isNotEmpty) {
-      await Future.wait(activeDownloads.values);
-    }
-
-    _stopProgressPolling();
-    final remainingIds = state.items.map((item) => item.id).toSet();
-    _locallyCancelledItemIds.removeWhere((id) => !remainingIds.contains(id));
-    _pausePendingItemIds.removeWhere((id) => !remainingIds.contains(id));
-    _verificationRetryGuard.retainItems(remainingIds);
-    _rateLimitRetriedItemIds.removeWhere((id) => !remainingIds.contains(id));
   }
 }
 
