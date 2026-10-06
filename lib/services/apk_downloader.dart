@@ -146,8 +146,13 @@ class ApkDownloader {
       _log.e('Update download paused after error: $e');
       return null;
     } finally {
-      await sink?.close();
-      if (ownedClient) effectiveClient.close();
+      try {
+        await sink?.close();
+      } catch (error) {
+        _log.w('Failed to close partial update file: $error');
+      } finally {
+        if (ownedClient) effectiveClient.close();
+      }
     }
   }
 

@@ -377,13 +377,13 @@ class AppRemoteConfigService {
   static const _dismissedAnnouncementIdsKey =
       'app_remote_config_dismissed_announcement_ids';
 
-  final http.Client _client;
+  final http.Client? _client;
   final String endpoint;
 
   AppRemoteConfigService({
     http.Client? client,
     this.endpoint = AppInfo.remoteConfigApiUrl,
-  }) : _client = client ?? http.Client();
+  }) : _client = client;
 
   Future<RemoteConfigSnapshot?> readCachedConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -396,6 +396,9 @@ class AppRemoteConfigService {
   }
 
   Future<RemoteConfigSnapshot?> fetchConfigSnapshot({String? locale}) async {
+    // A default client belongs to this request; an injected client belongs to
+    // its caller. Cached config and dismissal helpers need no HTTP resources.
+    final client = _client ?? http.Client();
     try {
       final uri = Uri.parse(endpoint).replace(
         queryParameters: {
@@ -406,7 +409,7 @@ class AppRemoteConfigService {
         },
       );
 
-      final response = await _client
+      final response = await client
           .get(
             uri,
             headers: {
@@ -443,6 +446,8 @@ class AppRemoteConfigService {
     } catch (e) {
       _log.w('Remote config fetch failed: $e');
       return null;
+    } finally {
+      if (_client == null) client.close();
     }
   }
 

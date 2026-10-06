@@ -11,11 +11,47 @@ import 'package:spotiflac_android/screens/settings/donate_page.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 
+class _TrackedClient extends MockClient {
+  _TrackedClient(super.handler);
+
+  bool closed = false;
+
+  @override
+  void close() {
+    closed = true;
+    super.close();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+  });
+
+  test('default request closes its client on success and failure', () async {
+    for (final fail in [false, true]) {
+      final client = _TrackedClient((_) async {
+        if (fail) throw StateError('network unavailable');
+        return http.Response('{}', 200);
+      });
+      final snapshot = await http.runWithClient(
+        () => AppRemoteConfigService().fetchConfigSnapshot(),
+        () => client,
+      );
+      expect(snapshot, fail ? isNull : isNotNull);
+      expect(client.closed, isTrue);
+    }
+  });
+
+  test('injected client remains owned by its caller', () async {
+    final client = _TrackedClient((_) async => http.Response('{}', 200));
+    final service = AppRemoteConfigService(client: client);
+    expect(await service.fetchConfigSnapshot(), isNotNull);
+    expect(client.closed, isFalse);
+    expect(await service.fetchConfigSnapshot(), isNotNull);
+    client.close();
   });
 
   test(
