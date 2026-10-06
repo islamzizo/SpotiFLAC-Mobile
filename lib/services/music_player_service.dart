@@ -477,7 +477,19 @@ class MusicPlayerHandler extends BaseAudioHandler
     }
 
     _subscriptions.add(mediaItem.listen((_) => recordListening()));
-    _subscriptions.add(playbackState.listen((_) => recordListening()));
+    _subscriptions.add(
+      playbackState
+          .map(
+            (state) => (
+              state.playing &&
+                  state.processingState == AudioProcessingState.ready,
+              state.processingState == AudioProcessingState.completed ||
+                  state.processingState == AudioProcessingState.idle,
+            ),
+          )
+          .distinct()
+          .listen((_) => recordListening()),
+    );
     _subscriptions.add(
       playbackState.map((state) => state.playing).distinct().listen((playing) {
         if (playing) unawaited(_playbackAutomation.playbackStarted());

@@ -137,6 +137,24 @@ class _DeletionHandler extends MusicPlayerHandler {
       deletedSources.add(source);
 }
 
+class _Recorder extends ListeningRecorder {
+  _Recorder({required super.write, required super.elapsed, required super.now});
+
+  int updates = 0;
+  ListeningTrack? latestTrack;
+
+  @override
+  void update(
+    ListeningTrack? track, {
+    required bool playing,
+    bool ended = false,
+  }) {
+    updates++;
+    latestTrack = track;
+    super.update(track, playing: playing, ended: ended);
+  }
+}
+
 MusicPlayerRuntime _runtime({
   AppSettings settings = const AppSettings(pauseOnMute: false),
   Future<MusicPlayerHandler> Function(MusicPlayerHandler Function())?
@@ -145,6 +163,7 @@ MusicPlayerRuntime _runtime({
   MusicPlaybackDeck Function(String)? createDeck,
   Stream<double> volumeChanges = const Stream.empty(),
   SourceDeletionEvents? sourceDeletionEvents,
+  ListeningRecorder? recorder,
 }) {
   final runtime = MusicPlayerRuntime(
     settings: settings,
@@ -162,11 +181,13 @@ MusicPlayerRuntime _runtime({
         'replaygain_track_gain': '-6 dB',
       },
       sessionDatabase: _SessionStore(),
-      recorder: ListeningRecorder(
-        write: (_) async {},
-        elapsed: () => Duration.zero,
-        now: () => DateTime(2026),
-      ),
+      recorder:
+          recorder ??
+          ListeningRecorder(
+            write: (_) async {},
+            elapsed: () => Duration.zero,
+            now: () => DateTime(2026),
+          ),
       volumeChanges: volumeChanges,
       sourceDeletionEvents: sourceDeletionEvents ?? SourceDeletionEvents(),
       isAndroid: false,
@@ -190,6 +211,124 @@ const _track = PlayableMedia(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'position ticks skip listening updates while flushes retain time',
+    () async {
+      var elapsed = Duration.zero;
+      final writes = <ListeningDelta>[];
+      final recorder = _Recorder(
+        write: (batch) async => writes.addAll(batch),
+        elapsed: () => elapsed,
+        now: () => DateTime(2026, 10, 1, 23, 59, 50).add(elapsed),
+      );
+      final handler = await _runtime(recorder: recorder).initialize();
+      handler.mediaItem.add(_item);
+      handler.playbackState.add(
+        PlaybackState(
+          playing: true,
+          processingState: AudioProcessingState.ready,
+        ),
+      );
+      await _settle();
+      final updates = recorder.updates;
+      for (var tick = 1; tick <= 1200; tick++) {
+        elapsed = Duration(milliseconds: tick * 500);
+        handler.playbackState.add(
+          handler.playbackState.value.copyWith(updatePosition: elapsed),
+        );
+        if (tick % 20 == 0) await recorder.flush();
+      }
+      await _settle();
+      expect(recorder.updates, updates);
+      expect(
+        writes.fold<int>(0, (sum, delta) => sum + delta.milliseconds),
+        600000,
+      );
+      expect(writes.fold<int>(0, (sum, delta) => sum + delta.plays), 1);
+      expect(writes.first.day, '2026-10-01');
+      expect(writes.first.milliseconds, 10000);
+      expect(
+        writes.skip(1).every((delta) => delta.day == '2026-10-02'),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'listening transitions retain buffering, repeat and metadata semantics',
+    () async {
+      var elapsed = Duration.zero;
+      final writes = <ListeningDelta>[];
+      final recorder = _Recorder(
+        write: (batch) async => writes.addAll(batch),
+        elapsed: () => elapsed,
+        now: () => DateTime(2026, 10, 1, 23, 59, 50).add(elapsed),
+      );
+      final handler = await _runtime(recorder: recorder).initialize();
+      Future<void> state(bool playing, AudioProcessingState processing) async {
+        handler.playbackState.add(
+          handler.playbackState.value.copyWith(
+            playing: playing,
+            processingState: processing,
+          ),
+        );
+        await _settle();
+      }
+
+      handler.mediaItem.add(_item);
+      await state(true, AudioProcessingState.ready);
+      elapsed += const Duration(seconds: 5);
+      final beforeSeek = recorder.updates;
+      handler.playbackState.add(
+        handler.playbackState.value.copyWith(
+          updatePosition: const Duration(minutes: 10),
+        ),
+      );
+      await _settle();
+      expect(recorder.updates, beforeSeek);
+      await recorder.flush();
+      await state(true, AudioProcessingState.buffering);
+      elapsed += const Duration(seconds: 20);
+      await state(false, AudioProcessingState.ready);
+      await state(true, AudioProcessingState.ready);
+      elapsed += const Duration(seconds: 25);
+      await state(false, AudioProcessingState.ready);
+      elapsed += const Duration(seconds: 10);
+      await state(true, AudioProcessingState.ready);
+      elapsed += const Duration(seconds: 10);
+      await state(false, AudioProcessingState.ready);
+      await state(false, AudioProcessingState.completed);
+      await state(true, AudioProcessingState.ready);
+      elapsed += const Duration(seconds: 35);
+      await recorder.flush();
+      final beforeMetadata = recorder.updates;
+      handler.mediaItem.add(_item.copyWith(title: 'Revised', artist: 'Guest'));
+      await _settle();
+      expect(recorder.updates, beforeMetadata + 1);
+      expect(recorder.latestTrack?.title, 'Revised');
+      expect(recorder.latestTrack?.artist, 'Guest');
+      recorder.setEnabled(false);
+      elapsed += const Duration(seconds: 25);
+      await recorder.flush();
+      recorder.setEnabled(true);
+      elapsed += const Duration(seconds: 5);
+      await recorder.flush();
+      handler.mediaItem.add(const MediaItem(id: 'two', title: 'Two'));
+      await _settle();
+      elapsed += const Duration(seconds: 10);
+      await recorder.flush();
+      final one = writes.where((delta) => delta.track.key == 'one').toList();
+      expect(one.fold<int>(0, (sum, delta) => sum + delta.milliseconds), 80000);
+      expect(one.fold<int>(0, (sum, delta) => sum + delta.plays), 2);
+      expect(one.first.day, '2026-10-01');
+      expect(one.first.milliseconds, 5000);
+      expect(one.skip(1).every((delta) => delta.day == '2026-10-02'), isTrue);
+      expect(writes.last.track.key, 'two');
+      expect(writes.last.milliseconds, 10000);
+      expect(writes.last.plays, 0);
+    },
+  );
 
   test(
     'deletion subscriptions follow handler ownership and scoped overrides',
