@@ -1857,7 +1857,7 @@ class PlatformBridge {
 
   static Future<List<Map<String, dynamic>>> getInstalledExtensions() async {
     final result = await _channel.invokeMethod('getInstalledExtensions');
-    return _decodeMapListResult(result, 'getInstalledExtensions');
+    return _decodeMapListResultAsync(result, 'getInstalledExtensions');
   }
 
   static Future<void> setExtensionEnabled(
@@ -1945,7 +1945,7 @@ class PlatformBridge {
     if (result == null || (result as String).isEmpty) {
       return {'success': true};
     }
-    return _decodeRequiredMapResult(result, 'invokeExtensionAction');
+    return _decodeRequiredMapResultAsync(result, 'invokeExtensionAction');
   }
 
   static Future<List<Map<String, dynamic>>> searchTracksWithMetadataProviders(
@@ -1960,7 +1960,10 @@ class PlatformBridge {
       'searchTracksWithMetadataProviders',
       {'query': query, 'limit': limit, 'include_extensions': includeExtensions},
     );
-    return _decodeMapListResult(result, 'searchTracksWithMetadataProviders');
+    return _decodeMapListResultAsync(
+      result,
+      'searchTracksWithMetadataProviders',
+    );
   }
 
   static Future<List<Map<String, dynamic>>> searchTracksWithMetadataProvider(
@@ -1973,7 +1976,10 @@ class PlatformBridge {
       'searchTracksWithMetadataProvider',
       {'extension_id': extensionId, 'query': query, 'limit': limit},
     );
-    return _decodeMapListResult(result, 'searchTracksWithMetadataProvider');
+    return _decodeMapListResultAsync(
+      result,
+      'searchTracksWithMetadataProvider',
+    );
   }
 
   static Future<List<Map<String, dynamic>>> findCollectionAcrossExtensions({
@@ -1992,7 +1998,7 @@ class PlatformBridge {
       'findCollectionAcrossExtensions',
       requestJson,
     );
-    return _decodeMapListResult(result, 'findCollectionAcrossExtensions');
+    return _decodeMapListResultAsync(result, 'findCollectionAcrossExtensions');
   }
 
   static Future<void> cleanupExtensions() async {
@@ -2306,7 +2312,10 @@ class PlatformBridge {
           'extension_id': extensionId,
           'request_id': requestId,
         });
-        return _decodeNullableMapResult(result, 'getExtensionHomeFeed');
+        return await _decodeNullableMapResultAsync(
+          result,
+          'getExtensionHomeFeed',
+        );
       } catch (e) {
         _log.e('getExtensionHomeFeed failed: $e');
         return null;
@@ -2823,7 +2832,7 @@ class PlatformBridge {
     final result = await _channel.invokeMethod('getRepoExtensions', {
       'force_refresh': forceRefresh,
     });
-    return _decodeMapListResult(result, 'getRepoExtensions');
+    return _decodeMapListResultAsync(result, 'getRepoExtensions');
   }
 
   static Future<String> downloadRepoExtension(
