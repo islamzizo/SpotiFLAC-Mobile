@@ -5,17 +5,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
+import 'package:spotiflac_android/services/mornye_glass_warmup.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/download_service_picker.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:spotiflac_android/widgets/mornye_context_menu.dart';
+import 'package:spotiflac_android/widgets/mornye_glass_preparation.dart';
 import 'package:spotiflac_android/widgets/track_detail_actions.dart';
 
 import 'performance_probe.dart';
@@ -65,8 +68,20 @@ class _Extensions extends ExtensionNotifier {
 
 void main() {
   const glassOverride = String.fromEnvironment('DOWNLOAD_GLASS_LEVEL');
+  const brightnessOverride = String.fromEnvironment('DOWNLOAD_BRIGHTNESS');
+  const preloadGlass = bool.fromEnvironment('DOWNLOAD_PRELOAD_GLASS');
+  const warmupGlass = bool.fromEnvironment(
+    'DOWNLOAD_WARMUP_GLASS',
+    defaultValue: true,
+  );
+  const shellGlass = bool.fromEnvironment('DOWNLOAD_SHELL_GLASS');
+  const traceFirstOpen = bool.fromEnvironment('DOWNLOAD_TRACE_FIRST_OPEN');
   final binding = PerformanceTestBinding.ensureInitialized();
   for (final brightness in Brightness.values) {
+    if (brightnessOverride.isNotEmpty &&
+        brightness.name != brightnessOverride) {
+      continue;
+    }
     testWidgets(
       'download glass, source changes and queue feedback in $brightness',
       (tester) async {
@@ -105,7 +120,11 @@ void main() {
               supportedLocales: AppLocalizations.supportedLocales,
               builder: (_, child) => RepaintBoundary(
                 key: capture,
-                child: AppScaffoldMessenger(child: child!),
+                child: warmupGlass
+                    ? MornyeGlassPreparation(
+                        child: AppScaffoldMessenger(child: child!),
+                      )
+                    : AppScaffoldMessenger(child: child!),
               ),
               home: Scaffold(
                 body: Builder(
@@ -131,6 +150,32 @@ void main() {
                             child: const Text('Open download'),
                           ),
                         ),
+                        if (shellGlass)
+                          Positioned(
+                            left: 12,
+                            right: 12,
+                            bottom: 24,
+                            child: MornyeTabBar(
+                              destinations: const [
+                                NavigationDestination(
+                                  icon: Icon(Icons.home),
+                                  label: 'Home',
+                                ),
+                                NavigationDestination(
+                                  icon: Icon(Icons.library_music),
+                                  label: 'Library',
+                                ),
+                                NavigationDestination(
+                                  icon: Icon(Icons.search),
+                                  label: 'Search',
+                                ),
+                              ],
+                              selectedIndex: 0,
+                              onSelected: (_) {},
+                              blurEnabled: true,
+                              liquidGlass: true,
+                            ),
+                          ),
                       ],
                     );
                   },
@@ -139,7 +184,29 @@ void main() {
             ),
           ),
         );
-        await probe.wait(const Duration(milliseconds: 600));
+        if (preloadGlass) {
+          await tester.runAsync(() => LiquidGlassShaders.ensureLoaded());
+        }
+        if (traceFirstOpen) {
+          await tester.runAsync(() => binding.enableTimeline());
+        }
+        // Give both baseline and prepared processes the same idle interval;
+        // opening the route never waits for preparation to complete.
+        await probe.wait(const Duration(milliseconds: 1500));
+        if (warmupGlass &&
+            (glassOverride.isEmpty || glassOverride == 'liquid')) {
+          expect(MornyeGlassWarmup.isReady, isTrue);
+          final view = binding.platformDispatcher.views.first;
+          expect(
+            identical(
+              MornyeGlassWarmup.prepare(view),
+              MornyeGlassWarmup.prepare(view),
+            ),
+            isTrue,
+            reason: 'Multiple callers must share one preparation',
+          );
+        }
+        final shadersLoadedBeforeOpen = LiquidGlassShaders.isLoaded;
         Future<void> open() async {
           await tester.tap(find.text('Open download'));
           await probe.wait(const Duration(milliseconds: 500));
@@ -156,7 +223,12 @@ void main() {
 
         await probe.measure(
           'first_open',
-          open,
+          traceFirstOpen
+              ? () => binding.traceAction(
+                  open,
+                  reportKey: 'first_open_timeline_${brightness.name}',
+                )
+              : open,
           warmup: () async {},
           repetitions: 1,
         );
@@ -166,6 +238,23 @@ void main() {
           warmup: () async {},
           repetitions: 1,
         );
+        if (const bool.fromEnvironment('DOWNLOAD_FIRST_OPEN_ONLY')) {
+          await probe.finish(
+            metadata: {
+              'scope':
+                  'first opening of production picker with fixture providers',
+              'brightness': brightness.name,
+              'shaders_loaded_before_open': shadersLoadedBeforeOpen,
+              'preload_glass': preloadGlass,
+              'trace_first_open': traceFirstOpen,
+              'warmup_glass': warmupGlass,
+              'warmup_ready': MornyeGlassWarmup.isReady,
+              'shell_glass': shellGlass,
+            },
+          );
+          await tester.pumpWidget(const SizedBox.shrink());
+          return;
+        }
         await probe.measure('open_close', () async {
           await open();
           await close();
@@ -287,6 +376,12 @@ void main() {
             'scope':
                 'production download picker and queue feedback with fixture providers; no downloads',
             'brightness': brightness.name,
+            'shaders_loaded_before_open': shadersLoadedBeforeOpen,
+            'preload_glass': preloadGlass,
+            'trace_first_open': traceFirstOpen,
+            'warmup_glass': warmupGlass,
+            'warmup_ready': MornyeGlassWarmup.isReady,
+            'shell_glass': shellGlass,
             'pose_layers': poses,
             'glass_level_override': glassOverride,
             'quality_count': const int.fromEnvironment(

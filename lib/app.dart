@@ -15,6 +15,7 @@ import 'package:spotiflac_android/l10n/app_localizations.dart';
 import 'package:spotiflac_android/l10n/supported_locales.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
+import 'package:spotiflac_android/widgets/mornye_glass_preparation.dart';
 
 String initialLocationForAppState({
   required bool isFirstLaunch,
@@ -214,10 +215,12 @@ class SpotiFLACApp extends ConsumerWidget {
               // level it sits above the router's Navigator, so the controller
               // never encounters it while collecting heroes. Removing the
               // inherited controller disables flights on the root Navigator.
-              child: AdaptiveUiScaler(
-                child: heroAnimationsEnabled
-                    ? appContent
-                    : HeroControllerScope.none(child: appContent),
+              child: MornyeGlassPreparation(
+                child: AdaptiveUiScaler(
+                  child: heroAnimationsEnabled
+                      ? appContent
+                      : HeroControllerScope.none(child: appContent),
+                ),
               ),
             );
           },
