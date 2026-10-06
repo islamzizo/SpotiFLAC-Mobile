@@ -3,6 +3,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 // Host tests load the pinned native library used by the mobile plugin.
 // ignore: implementation_imports
@@ -111,6 +112,7 @@ void main() {
           stored = s;
         },
       );
+      final empty = await service.connections();
       await Future.wait([
         service.save(
           connection(
@@ -128,16 +130,27 @@ void main() {
           ),
         ),
       ]);
-      expect((await service.connections()).length, 2);
+      final saved = await service.connections();
+      expect(empty, isEmpty);
+      expect(saved.length, 2);
+      expect(await service.connections(), same(saved));
+      expect(() => saved.clear(), throwsUnsupportedError);
       final restored = NetworkStorageService(
         read: () async => stored,
         write: (_) async {},
       );
+      final loaded = await restored.connections();
+      expect(await restored.connections(), same(loaded));
+      expect(() => loaded.clear(), throwsUnsupportedError);
       expect((await restored.connection('one')).password, 'secret');
       final source = NetworkStorageService.source('one', 'test.flac');
       expect(source, 'network://one/test.flac');
       await service.remove('one');
-      expect((await service.connections()).single.id, 'two');
+      final removed = await service.connections();
+      expect(removed.single.id, 'two');
+      expect(await service.connections(), same(removed));
+      expect(saved.length, 2);
+      expect(() => removed.clear(), throwsUnsupportedError);
     },
   );
 
@@ -146,8 +159,10 @@ void main() {
     late NetworkStorageService service;
     late String origin;
     final requests = <String>[];
+    List<List<int>>? listingChunks;
     setUp(() async {
       requests.clear();
+      listingChunks = null;
       server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       origin = 'http://127.0.0.1:${server.port}';
       service = NetworkStorageService(
@@ -165,6 +180,19 @@ void main() {
         } else if (r.uri.path == '/external') {
           r.response.statusCode = 302;
           r.response.headers.set('location', 'https://elsewhere.invalid/');
+        } else if (r.uri.path == '/chunks/') {
+          try {
+            for (final chunk in listingChunks!) {
+              r.response.add(chunk);
+              await r.response.flush();
+            }
+            await r.response.close();
+          } on SocketException {
+            // The client closes the response when it exceeds the size limit.
+          } on HttpException {
+            // A rejected response can also fail an in-flight flush.
+          }
+          return;
         } else if (r.method == 'PROPFIND') {
           expect(r.headers.value('Depth'), '1');
           await r.drain<void>();
@@ -197,6 +225,54 @@ void main() {
       await service.dispose();
       await server.close(force: true);
     });
+
+    test('chunked listings preserve Unicode and malformed UTF-8', () async {
+      final body = [
+        ...utf8.encode('<a href="日本語.flac">'),
+        0xff,
+        ...utf8.encode('</a><a href="Album/">Album</a>'),
+      ];
+      // One-byte writes split both three-byte code points and HTML tokens.
+      listingChunks = [
+        for (final byte in body) [byte],
+      ];
+      final c = connection('$origin/chunks/', user: 'test', password: 'secret');
+      final entries = await service.list(c);
+      expect(entries.map((entry) => entry.path), ['Album/', '日本語.flac']);
+      expect(entries.last.name, '日本語.flac');
+      expect(entries.first.directory, true);
+    });
+
+    test(
+      'listing size limit accepts 4 MiB and rejects the next byte',
+      () async {
+        const limit = 4 * 1024 * 1024;
+        final body = Uint8List(limit + 1)..fillRange(0, limit + 1, 32);
+        final prefix = utf8.encode('<a href="Song.flac">Song</a>');
+        body.setRange(0, prefix.length, prefix);
+        listingChunks = [
+          for (var offset = 0; offset < limit; offset += 64 * 1024)
+            Uint8List.sublistView(body, offset, offset + 64 * 1024),
+        ];
+        final c = connection(
+          '$origin/chunks/',
+          user: 'test',
+          password: 'secret',
+        );
+        expect((await service.list(c)).single.name, 'Song.flac');
+        listingChunks = [...listingChunks!, Uint8List.sublistView(body, limit)];
+        await expectLater(
+          service.list(c),
+          throwsA(
+            isA<HttpException>().having(
+              (error) => error.message,
+              'message',
+              'Directory listing is too large',
+            ),
+          ),
+        );
+      },
+    );
 
     test(
       'authenticated listing, proxy range seek, HEAD, and revocation',

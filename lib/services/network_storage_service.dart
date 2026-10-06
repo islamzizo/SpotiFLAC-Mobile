@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -170,7 +171,7 @@ class NetworkStorageService {
   }
 
   Future<List<NetworkConnection>> connections() async {
-    if (_connections != null) return List.unmodifiable(_connections!);
+    if (_connections != null) return _connections!;
     return _loading ??= () async {
       try {
         final raw = await _read();
@@ -182,8 +183,8 @@ class NetworkStorageService {
                     Map<String, dynamic>.from(row as Map),
                   ),
               ];
-        _connections = result;
-        return List<NetworkConnection>.unmodifiable(result);
+        _connections = List<NetworkConnection>.unmodifiable(result);
+        return _connections!;
       } finally {
         _loading = null;
       }
@@ -196,13 +197,13 @@ class NetworkStorageService {
       ..removeWhere((c) => c.id == connection.id);
     next.add(connection);
     await _write(jsonEncode(next.map((c) => c.toJson()).toList()));
-    _connections = next;
+    _connections = List.unmodifiable(next);
   });
 
   Future<void> remove(String id) => _mutate(() async {
     final next = [...await connections()]..removeWhere((c) => c.id == id);
     await _write(jsonEncode(next.map((c) => c.toJson()).toList()));
-    _connections = next;
+    _connections = List.unmodifiable(next);
     _routes.removeWhere((_, route) => route.id == id);
   });
 
@@ -462,14 +463,18 @@ class NetworkStorageService {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw HttpException('Server returned ${response.statusCode}');
       }
-      final bytes = <int>[];
+      final bytes = BytesBuilder();
       await for (final chunk in response.timeout(timeout)) {
         if (bytes.length + chunk.length > 4 * 1024 * 1024) {
           throw const HttpException('Directory listing is too large');
         }
-        bytes.addAll(chunk);
+        bytes.add(chunk);
       }
-      return parseListing(c, path, utf8.decode(bytes, allowMalformed: true));
+      return parseListing(
+        c,
+        path,
+        utf8.decode(bytes.takeBytes(), allowMalformed: true),
+      );
     } finally {
       client.close(force: true);
     }
