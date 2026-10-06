@@ -6,7 +6,38 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:spotiflac_android/services/backup_service.dart';
 
+class _UnreadableArchiveFile extends ArchiveFile {
+  _UnreadableArchiveFile(this.failure) : super('history.ndjson', 0, <int>[]);
+
+  final FormatException failure;
+
+  @override
+  void writeContent(OutputStream output, {bool freeMemory = true}) {
+    output.writeBytes([1, 2, 3]);
+    throw failure;
+  }
+}
+
 void main() {
+  test('archive output closes when reading its payload throws', () async {
+    final root = await Directory.systemTemp.createTemp('unreadable-backup-');
+    addTearDown(() => root.delete(recursive: true));
+    final path = p.join(root.path, 'history.ndjson');
+    final output = OutputFileStream(path);
+    const failure = FormatException('Invalid compressed archive payload');
+
+    expect(
+      () => BackupService.writeArchiveEntry(
+        _UnreadableArchiveFile(failure),
+        output,
+      ),
+      throwsA(same(failure)),
+    );
+
+    expect(output.isOpen, isFalse);
+    expect(await File(path).readAsBytes(), [1, 2, 3]);
+  });
+
   test(
     'ZIP backup pages history and streams cover files during restore',
     () async {

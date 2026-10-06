@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:archive/archive_io.dart';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
@@ -371,9 +372,7 @@ class BackupService {
       String? historyPath;
       if (historyEntry != null) {
         historyPath = p.join(extractionDir.path, 'history.ndjson');
-        final historyOutput = OutputFileStream(historyPath);
-        historyEntry.writeContent(historyOutput);
-        historyOutput.closeSync();
+        writeArchiveEntry(historyEntry, OutputFileStream(historyPath));
       }
 
       final restoredCovers = <String, dynamic>{};
@@ -399,9 +398,7 @@ class BackupService {
           var ext = cover['ext']?.toString() ?? '.jpg';
           if (!RegExp(r'^\.[a-z0-9]{1,8}$').hasMatch(ext)) ext = '.jpg';
           final coverPath = p.join(extractionDir.path, 'cover_${index++}$ext');
-          final output = OutputFileStream(coverPath);
-          archiveEntry.writeContent(output);
-          output.closeSync();
+          writeArchiveEntry(archiveEntry, OutputFileStream(coverPath));
           extractedCoverBytes += archiveEntry.size;
           restoredCovers[manifestEntry.key.toString()] = {
             'ext': ext,
@@ -428,12 +425,7 @@ class BackupService {
             throw const FormatException('Missing or oversized profile photo');
           }
           photoPath = p.join(extractionDir.path, 'profile.png');
-          final output = OutputFileStream(photoPath);
-          try {
-            photoEntry.writeContent(output);
-          } finally {
-            output.closeSync();
-          }
+          writeArchiveEntry(photoEntry, OutputFileStream(photoPath));
         }
         profile = UserProfile(
           name: rawProfile['name'] as String,
@@ -466,6 +458,16 @@ class BackupService {
       return null;
     } finally {
       if (input != null) await input.close();
+    }
+  }
+
+  /// Consumes and closes the output even when an archive payload cannot be read.
+  @visibleForTesting
+  static void writeArchiveEntry(ArchiveFile entry, OutputFileStream output) {
+    try {
+      entry.writeContent(output);
+    } finally {
+      output.closeSync();
     }
   }
 
