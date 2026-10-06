@@ -94,6 +94,23 @@ void main() {
     expect(audio.quality, '24-bit/96kHz');
   });
 
+  test('completion reads the typed extension audio protocol', () async {
+    final audio = await resolve(
+      result: {
+        'actual_bit_depth': '24',
+        'actual_sample_rate': 96000.0,
+        'actual_audio_codec': 'alac',
+        'actual_bitrate': '900000',
+        'extension_context': {'opaque': 'kept'},
+      },
+      probe: (_) async => {'error': 'metadata unavailable'},
+    );
+    expect(audio.bitDepth, 24);
+    expect(audio.sampleRate, 96000);
+    expect(audio.format, 'alac');
+    expect(audio.bitrate, 900);
+  });
+
   for (final throws in [false, true]) {
     test('probe failure preserves quality and prior cache ($throws)', () async {
       final cached = <String, dynamic>{'error': 'old probe failed'};

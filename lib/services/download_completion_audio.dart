@@ -1,3 +1,4 @@
+import 'package:spotiflac_android/models/download_result.dart';
 import 'package:spotiflac_android/utils/audio_format_utils.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 
@@ -21,16 +22,13 @@ Future<DownloadCompletionAudio> resolveDownloadCompletionAudio({
   required Future<Map<String, dynamic>> Function(String) readMetadata,
   required void Function(String) debug,
 }) async {
-  var bitDepth = result['actual_bit_depth'] as int?;
-  var sampleRate = result['actual_sample_rate'] as int?;
+  final download = DownloadResult.fromMap(result);
+  var bitDepth = download.actualBitDepth;
+  var sampleRate = download.actualSampleRate;
   var format =
-      normalizeAudioFormatValue(
-        result['audio_codec']?.toString() ?? result['format']?.toString(),
-      ) ??
+      normalizeAudioFormatValue(download.reportedFormat) ??
       normalizeAudioFormatValue(audioFormatForPath(filePath));
-  var bitrate = readPositiveBitrateKbps(
-    result['bitrate'] ?? result['actual_bitrate'],
-  );
+  var bitrate = download.bitrateKbps;
   final lowerPath = filePath.toLowerCase();
   if (filePath.startsWith('content://') ||
       const [

@@ -124,49 +124,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     // when a non-completed item is removed from the queue, so every entry
     // here corresponds to a track that completed (or is about to complete)
     // its download.
-    final validEntries = accumulator.entries.toList();
-
-    // Single-track albums: album gain == track gain, no extra write needed.
-    if (validEntries.length <= 1) {
-      _albumRgData.remove(key);
-      return;
-    }
-
-    // Compute album gain using duration-weighted power-mean of LUFS values.
-    // album_loudness = 10 * log10( Σ(10^(Li/10) * di) / Σ(di) )
-    // This weights longer tracks more, matching "whole program" loudness.
-    double sumWeightedPower = 0;
-    double sumDuration = 0;
-    double maxPeak = 0;
-    for (final entry in validEntries) {
-      final weight = entry.durationSecs > 0 ? entry.durationSecs : 1.0;
-      sumWeightedPower += pow(10, entry.integratedLufs / 10.0) * weight;
-      sumDuration += weight;
-      if (entry.truePeakLinear > maxPeak) {
-        maxPeak = entry.truePeakLinear;
-      }
-    }
-    final albumLufs = 10.0 * _log10(sumWeightedPower / sumDuration);
-    const replayGainReferenceLufs = -18.0;
-    final albumGainDb = replayGainReferenceLufs - albumLufs;
-
-    final albumGain =
-        '${albumGainDb >= 0 ? "+" : ""}${albumGainDb.toStringAsFixed(2)} dB';
-    final albumPeak = maxPeak.toStringAsFixed(6);
-
-    _log.i(
-      'Album ReplayGain for "$key": gain=$albumGain, peak=$albumPeak (${validEntries.length} tracks, album LUFS=${albumLufs.toStringAsFixed(1)})',
-    );
-
-    for (final entry in validEntries) {
-      try {
-        await _writeAlbumReplayGain(entry.filePath, albumGain, albumPeak);
-      } catch (e) {
-        _log.w('Failed to write album ReplayGain to ${entry.filePath}: $e');
-      }
-    }
-
-    _albumRgData.remove(key);
+    await _computeAndWriteAlbumRg(key, accumulator);
   }
 
   /// Write album ReplayGain tags to a single file.
@@ -227,11 +185,14 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     _AlbumRgAccumulator accumulator,
   ) async {
     final validEntries = accumulator.entries.toList();
+    // Single-track albums already have their track gain, so need no write.
     if (validEntries.length <= 1) {
       _albumRgData.remove(key);
       return;
     }
 
+    // Duration-weighted power-mean of LUFS, matching whole-program loudness:
+    // album_loudness = 10 * log10( Σ(10^(Li/10) * di) / Σ(di) ).
     double sumWeightedPower = 0;
     double sumDuration = 0;
     double maxPeak = 0;
