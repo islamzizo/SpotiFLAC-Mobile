@@ -3,10 +3,12 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:archive/archive_io.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
+import 'package:spotiflac_android/services/history_database.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/user_profile_store.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -171,22 +173,38 @@ class BackupService {
 
     try {
       var historyCount = 0;
-      var offset = 0;
-      final historySink = historyFile.openWrite();
-      try {
-        while (includeHistory) {
-          final page = await loadHistoryPage(_historyPageSize, offset);
-          for (final item in page) {
-            historySink.writeln(jsonEncode(item));
+      if (includeHistory && PlatformBridge.supportsCoreBackend) {
+        final database = await HistoryDatabase.instance.database;
+        final result = await PlatformBridge.runNativeDataJob({
+          'operation': 'backup_history_export',
+          'history_path': database.path,
+          'ndjson_path': historyFile.path,
+          'platform': Platform.isAndroid ? 'android' : 'ios',
+          if (Platform.isIOS)
+            'documents_path': (await getApplicationDocumentsDirectory()).path,
+        });
+        if (result['published'] != true || result['count'] is! int) {
+          throw const FormatException('Incomplete native history backup');
+        }
+        historyCount = result['count'] as int;
+      } else {
+        var offset = 0;
+        final historySink = historyFile.openWrite();
+        try {
+          while (includeHistory) {
+            final page = await loadHistoryPage(_historyPageSize, offset);
+            for (final item in page) {
+              historySink.writeln(jsonEncode(item));
+            }
+            await historySink.flush();
+            historyCount += page.length;
+            offset += page.length;
+            if (page.length < _historyPageSize) break;
           }
           await historySink.flush();
-          historyCount += page.length;
-          offset += page.length;
-          if (page.length < _historyPageSize) break;
+        } finally {
+          await historySink.close();
         }
-        await historySink.flush();
-      } finally {
-        await historySink.close();
       }
 
       final coverManifest = <String, Map<String, String>>{};
@@ -300,11 +318,102 @@ class BackupService {
     Directory? temporaryDirectory,
   }) async {
     final tempRoot = temporaryDirectory ?? await getTemporaryDirectory();
-    final bundle = await _parseFileInBackground(path, tempRoot.path);
+    final bundle =
+        PlatformBridge.supportsCoreBackend && !await _hasZipHeader(File(path))
+        ? await _parseLegacyNative(path, tempRoot)
+        : await _parseFileInBackground(path, tempRoot.path);
     if (bundle == null) {
       _log.w('Backup file could not be read: invalid or unsupported contents');
     }
     return bundle;
+  }
+
+  /// Called inside the history notifier's write queue. The native importer
+  /// validates and stages the complete input before replacing the live index.
+  static Future<void> restoreHistory(BackupBundle bundle) async {
+    if (!bundle.hasHistory) return;
+    final database = await HistoryDatabase.instance.database;
+    if (PlatformBridge.supportsCoreBackend &&
+        bundle._historyNdjsonPath != null) {
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'backup_history_import',
+        'history_path': database.path,
+        'ndjson_path': bundle._historyNdjsonPath,
+        if (bundle._historyCount != null)
+          'expected_count': bundle._historyCount,
+        'platform': Platform.isAndroid ? 'android' : 'ios',
+        'mode': 'replace',
+      });
+      if (result['committed'] != true) {
+        throw const FormatException('Incomplete native history restore');
+      }
+      return;
+    }
+    // Desktop and legacy in-memory callers retain the established codec.
+    await HistoryDatabase.instance.clearAll();
+    var batch = <Map<String, dynamic>>[];
+    await for (final item in bundle.streamHistory()) {
+      batch.add(item);
+      if (batch.length < _historyPageSize) continue;
+      await HistoryDatabase.instance.upsertBatch(batch);
+      batch = <Map<String, dynamic>>[];
+    }
+    if (batch.isNotEmpty) await HistoryDatabase.instance.upsertBatch(batch);
+  }
+
+  static Future<bool> _hasZipHeader(File file) async {
+    final header = await file
+        .openRead(0, 4)
+        .fold<List<int>>(<int>[], (bytes, chunk) => bytes..addAll(chunk));
+    return header.length == 4 &&
+        header[0] == 0x50 &&
+        header[1] == 0x4b &&
+        header[2] == 0x03 &&
+        header[3] == 0x04;
+  }
+
+  static Future<BackupBundle?> _parseLegacyNative(
+    String path,
+    Directory temporary,
+  ) async {
+    await temporary.create(recursive: true);
+    final staging = await temporary.createTemp('spotiflac_legacy_backup_');
+    try {
+      final historyPath = p.join(staging.path, 'history.ndjson');
+      final metadataPath = p.join(staging.path, 'metadata.json');
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'backup_split_legacy',
+        'input_path': path,
+        'ndjson_path': historyPath,
+        'metadata_path': metadataPath,
+      });
+      if (result['published'] != true || result['count'] is! int) {
+        throw const FormatException('Incomplete legacy backup staging');
+      }
+      final parsed = await Isolate.run(
+        () => parse(File(metadataPath).readAsStringSync()),
+      );
+      if (parsed == null) throw const FormatException('Invalid backup');
+      return BackupBundle(
+        formatVersion: parsed.formatVersion,
+        appVersion: parsed.appVersion,
+        createdAt: parsed.createdAt,
+        settings: parsed.settings,
+        profile: parsed.profile,
+        history: const [],
+        hasHistory: parsed.hasHistory,
+        historyCount: result['count'] as int,
+        historyNdjsonPath: parsed.hasHistory ? historyPath : null,
+        collections: parsed.collections,
+        playlistCovers: parsed.playlistCovers,
+        extensions: parsed.extensions,
+        temporaryDirectoryPath: staging.path,
+      );
+    } catch (error) {
+      await staging.delete(recursive: true);
+      _log.w('Legacy backup native parse failed: $error');
+      return null;
+    }
   }
 
   static Future<BackupBundle?> _parseFileInBackground(
@@ -317,15 +426,7 @@ class BackupService {
     String temporaryPath,
   ) async {
     final file = File(path);
-    final header = await file
-        .openRead(0, 4)
-        .fold<List<int>>(<int>[], (bytes, chunk) => bytes..addAll(chunk));
-    final isZip =
-        header.length == 4 &&
-        header[0] == 0x50 &&
-        header[1] == 0x4b &&
-        header[2] == 0x03 &&
-        header[3] == 0x04;
+    final isZip = await _hasZipHeader(file);
     return isZip
         ? _parseArchive(file, temporaryDirectory: Directory(temporaryPath))
         : parse(await file.readAsString());
@@ -442,7 +543,7 @@ class BackupService {
         history: const [],
         hasHistory: historyEntry != null,
         historyNdjsonPath: historyPath,
-        historyCount: (root['history_count'] as num?)?.toInt() ?? 0,
+        historyCount: (root['history_count'] as num?)?.toInt(),
         collections: _mapOrEmpty(data['collections']),
         playlistCovers: restoredCovers,
         extensions: _mapOrEmpty(data['extensions']),

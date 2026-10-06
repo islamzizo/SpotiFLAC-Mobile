@@ -11,6 +11,7 @@ mod logging;
 mod lyrics;
 mod manager;
 mod metadata;
+mod native_backup;
 mod native_id3;
 mod native_library;
 mod native_listing;

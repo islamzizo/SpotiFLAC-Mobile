@@ -142,7 +142,9 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
       if (bundle.hasHistory) {
         await ref
             .read(downloadHistoryProvider.notifier)
-            .restoreFromBackupStream(bundle.streamHistory());
+            .restoreFromBackupOperation(
+              () => BackupService.restoreHistory(bundle!),
+            );
       }
       if (bundle.hasCollections) {
         await ref

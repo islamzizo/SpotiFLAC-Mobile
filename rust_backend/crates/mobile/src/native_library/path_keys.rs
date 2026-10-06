@@ -28,6 +28,21 @@ pub(crate) fn dart_lower(value: &str) -> String {
         .collect()
 }
 
+pub(crate) fn dart_upper(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            let mut upper = ch.to_uppercase();
+            let first = upper.next().unwrap_or(ch);
+            if upper.next().is_some() { ch } else { first }
+        })
+        .collect()
+}
+
+pub(crate) fn regex_whitespace(ch: char) -> bool {
+    matches!(ch,'\u{0009}'..='\u{000d}'|'\u{0020}'|'\u{00a0}'|'\u{1680}'|'\u{2000}'..='\u{200a}'|'\u{2028}'|'\u{2029}'|'\u{202f}'|'\u{205f}'|'\u{3000}'|'\u{feff}')
+}
+
 fn decode(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
