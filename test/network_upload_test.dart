@@ -155,6 +155,73 @@ void main() {
     progress: (_, _) {},
   );
 
+  test('completion journal owns output and filters provider secrets', () async {
+    final output = await File('${temp.path}/final.flac').writeAsBytes([1, 2]);
+    await File('${temp.path}/final.lrc').writeAsString('Lyrics');
+    await staging.prepareCompletion(
+      id: 'item',
+      localPath: output.path,
+      folder: folder,
+      relativeDir: 'Artist/Album/',
+      quality: '24-bit/96kHz',
+      track: {'id': 'track'},
+      externalLrcWritten: true,
+      result: {
+        'service': 'provider',
+        'actual_bit_depth': 24,
+        'actual_sample_rate': 96000,
+        'audio_codec': 'flac',
+        'title': 'Track',
+        'genre': null,
+        'download_url': 'https://example.test/audio?token=secret',
+        'authorization': 'Bearer secret',
+        'decryption_key': 'secret',
+        'extension_context': {'token': 'secret'},
+      },
+    );
+    await output.delete();
+    final journal = (await staging.read('item'))!;
+    expect(journal['localPath'], isNot(output.path));
+    expect(journal['folder'], folder);
+    expect(journal['relativeDir'], 'Artist/Album/');
+    expect(journal['quality'], '24-bit/96kHz');
+    expect(journal['track'], {'id': 'track'});
+    expect(journal['externalLrcWritten'], true);
+    expect(journal['result'], {
+      'service': 'provider',
+      'actual_bit_depth': 24,
+      'actual_sample_rate': 96000,
+      'audio_codec': 'flac',
+      'title': 'Track',
+    });
+    expect(jsonEncode(journal), isNot(contains('secret')));
+    await publish();
+    expect(dav.files['/music/Artist/Album/final.flac'], [1, 2]);
+    expect(utf8.decode(dav.files['/music/Artist/Album/final.lrc']!), 'Lyrics');
+  });
+
+  test('retry keeps the first journal including its reserved target', () async {
+    await prepare(dir: 'Original/');
+    dav.rejectWrites = true;
+    await expectLater(publish(), throwsA(isA<HttpException>()));
+    final original = (await staging.read('item'))!;
+    expect(original['target'], isNotNull);
+    await staging.prepareCompletion(
+      id: 'item',
+      localPath: '${temp.path}/missing-new-output.flac',
+      folder: 'network://changed/',
+      relativeDir: 'Changed/',
+      quality: 'new quality',
+      track: {'id': 'changed'},
+      externalLrcWritten: false,
+      result: {'service': 'changed'},
+    );
+    expect(await staging.read('item'), original);
+    dav.rejectWrites = false;
+    await publish();
+    expect(dav.files.keys, ['/music/Original/Song #1.flac']);
+  });
+
   test(
     'write probe creates and removes its own file; permission errors remain errors',
     () async {

@@ -1564,16 +1564,17 @@ class _DownloadRun {
 
     if (path != null) {
       var historyFilePath = path;
-      final backendBitDepth = result['actual_bit_depth'] as int?;
-      final backendSampleRate = result['actual_sample_rate'] as int?;
-      final backendFormat =
-          normalizeAudioFormatValue(
-            result['audio_codec']?.toString() ?? result['format']?.toString(),
-          ) ??
-          normalizeAudioFormatValue(audioFormatForPath(path));
-      final backendBitrateKbps = readPositiveBitrateKbps(
-        result['bitrate'] ?? result['actual_bitrate'],
+      final audio = await resolveDownloadCompletionAudio(
+        result: result,
+        filePath: path,
+        fileName: finalSafFileName,
+        quality: actualQuality,
+        metadata: probedFinalMetadata,
+        readMetadata: PlatformBridge.readFileMetadata,
+        debug: _log.d,
       );
+      actualQuality = audio.quality;
+      probedFinalMetadata = audio.metadata;
       final backendGenre = result['genre'] as String?;
       final backendLabel = result['label'] as String?;
       final backendCopyright = result['copyright'] as String?;
@@ -1590,82 +1591,6 @@ class _DownloadRun {
           normalizeOptionalString(copyright) ??
           normalizeOptionalString(existingInHistory?.copyright);
 
-      int? finalBitDepth = backendBitDepth;
-      int? finalSampleRate = backendSampleRate;
-      String? finalFormat = backendFormat;
-      int? finalBitrateKbps = backendBitrateKbps;
-      final lowerFilePath = path.toLowerCase();
-      final canProbeFinalMetadata =
-          path.startsWith('content://') ||
-          lowerFilePath.endsWith('.flac') ||
-          lowerFilePath.endsWith('.m4a') ||
-          lowerFilePath.endsWith('.mp4') ||
-          lowerFilePath.endsWith('.aac') ||
-          lowerFilePath.endsWith('.mp3') ||
-          lowerFilePath.endsWith('.opus') ||
-          lowerFilePath.endsWith('.ogg');
-
-      if (canProbeFinalMetadata) {
-        try {
-          final probed = probedFinalMetadata;
-          final metadata = (probed != null && probed['error'] == null)
-              ? probed
-              : await PlatformBridge.readFileMetadata(path);
-          if (metadata['error'] == null) {
-            probedFinalMetadata = metadata;
-            final probedBitDepth = metadata['bit_depth'] is num
-                ? (metadata['bit_depth'] as num).toInt()
-                : int.tryParse(metadata['bit_depth']?.toString() ?? '');
-            final probedSampleRate = metadata['sample_rate'] is num
-                ? (metadata['sample_rate'] as num).toInt()
-                : int.tryParse(metadata['sample_rate']?.toString() ?? '');
-
-            if (probedBitDepth != null && probedBitDepth > 0) {
-              finalBitDepth = probedBitDepth;
-            }
-            if (probedSampleRate != null && probedSampleRate > 0) {
-              finalSampleRate = probedSampleRate;
-            }
-            final probedFormat = normalizeAudioFormatValue(
-              metadata['audio_codec']?.toString() ??
-                  metadata['format']?.toString(),
-            );
-            if (probedFormat != null) {
-              finalFormat = probedFormat;
-            }
-            final probedBitrateKbps = readPositiveBitrateKbps(
-              metadata['bitrate'] ?? metadata['bit_rate'],
-            );
-            if (probedBitrateKbps != null) {
-              finalBitrateKbps = probedBitrateKbps;
-            }
-
-            final resolvedQuality = resolveDisplayQuality(
-              filePath: path,
-              fileName: finalSafFileName,
-              detectedFormat: finalFormat,
-              bitDepth: finalBitDepth,
-              sampleRate: finalSampleRate,
-              bitrateKbps: finalBitrateKbps,
-              storedQuality: actualQuality,
-            );
-            if (resolvedQuality != null) {
-              actualQuality = resolvedQuality;
-            }
-          }
-        } catch (e) {
-          _log.d('Final audio metadata probe failed for $path: $e');
-        }
-      }
-
-      final isLossyOutput =
-          isLossyAudioFormat(finalFormat) ||
-          lowerFilePath.endsWith('.mp3') ||
-          lowerFilePath.endsWith('.opus') ||
-          lowerFilePath.endsWith('.ogg');
-      final historyBitDepth = isLossyOutput ? null : finalBitDepth;
-      final historySampleRate = isLossyOutput ? null : finalSampleRate;
-      final historyBitrate = finalBitrateKbps;
       final lyricsAvailability = await n._resolveFinalLyricsAvailability(
         filePath: historyFilePath,
         probedMetadata: probedFinalMetadata,
@@ -1674,44 +1599,16 @@ class _DownloadRun {
 
       if (isNetworkDownload) {
         final staging = NetworkDownloadStaging.instance;
-        if (await staging.read(item.id) == null) {
-          await staging.save(item.id, {
-            'localPath': path,
-            'folder': item.networkDownloadFolder,
-            'relativeDir': networkRelativeDir,
-            'quality': actualQuality,
-            'track': trackToDownload.toJson(),
-            'externalLrcWritten': externalLrcWritten,
-            // Persist only metadata, never provider URLs/authorization tokens.
-            'result': {
-              for (final key in [
-                'service',
-                'quality',
-                'actual_bit_depth',
-                'actual_sample_rate',
-                'bitrate',
-                'actual_bitrate',
-                'audio_codec',
-                'format',
-                'genre',
-                'label',
-                'copyright',
-                'title',
-                'artist',
-                'album',
-                'release_date',
-                'track_number',
-                'disc_number',
-                'total_tracks',
-                'total_discs',
-                'isrc',
-                'composer',
-                'explicit',
-              ])
-                if (result[key] != null) key: result[key],
-            },
-          });
-        }
+        await staging.prepareCompletion(
+          id: item.id,
+          localPath: path,
+          folder: item.networkDownloadFolder,
+          relativeDir: networkRelativeDir,
+          quality: actualQuality,
+          track: trackToDownload.toJson(),
+          externalLrcWritten: externalLrcWritten,
+          result: result,
+        );
         void checkpoint() {
           if (n._findItemById(item.id) == null ||
               n._isLocallyCancelled(item.id) ||
@@ -1771,10 +1668,10 @@ class _DownloadRun {
                   downloadTreeUri: settings.downloadTreeUri,
                   safRelativeDir: effectiveOutputDir,
                   safFileName: finalSafFileName ?? safFileName,
-                  bitDepth: historyBitDepth,
-                  sampleRate: historySampleRate,
-                  bitrate: historyBitrate,
-                  format: finalFormat,
+                  bitDepth: audio.bitDepth,
+                  sampleRate: audio.sampleRate,
+                  bitrate: audio.bitrate,
+                  format: audio.format,
                   genre: effectiveGenre,
                   label: effectiveLabel,
                   copyright: effectiveCopyright,

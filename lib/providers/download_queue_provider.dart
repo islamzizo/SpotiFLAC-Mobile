@@ -22,6 +22,7 @@ import 'package:spotiflac_android/services/download_queue_persistence.dart';
 import 'package:spotiflac_android/services/download_progress.dart';
 import 'package:spotiflac_android/services/download_file_finalizer.dart';
 import 'package:spotiflac_android/services/download_container_finalizer.dart';
+import 'package:spotiflac_android/services/download_completion_audio.dart';
 import 'package:spotiflac_android/services/download_metadata_resolver.dart';
 import 'package:spotiflac_android/services/download_metadata_embedding.dart';
 import 'package:spotiflac_android/services/download_saf_file_replacer.dart';

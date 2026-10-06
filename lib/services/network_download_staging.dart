@@ -38,6 +38,56 @@ class NetworkDownloadStaging {
     return data;
   }
 
+  /// Keep the first finalized output and destination across upload retries.
+  /// Provider URLs and authorization fields never enter the durable journal.
+  Future<void> prepareCompletion({
+    required String id,
+    required String localPath,
+    required String folder,
+    required String relativeDir,
+    required String quality,
+    required Map<String, dynamic> track,
+    required bool externalLrcWritten,
+    required Map<String, dynamic> result,
+  }) async {
+    if (await read(id) != null) return;
+    await save(id, {
+      'localPath': localPath,
+      'folder': folder,
+      'relativeDir': relativeDir,
+      'quality': quality,
+      'track': track,
+      'externalLrcWritten': externalLrcWritten,
+      'result': {
+        for (final key in const [
+          'service',
+          'quality',
+          'actual_bit_depth',
+          'actual_sample_rate',
+          'bitrate',
+          'actual_bitrate',
+          'audio_codec',
+          'format',
+          'genre',
+          'label',
+          'copyright',
+          'title',
+          'artist',
+          'album',
+          'release_date',
+          'track_number',
+          'disc_number',
+          'total_tracks',
+          'total_discs',
+          'isrc',
+          'composer',
+          'explicit',
+        ])
+          if (result[key] != null) key: result[key],
+      },
+    });
+  }
+
   Future<void> save(String id, Map<String, dynamic> data) async {
     final dir = await workDirectory(id);
     final original = data['localPath'] as String;
