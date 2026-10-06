@@ -13,6 +13,10 @@ adding another playback engine or native SDK.
   PlaybackState custom actions: background launches from media-session binder
   callbacks are blocked on newer Android. Use its native output switcher.
   This is only for app-owned controls, not extension input.
+- Android: bound retained browser metadata to 256 recent items with
+  `PinnedMetadataCache`. The active queue and current item stay pinned so
+  notification, Android Auto and browser lookups survive recent-item eviction.
+  Replacing the queue and clearing the service release their pinned metadata.
 
 Android 13+ still chooses the positions and built-in transport icons in System
 UI. We preserve real play/pause/previous/next semantics for headsets, lock screen
