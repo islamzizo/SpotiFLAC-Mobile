@@ -106,6 +106,7 @@ class SpotifyAccountService {
       ValueNotifier<SpotifyAccountProfile?>(null);
   final ValueNotifier<List<SpotifyPlaylist>> playlistsNotifier =
       ValueNotifier<List<SpotifyPlaylist>>(const []);
+  Future<List<SpotifyPlaylist>>? _syncInFlight;
 
   Future<bool> isSignedIn() async =>
       await _storage.read(key: _signedInKey) == 'true';
@@ -207,7 +208,18 @@ class SpotifyAccountService {
     } catch (_) { return const []; }
   }
 
-  Future<List<SpotifyPlaylist>> syncPlaylists() async {
+  Future<List<SpotifyPlaylist>> syncPlaylists() {
+    final inFlight = _syncInFlight;
+    if (inFlight != null) return inFlight;
+
+    final future = _syncPlaylistsInternal();
+    _syncInFlight = future;
+    return future.whenComplete(() {
+      if (identical(_syncInFlight, future)) _syncInFlight = null;
+    });
+  }
+
+  Future<List<SpotifyPlaylist>> _syncPlaylistsInternal() async {
     final spDc = await _storage.read(key: _spDcKey);
     if (spDc == null || spDc.isEmpty) {
       throw const SpotifyAccountException('Spotify session is missing. Log in again.');
@@ -339,38 +351,88 @@ class SpotifyAccountService {
     if (spDc == null || spDc.isEmpty) {
       throw const SpotifyAccountException('Log in to Spotify first.');
     }
+
+    // Serialize an explicit save behind the app-start refresh so the two
+    // operations do not create a burst of Spotify API requests together.
+    final inFlight = _syncInFlight;
+    if (inFlight != null) {
+      try {
+        await inFlight;
+      } catch (_) {
+        // A failed background refresh must not prevent an explicit save.
+      }
+    }
+
     final token = await _validToken(
       spDc,
       await _storage.read(key: _spKeyKey) ?? '',
     );
-    final httpResponse = await http.put(
-      Uri.parse('https://api.spotify.com/v1/me/library'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({
-        'uris': ['spotify:album:$normalizedId'],
-      }),
-    );
-    if (httpResponse.statusCode != 200) {
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      final httpResponse = await http.put(
+        Uri.parse('https://api.spotify.com/v1/me/library').replace(
+          queryParameters: {
+            'uris': 'spotify:album:$normalizedId',
+          },
+        ),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+
+      if (httpResponse.statusCode == 200) return;
+
       String? message;
+      String? reason;
       try {
         final decoded = jsonDecode(httpResponse.body);
         if (decoded is Map) {
           final error = decoded['error'];
-          if (error is Map) message = error['message']?.toString();
+          if (error is Map) {
+            message = error['message']?.toString();
+            reason = error['reason']?.toString();
+          }
         }
       } catch (_) {}
+
+      if (httpResponse.statusCode == 429 &&
+          reason != 'QUOTA_EXCEEDED' &&
+          attempt == 0) {
+        final retryAfter = int.tryParse(
+          httpResponse.headers['retry-after'] ?? '',
+        );
+        final waitSeconds = (retryAfter ?? 2).clamp(1, 30);
+        await Future<void>.delayed(Duration(seconds: waitSeconds));
+        continue;
+      }
+
+      if (httpResponse.statusCode == 429) {
+        if (reason == 'QUOTA_EXCEEDED') {
+          throw const SpotifyAccountException(
+            'Spotify API quota is temporarily exhausted. Please try again later.',
+          );
+        }
+        throw SpotifyAccountException(
+          message?.isNotEmpty == true
+              ? message!
+              : 'Spotify API rate limit reached. Please try again shortly.',
+        );
+      }
+
       throw SpotifyAccountException(
         message == null || message.isEmpty
-            ? 'Spotify could not save this album (${httpResponse.statusCode}).'
+            ? 'Spotify could not save this album (' +
+                httpResponse.statusCode.toString() +
+                ').'
             : message,
       );
     }
-  }
 
+    throw const SpotifyAccountException(
+      'Spotify could not save this album right now.',
+    );
+  }
   Future<String> _validToken(String spDc, String spKey) async {
     final token = await _storage.read(key: accessTokenKey);
     final expiry = int.tryParse(await _storage.read(key: _expiryKey) ?? '');
