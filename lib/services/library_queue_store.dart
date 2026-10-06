@@ -526,7 +526,15 @@ class LibraryQueueStore {
     required List<_QueueOrderTerm> orderTerms,
     required bool usesCursor,
   }) {
+    final unfiltered =
+        sqlite.normalizeLookupText(request.searchQuery).isEmpty &&
+        request.albumArtist == null &&
+        request.quality == null &&
+        request.format == null &&
+        request.metadata == null;
     final assessesCompleteness = isAlbumCompletenessFilter(request.metadata);
+    final minimumTracks =
+        request.includeSingleTrackAlbums || assessesCompleteness ? 0 : 1;
     final completenessSql = assessesCompleteness
         ? albumCompletenessSql(
             albumInventorySql(includeLocal: request.includeLocal),
@@ -537,6 +545,7 @@ class LibraryQueueStore {
         : 'NULL AS album_completeness, NULL AS album_present_tracks, NULL AS album_expected_tracks,';
     final parts = <String>[];
     if (request.source != 'local') {
+      final albumKey = unfiltered ? 'h.album_key' : 'c.album_key';
       final where = <String>[];
       _appendQueueHistoryFilters(
         where,
@@ -548,7 +557,7 @@ class LibraryQueueStore {
           '''
         SELECT
           'downloaded' AS queue_source,
-          c.album_key,
+          $albumKey AS album_key,
           MIN(h.album_name) AS album_name,
           COALESCE(NULLIF(MIN(h.album_artist), ''), MIN(h.artist_name)) AS artist_name,
           MAX(CASE WHEN h.cover_url IS NOT NULL AND h.cover_url != '' THEN h.cover_url END) AS cover_url,
@@ -556,25 +565,26 @@ class LibraryQueueStore {
           MAX(h.file_path) AS sample_file_path,
           COUNT(*) AS track_count,
           $completenessColumns
-          c.latest_added AS sort_added,
+          ${unfiltered ? 'MAX(COALESCE(h.sort_added, 0))' : 'c.latest_added'} AS sort_added,
           MIN(COALESCE(h.sort_album, '')) AS sort_album,
           MIN(COALESCE(h.sort_album_artist, '')) AS sort_artist,
           COALESCE(MAX(h.release_date), '') AS sort_release,
           COALESCE(MAX(h.sort_genre), '') AS sort_genre
         FROM history_db.history h
-        JOIN (
+        ${unfiltered ? '' : '''JOIN (
           SELECT
             album_key,
             COUNT(*) AS track_count,
             MAX(COALESCE(sort_added, 0)) AS latest_added
           FROM history_db.history
           GROUP BY album_key
-          HAVING COUNT(*) > ${request.includeSingleTrackAlbums || assessesCompleteness ? 0 : 1}
+          HAVING COUNT(*) > $minimumTracks
         ) c
-          ON c.album_key = h.album_key
+          ON c.album_key = h.album_key'''}
         ${assessesCompleteness ? 'JOIN ($completenessSql) ac ON ac.album_key = h.album_key' : ''}
         ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
-        GROUP BY c.album_key
+        GROUP BY $albumKey
+        ${unfiltered ? 'HAVING $albumKey IS NOT NULL AND COUNT(*) > $minimumTracks' : ''}
         ''';
       parts.add(
         _boundedQueuePart(
@@ -588,6 +598,7 @@ class LibraryQueueStore {
     }
 
     if (request.includeLocal && request.source != 'downloaded') {
+      final albumKey = unfiltered ? 'l.album_key' : 'c.album_key';
       final where = <String>[
         '''
         NOT EXISTS (
@@ -608,7 +619,7 @@ class LibraryQueueStore {
           '''
         SELECT
           'local' AS queue_source,
-          c.album_key,
+          $albumKey AS album_key,
           MIN(l.album_name) AS album_name,
           COALESCE(NULLIF(MIN(l.album_artist), ''), MIN(l.artist_name)) AS artist_name,
           NULL AS cover_url,
@@ -616,13 +627,13 @@ class LibraryQueueStore {
           MAX(l.file_path) AS sample_file_path,
           COUNT(*) AS track_count,
           $completenessColumns
-          c.latest_added AS sort_added,
+          ${unfiltered ? 'MAX(COALESCE(l.sort_added, 0))' : 'c.latest_added'} AS sort_added,
           MIN(l.album_name_norm) AS sort_album,
           MIN(l.album_artist_norm) AS sort_artist,
           COALESCE(MAX(l.release_date), '') AS sort_release,
           COALESCE(MAX(l.sort_genre), '') AS sort_genre
         FROM ${LibrarySchema.visibleView} l
-        JOIN (
+        ${unfiltered ? '' : '''JOIN (
           SELECT
             album_key,
             COUNT(*) AS track_count,
@@ -635,11 +646,12 @@ class LibraryQueueStore {
             WHERE lpk.item_id = candidate.id
           )
           GROUP BY album_key
-          HAVING COUNT(*) > ${request.includeSingleTrackAlbums || assessesCompleteness ? 0 : 1}
-        ) c ON c.album_key = l.album_key
+          HAVING COUNT(*) > $minimumTracks
+        ) c ON c.album_key = l.album_key'''}
         ${assessesCompleteness ? 'JOIN ($completenessSql) ac ON ac.album_key = l.album_key' : ''}
         ${where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}'}
-        GROUP BY c.album_key
+        GROUP BY $albumKey
+        ${unfiltered ? 'HAVING $albumKey IS NOT NULL AND COUNT(*) > $minimumTracks' : ''}
         ''';
       parts.add(
         _boundedQueuePart(

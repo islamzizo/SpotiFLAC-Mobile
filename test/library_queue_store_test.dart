@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/services/library_database_models.dart';
 import 'package:spotiflac_android/services/library_queue_store.dart';
 import 'package:spotiflac_android/services/library_row_mapper.dart';
@@ -11,6 +12,27 @@ import 'support/sqlite_process_database.dart';
 List<String> _tracks(QueueLibraryDbPage page) => [
   for (final row in page.rows) '${row['source']}:${(row['item'] as Map)['id']}',
 ];
+
+class _AlbumQueryDatabase implements Database {
+  _AlbumQueryDatabase(this.db);
+
+  final Database db;
+  late String sql;
+  List<Object?>? args;
+
+  @override
+  Future<List<Map<String, Object?>>> rawQuery(
+    String sql, [
+    List<Object?>? arguments,
+  ]) {
+    this.sql = sql;
+    args = arguments;
+    return db.rawQuery(sql, arguments);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -64,14 +86,16 @@ void main() {
     int number, {
     String? path,
     String source = 'legacy',
+    String album = 'Local',
+    String artist = 'Artist',
   }) async {
     final file = path ?? '/$id.flac';
     final track = LocalLibraryItem(
       id: id,
       sourceId: source,
       trackName: 'Song',
-      artistName: 'Artist',
-      albumName: 'Local',
+      artistName: artist,
+      albumName: album,
       filePath: file,
       scannedAt: DateTime.utc(2026),
       fileModTime: 1,
@@ -194,6 +218,148 @@ void main() {
         );
         expect(fallback.rows, [expected.last], reason: sort);
       }
+    },
+  );
+
+  test(
+    'unfiltered albums match the original aggregation across sources and pages',
+    () async {
+      await db.update('history_db.history', {
+        'sort_added': 900,
+      }, where: "id = 'h1'");
+      await db.update('history_db.history', {
+        'artist_name': 'Guest Artist',
+      }, where: "id = 'h2'");
+      await addHistory('edition1', 'Downloaded', 1, artist: 'Other Artist');
+      await addHistory('edition2', 'Downloaded', 2, artist: 'Other Artist');
+      await addHistory('null-key', 'Invalid', 1);
+      await db.update('history_db.history', {
+        'album_key': null,
+      }, where: "id = 'null-key'");
+      await addLocal('local-edition1', 1, artist: 'Other Artist');
+      await addLocal('local-edition2', 2, artist: 'Other Artist');
+      await addLocal('local-single', 1, album: 'Local Single');
+      await db.insert('library_sources', {
+        'id': 'disabled',
+        'path': '/disabled',
+        'display_name': 'Disabled',
+        'enabled': 0,
+      });
+      await addLocal('disabled1', 1, source: 'disabled');
+      await addLocal('disabled2', 2, source: 'disabled');
+      for (final source in [null, 'downloaded', 'local']) {
+        for (final includeLocal in [false, true]) {
+          for (final singles in [false, true]) {
+            for (final sort in [
+              'latest',
+              'oldest',
+              'album-asc',
+              'album-desc',
+              'artist-asc',
+              'release-newest',
+            ]) {
+              for (final offset in [0, 1]) {
+                Future<QueueLibraryDbPage> page(String? quality) =>
+                    store.albumPage(
+                      QueueLibraryDbQuery(
+                        source: source,
+                        includeLocal: includeLocal,
+                        includeSingleTrackAlbums: singles,
+                        sortMode: sort,
+                        offset: offset,
+                        limit: 1,
+                        searchQuery: '  ',
+                        quality: quality,
+                      ),
+                    );
+                // Unknown quality adds no predicate but uses the original join.
+                final original = await page('unrecognized');
+                final fast = await page(null);
+                expect(fast.rows, original.rows);
+                expect(fast.nextCursor, original.nextCursor);
+              }
+            }
+          }
+        }
+      }
+      final albums = (await store.albumPage(const QueueLibraryDbQuery())).rows;
+      expect(albums.map((row) => row['track_count']), everyElement(2));
+      expect(albums, hasLength(4));
+      expect(
+        (await store.albumPage(
+          const QueueLibraryDbQuery(includeSingleTrackAlbums: true),
+        )).rows,
+        hasLength(6),
+      );
+      final filtered = (await store.albumPage(
+        const QueueLibraryDbQuery(
+          source: 'downloaded',
+          metadata: 'missing-replaygain',
+        ),
+      )).rows;
+      final downloaded = filtered.singleWhere(
+        (row) => row['album_key'] == 'downloaded|artist',
+      );
+      expect(downloaded['track_count'], 1);
+      expect(downloaded['sort_added'], 900);
+    },
+  );
+
+  test(
+    'unfiltered local album query removes the second inventory pass',
+    () async {
+      await db.execute('''
+      WITH RECURSIVE numbered(value) AS (
+        SELECT 1 UNION ALL SELECT value + 1 FROM numbered WHERE value < 20000
+      )
+      INSERT INTO library (id, source_id, file_path, track_name, artist_name,
+        album_name, album_key, track_name_norm, album_name_norm, album_artist_norm, sort_added, scanned_at)
+      SELECT 'bulk-' || value, 'legacy', '/bulk-' || value || '.flac',
+        'Song', 'Artist', 'Album ' || (value / 10), 'bulk-album-' || (value / 10),
+        'song', 'album ' || (value / 10), 'artist', value, '2026-01-01' FROM numbered
+    ''');
+      await db.execute('''
+      INSERT INTO library_path_keys (item_id, path_key)
+      SELECT id, file_path FROM library WHERE id LIKE 'bulk-%'
+    ''');
+      final recorded = _AlbumQueryDatabase(db);
+      final albums = LibraryQueueStore(
+        recorded,
+        historyFts: false,
+        localFts: false,
+      );
+      final fast = await albums.albumPage(
+        const QueueLibraryDbQuery(source: 'local', limit: 40),
+      );
+      final fastSql = recorded.sql;
+      final fastArgs = recorded.args;
+      final original = await albums.albumPage(
+        const QueueLibraryDbQuery(
+          source: 'local',
+          limit: 40,
+          quality: 'unrecognized',
+        ),
+      );
+      final originalSql = recorded.sql;
+      final originalArgs = recorded.args;
+      expect(fast.rows, original.rows);
+      final fastPlan = await db.rawQuery(
+        'EXPLAIN QUERY PLAN $fastSql',
+        fastArgs,
+      );
+      final originalPlan = await db.rawQuery(
+        'EXPLAIN QUERY PLAN $originalSql',
+        originalArgs,
+      );
+      int duplicateChecks(List<Map<String, Object?>> plan) => plan
+          .where(
+            (step) => (step['detail'] as String).contains(
+              'CORRELATED SCALAR SUBQUERY',
+            ),
+          )
+          .length;
+      expect(duplicateChecks(fastPlan), 1);
+      expect(duplicateChecks(originalPlan), 2);
     },
   );
 
