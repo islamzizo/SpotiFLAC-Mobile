@@ -80,6 +80,9 @@ fn execute(
             check,
         ),
         "parse_network_listing" => crate::native_listing::execute(request, Some(bytes)),
+        "parse_playlist" | "build_m3u" => {
+            crate::native_playlists::execute(request, Some(bytes), check)
+        }
         "write_id3v23_lyrics" | "build_metadata_picture" => {
             crate::native_id3::execute(request, Some(bytes), check)
         }

@@ -1,11 +1,32 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/models/track.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 final _log = AppLogger('M3uPlaylist');
+
+String _buildM3uInBackground(List<Map<String, dynamic>> entries) =>
+    M3uPlaylistService.buildM3u8Content(
+      entries
+          .map(
+            (entry) => M3uExportEntry(
+              track: Track(
+                id: '',
+                name: entry['name'] as String,
+                artistName: entry['artist'] as String,
+                albumName: '',
+                duration: entry['duration'] as int,
+              ),
+              path: entry['path'] as String,
+            ),
+          )
+          .toList(growable: false),
+    );
 
 class M3uExportEntry {
   final Track track;
@@ -18,10 +39,10 @@ class M3uPlaylistService {
   /// Parses M3U/M3U8 content into tracks for the import pipeline. EXTINF
   /// display text is split on the first " - " into artist and title; path
   /// lines without EXTINF fall back to the file name stem.
-  static List<Track> parseM3u(String content) {
+  static List<Track> parseM3u(String content, {int? idSeed}) {
     final tracks = <Track>[];
     final lines = content.split(RegExp(r'\r\n|\r|\n'));
-    final baseId = DateTime.now().millisecondsSinceEpoch;
+    final baseId = idSeed ?? DateTime.now().millisecondsSinceEpoch;
 
     int? pendingDuration;
     String? pendingDisplay;
@@ -137,14 +158,48 @@ class M3uPlaylistService {
     String playlistName,
     String content,
   ) async {
+    final file = await _exportFile(playlistName);
+    await file.writeAsString(content);
+    return file;
+  }
+
+  /// Serialize directly to a native worker file; Flutter only sends the fields
+  /// represented in M3U, rather than an encoded playlist string.
+  static Future<File> writeExportEntries(
+    String playlistName,
+    List<M3uExportEntry> entries,
+  ) async {
+    final file = await _exportFile(playlistName);
+    final rows = entries
+        .map(
+          (entry) => {
+            'name': entry.track.name,
+            'artist': entry.track.artistName,
+            'duration': entry.track.duration,
+            'path': entry.path,
+          },
+        )
+        .toList(growable: false);
+    try {
+      await PlatformBridge.runNativeDataJob({
+        'operation': 'build_m3u',
+        'output_path': file.path,
+        'entries': rows,
+      });
+    } on MissingPluginException {
+      final content = await compute(_buildM3uInBackground, rows);
+      await file.writeAsString(content);
+    }
+    return file;
+  }
+
+  static Future<File> _exportFile(String playlistName) async {
     final dir = await getTemporaryDirectory();
     final safeName = playlistName
         .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         .trim();
-    final file = File(
+    return File(
       p.join(dir.path, '${safeName.isEmpty ? 'playlist' : safeName}.m3u8'),
     );
-    await file.writeAsString(content);
-    return file;
   }
 }

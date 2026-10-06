@@ -14,6 +14,7 @@ mod metadata;
 mod native_id3;
 mod native_listing;
 mod native_lyrics;
+mod native_playlists;
 mod native_xml;
 mod network_tags;
 mod progress;

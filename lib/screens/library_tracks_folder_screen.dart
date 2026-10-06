@@ -118,9 +118,9 @@ class _LibraryTracksFolderScreenState
         return;
       }
 
-      final file = await M3uPlaylistService.writeExportFile(
+      final file = await M3uPlaylistService.writeExportEntries(
         title,
-        M3uPlaylistService.buildM3u8Content(exportEntries),
+        exportEntries,
       );
       messenger.showSnackBar(
         SnackBar(
