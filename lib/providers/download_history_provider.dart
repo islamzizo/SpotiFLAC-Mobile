@@ -426,35 +426,35 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     // Serialize with reloads so a snapshot read before deletion cannot restore
     // the removed entries after both indexes have been cleaned.
     return _enqueueHistoryWrite(() async {
-      await removeManyFromHistory(await _db.getPhysicalFileIds(paths));
+      await _removePersistedHistoryItems(await _db.getPhysicalFileIds(paths));
     });
   }
 
   Future<void> removeManyFromHistory(Iterable<String> ids) async {
+    try {
+      await _removePersistedHistoryItems(ids);
+    } catch (error, stack) {
+      _historyLog.e('Failed to delete from database: $error', error, stack);
+    }
+  }
+
+  Future<void> _removePersistedHistoryItems(Iterable<String> ids) async {
     final removedIds = ids.toSet();
     if (removedIds.isEmpty) return;
     // Persist first: a failed deletion must not invalidate every Library view
     // or silently remove an entry from the visible history snapshot.
-    try {
-      final deletedCount = await _db.deleteByIds(removedIds.toList());
-      if (deletedCount == 0) return;
-      state = state.copyWith(
-        items: state.items
-            .where((item) => !removedIds.contains(item.id))
-            .toList(),
-        totalCount: (state.totalCount - deletedCount).clamp(
-          0,
-          state.totalCount,
-        ),
-        lookupItems: state.lookupItems
-            .where((item) => !removedIds.contains(item.id))
-            .toList(growable: false),
-        loadedIndexVersion: state.loadedIndexVersion + 1,
-      );
-    } catch (error) {
-      _historyLog.e('Failed to delete from database: $error');
-      rethrow;
-    }
+    final deletedCount = await _db.deleteByIds(removedIds.toList());
+    if (deletedCount == 0) return;
+    state = state.copyWith(
+      items: state.items
+          .where((item) => !removedIds.contains(item.id))
+          .toList(),
+      totalCount: (state.totalCount - deletedCount).clamp(0, state.totalCount),
+      lookupItems: state.lookupItems
+          .where((item) => !removedIds.contains(item.id))
+          .toList(growable: false),
+      loadedIndexVersion: state.loadedIndexVersion + 1,
+    );
   }
 
   DownloadHistoryItem? getBySpotifyId(String spotifyId) {
