@@ -6,9 +6,11 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/services/history_database.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/sqlite_native_snapshot.dart';
 import 'package:spotiflac_android/services/user_profile_store.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -175,18 +177,7 @@ class BackupService {
       var historyCount = 0;
       if (includeHistory && PlatformBridge.supportsCoreBackend) {
         final database = await HistoryDatabase.instance.database;
-        final result = await PlatformBridge.runNativeDataJob({
-          'operation': 'backup_history_export',
-          'history_path': database.path,
-          'ndjson_path': historyFile.path,
-          'platform': Platform.isAndroid ? 'android' : 'ios',
-          if (Platform.isIOS)
-            'documents_path': (await getApplicationDocumentsDirectory()).path,
-        });
-        if (result['published'] != true || result['count'] is! int) {
-          throw const FormatException('Incomplete native history backup');
-        }
-        historyCount = result['count'] as int;
+        historyCount = await exportNativeHistory(database, historyFile.path);
       } else {
         var offset = 0;
         final historySink = historyFile.openWrite();
@@ -349,25 +340,14 @@ class BackupService {
     return bundle;
   }
 
-  /// Called inside the history notifier's write queue. The native importer
-  /// validates and stages the complete input before replacing the live index.
+  /// Called inside the history notifier's write queue. Native work uses a
+  /// private database; the live SQLite owner publishes the complete result.
   static Future<void> restoreHistory(BackupBundle bundle) async {
     if (!bundle.hasHistory) return;
     final database = await HistoryDatabase.instance.database;
     if (PlatformBridge.supportsCoreBackend &&
         bundle._historyNdjsonPath != null) {
-      final result = await PlatformBridge.runNativeDataJob({
-        'operation': 'backup_history_import',
-        'history_path': database.path,
-        'ndjson_path': bundle._historyNdjsonPath,
-        if (bundle._historyCount != null)
-          'expected_count': bundle._historyCount,
-        'platform': Platform.isAndroid ? 'android' : 'ios',
-        'mode': 'replace',
-      });
-      if (result['committed'] != true) {
-        throw const FormatException('Incomplete native history restore');
-      }
+      await restoreNativeHistory(database, bundle);
       return;
     }
     // Desktop and legacy in-memory callers retain the established codec.
@@ -380,6 +360,101 @@ class BackupService {
       batch = <Map<String, dynamic>>[];
     }
     if (batch.isNotEmpty) await HistoryDatabase.instance.upsertBatch(batch);
+  }
+
+  @visibleForTesting
+  static Future<int> exportNativeHistory(Database database, String path) async {
+    final staging = await Directory.systemTemp.createTemp('history-export-');
+    var detached = true;
+    try {
+      final snapshotPath = p.join(staging.path, 'history.db');
+      await createNativeSqliteSnapshot(
+        database,
+        snapshotPath,
+        tables: const ['history'],
+        version: HistoryDatabase.schemaVersion,
+      );
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'backup_history_export',
+        'history_path': snapshotPath,
+        'ndjson_path': path,
+        'platform': Platform.isAndroid ? 'android' : 'ios',
+        if (Platform.isIOS)
+          'documents_path': (await getApplicationDocumentsDirectory()).path,
+      });
+      if (result['published'] != true || result['count'] is! int) {
+        throw const FormatException('Incomplete native history backup');
+      }
+      return result['count'] as int;
+    } on NativeSqliteSnapshotDetachException {
+      detached = false;
+      _log.w('Retaining history export staging after a failed database detach');
+      rethrow;
+    } finally {
+      if (detached) {
+        try {
+          await staging.delete(recursive: true);
+        } on FileSystemException catch (error) {
+          _log.w('Could not remove history export staging: $error');
+        }
+      }
+    }
+  }
+
+  @visibleForTesting
+  static Future<void> restoreNativeHistory(
+    Database database,
+    BackupBundle bundle,
+  ) async {
+    final staging = await Directory.systemTemp.createTemp('history-restore-');
+    var detached = true;
+    try {
+      final snapshotPath = p.join(staging.path, 'history.db');
+      await createNativeSqliteSnapshot(
+        database,
+        snapshotPath,
+        tables: const ['history', 'history_path_keys'],
+        version: HistoryDatabase.schemaVersion,
+        copyRows: false,
+      );
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'backup_history_import',
+        'history_path': snapshotPath,
+        'ndjson_path': bundle._historyNdjsonPath,
+        if (bundle._historyCount != null)
+          'expected_count': bundle._historyCount,
+        'platform': Platform.isAndroid ? 'android' : 'ios',
+        'mode': 'replace',
+      });
+      if (result['committed'] != true) {
+        throw const FormatException('Incomplete native history restore');
+      }
+      detached = await replaceTablesFromNativeSnapshot(
+        database,
+        snapshotPath,
+        tables: const ['history', 'history_path_keys'],
+        deleteOrder: const ['history_path_keys', 'history'],
+      );
+      if (!detached) {
+        _log.w(
+          'History restored; retaining staging after a failed database detach',
+        );
+      }
+    } on NativeSqliteSnapshotDetachException {
+      detached = false;
+      _log.w(
+        'Retaining history restore staging after a failed database detach',
+      );
+      rethrow;
+    } finally {
+      if (detached) {
+        try {
+          await staging.delete(recursive: true);
+        } on FileSystemException catch (error) {
+          _log.w('Could not remove history restore staging: $error');
+        }
+      }
+    }
   }
 
   static Future<bool> _hasZipHeader(File file) async {

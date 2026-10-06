@@ -8,6 +8,7 @@ import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/services/collection_restore_codec.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
+import 'package:spotiflac_android/services/sqlite_native_snapshot.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 final _log = AppLogger('LibraryCollectionsDb');
@@ -41,6 +42,7 @@ class LibraryCollectionsSnapshot {
 }
 
 class LibraryCollectionsDatabase {
+  static int _restoreAttachmentSequence = 0;
   static final LibraryCollectionsDatabase instance =
       LibraryCollectionsDatabase._init();
   static final sqlite.SingleFlightInitializer<Database> _database =
@@ -511,6 +513,7 @@ class LibraryCollectionsDatabase {
       final temporary = await Directory(
         (await getTemporaryDirectory()).path,
       ).createTemp('collection-restore-');
+      var detached = true;
       try {
         final path = '${temporary.path}/commands.ndjson';
         final count = await writeCollectionRestoreCommands(
@@ -518,20 +521,86 @@ class LibraryCollectionsDatabase {
           collectionsJson,
           restoreTime,
         );
+        // The native backend bundles its own SQLite. Give it a private file
+        // after sqflite closes that file; only the database owner publishes
+        // into the live database, preserving its WAL and connection caches.
+        final stagedPath = '${temporary.path}/$_dbFileName';
+        final stagedDatabase = await openDatabase(
+          stagedPath,
+          version: _dbVersion,
+          onConfigure: (staged) => staged.execute('PRAGMA foreign_keys=ON'),
+          onCreate: instance._createDb,
+        );
+        detached = false;
+        await stagedDatabase.close();
+        detached = true;
         final result = await PlatformBridge.runNativeDataJob({
           'operation': 'backup_collections_import',
-          'collections_path': db.path,
+          'collections_path': stagedPath,
           'ndjson_path': path,
           'expected_count': count,
         });
         if (result['committed'] != true) {
           throw const FormatException('Incomplete collection restore');
         }
-      } finally {
+        final alias = 'collection_restore_${_restoreAttachmentSequence++}';
+        await db.execute('ATTACH DATABASE ? AS $alias', [stagedPath]);
+        var committed = false;
         try {
-          await temporary.delete(recursive: true);
-        } on FileSystemException catch (error) {
-          _log.w('Could not remove collection restore staging: $error');
+          await db.transaction((txn) async {
+            for (final table in [
+              _tablePlaylistTracks,
+              _tablePlaylists,
+              _tableWishlist,
+              _tableLoved,
+              _tableFavoriteArtists,
+            ]) {
+              await txn.delete(table);
+            }
+            for (final (table, columns) in [
+              (_tableWishlist, 'track_key,track_json,added_at'),
+              (_tableLoved, 'track_key,track_json,added_at'),
+              (_tableFavoriteArtists, 'artist_key,artist_json,added_at'),
+              (
+                _tablePlaylists,
+                'id,name,cover_image_path,created_at,updated_at',
+              ),
+              (
+                _tablePlaylistTracks,
+                'playlist_id,track_key,track_json,added_at',
+              ),
+            ]) {
+              await txn.execute(
+                'INSERT INTO main.$table($columns) '
+                'SELECT $columns FROM $alias.$table ORDER BY rowid',
+              );
+            }
+          });
+          committed = true;
+        } finally {
+          try {
+            await detachNativeSqliteSnapshot(db, alias, stagedPath);
+          } on NativeSqliteSnapshotDetachException {
+            detached = false;
+            if (!committed) rethrow;
+            _log.w(
+              'Collections restored; retaining staging after a failed database detach',
+            );
+          }
+        }
+      } on NativeSqliteSnapshotDetachException {
+        detached = false;
+        _log.w(
+          'Retaining collection restore staging after a failed database detach',
+        );
+        rethrow;
+      } finally {
+        if (detached) {
+          try {
+            await temporary.delete(recursive: true);
+          } on FileSystemException catch (error) {
+            _log.w('Could not remove collection restore staging: $error');
+          }
         }
       }
       _log.i('Restored collections from backup');

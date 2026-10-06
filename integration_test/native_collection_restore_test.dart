@@ -153,17 +153,41 @@ void main() {
         nowIso: _date,
       );
       expect(await _digest(db), oldDigest);
+      final changed = await _fixture(21);
+      await LibraryCollectionsDatabase.replaceDatabaseFromBackup(
+        db,
+        changed,
+        nowIso: _date,
+      );
+      final changedDigest = await _digest(db);
+      expect(changedDigest, isNot(oldDigest));
+      expect(await db.rawQuery('PRAGMA quick_check'), [
+        {'quick_check': 'ok'},
+      ]);
+      await _legacyRestore(db, input);
+      expect(await _digest(db), oldDigest);
       final spool = '${root.path}/commands.ndjson';
       final count = await writeCollectionRestoreCommands(spool, input, _date);
+      final isolated = await Directory('${root.path}/rejected').create();
+      final isolatedPath = '${isolated.path}/library_collections.db';
+      final isolatedDatabase = await _database(isolatedPath);
+      await _legacyRestore(isolatedDatabase, input);
+      await isolatedDatabase.close();
       await expectLater(
         PlatformBridge.runNativeDataJob({
           'operation': 'backup_collections_import',
-          'collections_path': db.path,
+          'collections_path': isolatedPath,
           'ndjson_path': spool,
           'expected_count': count + 1,
         }),
         throwsA(isA<Exception>()),
       );
+      final rejectedDatabase = await _database(isolatedPath);
+      try {
+        expect(await _digest(rejectedDatabase), oldDigest);
+      } finally {
+        await rejectedDatabase.close();
+      }
       expect(await _digest(db), oldDigest);
       await LibraryCollectionsDatabase.replaceDatabaseFromBackup(
         db,
@@ -173,6 +197,9 @@ void main() {
       for (final table in _tables.values) {
         expect(await db.query(table), isEmpty);
       }
+      expect(await db.rawQuery('PRAGMA quick_check'), [
+        {'quick_check': 'ok'},
+      ]);
     },
   );
 
