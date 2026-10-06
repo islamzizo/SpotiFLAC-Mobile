@@ -46,6 +46,7 @@ class _NetworkStorageScreenState extends ConsumerState<NetworkStorageScreen> {
   bool _adding = false;
   bool _added = false;
   bool _selectingDestination = false;
+  int _loadGeneration = 0;
 
   Future<void> _useForDownloads() async {
     final connection = widget.connection;
@@ -123,7 +124,20 @@ class _NetworkStorageScreenState extends ConsumerState<NetworkStorageScreen> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(covariant NetworkStorageScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.connection != widget.connection ||
+        oldWidget.path != widget.path ||
+        oldWidget.service != widget.service) {
+      _added = false;
+      _load();
+    }
+  }
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
+    bool isCurrent() => mounted && generation == _loadGeneration;
     setState(() {
       _loading = true;
       _failed = false;
@@ -132,18 +146,18 @@ class _NetworkStorageScreenState extends ConsumerState<NetworkStorageScreen> {
       final connection = widget.connection;
       if (connection == null) {
         final connections = await service.connections();
-        if (mounted) _connections = connections;
+        if (isCurrent()) _connections = connections;
       } else {
         final entries = await service.list(connection, widget.path);
-        if (mounted) _entries = entries;
+        if (isCurrent()) _entries = entries;
       }
     } catch (error) {
-      if (mounted) {
+      if (isCurrent()) {
         _failed = true;
         _failure = classifyNetworkStorageError(error);
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (isCurrent()) setState(() => _loading = false);
     }
   }
 

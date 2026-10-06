@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
@@ -12,6 +13,59 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_action_button.dart';
 
 void main() {
+  for (final olderFails in [false, true]) {
+    testWidgets('latest folder refresh wins (older fails: $olderFails)', (
+      tester,
+    ) async {
+      final service = _DelayedListings();
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: NetworkStorageScreen(
+              service: service,
+              connection: const NetworkConnection(
+                id: 'nas',
+                name: 'NAS',
+                protocol: NetworkProtocol.webdav,
+                address: 'https://nas.test/music/',
+              ),
+            ),
+          ),
+        ),
+      );
+      service.requests.single.complete([
+        const NetworkEntry('Initial.flac', 'Initial.flac'),
+      ]);
+      await tester.pumpAndSettle();
+      final refresh = find.byTooltip('Refresh');
+      // Two taps before the disabled state is painted can overlap requests.
+      await tester.tap(refresh);
+      await tester.tap(refresh);
+      expect(service.requests, hasLength(3));
+      service.requests.last.complete([
+        const NetworkEntry('Latest.flac', 'Latest.flac'),
+      ]);
+      await tester.pumpAndSettle();
+      if (olderFails) {
+        service.requests[1].completeError(const SocketException('offline'));
+      } else {
+        service.requests[1].complete([
+          const NetworkEntry('Stale.flac', 'Stale.flac'),
+        ]);
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('Latest.flac'), findsOneWidget);
+      expect(find.text('Stale.flac'), findsNothing);
+      expect(
+        find.textContaining('The server could not be reached.'),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('failed sign-in stays on the form with a specific error', (
     tester,
   ) async {
@@ -241,5 +295,20 @@ class _NetworkFixture extends NetworkStorageService {
     return path.isEmpty
         ? [const NetworkEntry('Album/', 'Album', directory: true)]
         : [const NetworkEntry('Album/Song.flac', 'Song.flac')];
+  }
+}
+
+class _DelayedListings extends NetworkStorageService {
+  _DelayedListings() : super(read: () async => null, write: (_) async {});
+  final requests = <Completer<List<NetworkEntry>>>[];
+
+  @override
+  Future<List<NetworkEntry>> list(
+    NetworkConnection connection, [
+    String path = '',
+  ]) {
+    final request = Completer<List<NetworkEntry>>();
+    requests.add(request);
+    return request.future;
   }
 }
