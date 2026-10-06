@@ -92,6 +92,9 @@ Future<void> resetRestoredInstallationSettings(SharedPreferences prefs) async {
 }
 
 class SettingsNotifier extends Notifier<AppSettings> {
+  SettingsNotifier({Future<SharedPreferences> Function()? preferences})
+    : _loadPreferences = preferences ?? SharedPreferences.getInstance;
+
   static final RegExp _isoRegionPattern = RegExp(r'^[A-Z]{2}$');
   static const Set<String> _searchTabValues = {
     'all',
@@ -119,9 +122,10 @@ class SettingsNotifier extends Notifier<AppSettings> {
     2000,
   };
 
-  Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
+  final Future<SharedPreferences> Function() _loadPreferences;
+  Future<SharedPreferences> get _prefs => _loadPreferences();
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-  bool _isSavingSettings = false;
+  Future<void>? _saveSettingsFuture;
   bool _saveQueued = false;
   String? _pendingSettingsJson;
   Future<void>? _loadSettingsFuture;
@@ -302,15 +306,22 @@ class SettingsNotifier extends Notifier<AppSettings> {
     }
   }
 
-  Future<void> _saveSettings() async {
+  Future<void> _saveSettings() {
     _pendingSettingsJson = jsonEncode(state.toJson());
 
-    if (_isSavingSettings) {
+    final activeSave = _saveSettingsFuture;
+    if (activeSave != null) {
       _saveQueued = true;
-      return;
+      return activeSave;
     }
 
-    _isSavingSettings = true;
+    final saved = Completer<void>();
+    _saveSettingsFuture = saved.future;
+    unawaited(_drainSettingsSave(saved));
+    return saved.future;
+  }
+
+  Future<void> _drainSettingsSave(Completer<void> saved) async {
     try {
       final prefs = await _prefs;
       do {
@@ -323,7 +334,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
     } catch (e) {
       _log.e('Failed to save settings: $e');
     } finally {
-      _isSavingSettings = false;
+      _saveSettingsFuture = null;
+      saved.complete();
     }
   }
 
