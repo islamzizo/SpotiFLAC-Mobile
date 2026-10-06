@@ -11,9 +11,9 @@ import 'package:spotiflac_android/controllers/metadata_editor_controller.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
-import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/metadata_cover_resources.dart';
 import 'package:spotiflac_android/services/metadata_autofill_service.dart';
+import 'package:spotiflac_android/services/metadata_persistence_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/theme/mornye_icons.dart';
@@ -78,6 +78,7 @@ class _EditMetadataSheetState extends State<EditMetadataSheet> {
 
   bool _saving = false;
   final _covers = MetadataCoverResources();
+  late final _persistence = MetadataPersistenceService(covers: _covers);
   final _autofill = MetadataAutofillService();
   bool _showAdvanced = false;
   bool _showAutoFill = false;
@@ -928,193 +929,41 @@ class _EditMetadataSheetState extends State<EditMetadataSheet> {
   Future<void> _save() async {
     if (_saving || _fetching || _fetchingMusicBrainz) return;
     setState(() => _saving = true);
-    final releaseCoverLease = _covers.retain();
-    final metadata = _form.saveMetadata(artistTagMode: widget.artistTagMode);
-    final noCoverMessage = context.l10n.trackCoverNoEmbeddedArt;
-    final resizeFailedMessage = context.l10n.trackCoverResizeFailed;
-    String? resizedCoverTempDir;
-    String? extractedCoverTempDir;
     try {
-      String? coverPathForSave = _selectedCoverPath;
-      final requestedCoverDimension = _coverMaxDimension;
-      if (requestedCoverDimension != null) {
-        final sourceCoverPath = _selectedCoverPath ?? _currentCoverPath;
-        if (!_hasValue(sourceCoverPath)) {
-          throw StateError(noCoverMessage);
-        }
-        try {
-          final resized = await _covers.resize(
-            sourceCoverPath!,
-            requestedCoverDimension,
-          );
-          resizedCoverTempDir = resized.tempDir;
-          coverPathForSave = resized.path;
-        } catch (_) {
-          throw StateError(resizeFailedMessage);
-        }
-      }
-
-      metadata['cover_path'] = coverPathForSave ?? '';
-
-      final result = await PlatformBridge.editFileMetadata(
-        widget.filePath,
-        metadata,
+      final result = await _persistence.save(
+        MetadataSaveRequest(
+          filePath: widget.filePath,
+          metadata: _form.saveMetadata(artistTagMode: widget.artistTagMode),
+          artistTagMode: widget.artistTagMode,
+          selectedCoverPath: _selectedCoverPath,
+          currentCoverPath: _currentCoverPath,
+          coverMaxDimension: _coverMaxDimension,
+        ),
       );
-
-      if (result['error'] != null) {
-        if (mounted) {
-          _showSheetSnackBar(
-            context.friendlyError(
-              result['error'],
-              fallback: context.l10n.metadataSaveFailedFfmpeg,
-            ),
-          );
-        }
+      if (!mounted) return;
+      if (result.failure == null) {
+        Navigator.pop(context, true);
         return;
       }
-
-      final method = result['method'] as String?;
-
-      if (method == 'ffmpeg') {
-        // For SAF files, Kotlin returns temp_path + saf_uri
-        final tempPath = result['temp_path'] as String?;
-        final safUri = result['saf_uri'] as String?;
-        final ffmpegTarget = tempPath ?? widget.filePath;
-
-        final lower = widget.filePath.toLowerCase();
-        final isMp3 = lower.endsWith('.mp3');
-        final isOpus = lower.endsWith('.opus') || lower.endsWith('.ogg');
-        final isM4A = lower.endsWith('.m4a') || lower.endsWith('.aac');
-
-        // Always include all known fields so -map_metadata 0 + explicit
-        // -metadata flags can both preserve custom tags AND clear fields
-        // the user emptied.
-        final vorbisMap = <String, String>{
-          'TITLE': metadata['title'] ?? '',
-          'ARTIST': metadata['artist'] ?? '',
-          'ALBUM': metadata['album'] ?? '',
-          'ALBUMARTIST': metadata['album_artist'] ?? '',
-          'DATE': metadata['date'] ?? '',
-          'TRACKNUMBER':
-              (metadata['track_number']?.isNotEmpty == true &&
-                  metadata['track_number'] != '0')
-              ? (metadata['track_total']?.isNotEmpty == true &&
-                        metadata['track_total'] != '0'
-                    ? '${metadata['track_number']}/${metadata['track_total']}'
-                    : metadata['track_number']!)
-              : '',
-          'DISCNUMBER':
-              (metadata['disc_number']?.isNotEmpty == true &&
-                  metadata['disc_number'] != '0')
-              ? (metadata['disc_total']?.isNotEmpty == true &&
-                        metadata['disc_total'] != '0'
-                    ? '${metadata['disc_number']}/${metadata['disc_total']}'
-                    : metadata['disc_number']!)
-              : '',
-          'GENRE': metadata['genre'] ?? '',
-          'ISRC': metadata['isrc'] ?? '',
-          'LYRICS': metadata['lyrics'] ?? '',
-          'UNSYNCEDLYRICS': metadata['lyrics'] ?? '',
-          'ORGANIZATION': metadata['label'] ?? '',
-          'COPYRIGHT': metadata['copyright'] ?? '',
-          'COMPOSER': metadata['composer'] ?? '',
-          'COMMENT': metadata['comment'] ?? '',
-          'ITUNESADVISORY': metadata['explicit'] ?? '',
-          'RELEASETYPE': metadata['album_type'] ?? '',
-          'BARCODE': metadata['upc'] ?? '',
-          'COMPILATION': metadata['compilation'] ?? '',
-        };
-        try {
-          final existingMetadata = await PlatformBridge.readFileMetadata(
-            ffmpegTarget,
-          );
-          // Preserve ReplayGain tags if present — these are computed once
-          // during download and should survive manual metadata edits.
-          final rgFields = <String, String>{
-            'REPLAYGAIN_TRACK_GAIN':
-                existingMetadata['replaygain_track_gain']?.toString() ?? '',
-            'REPLAYGAIN_TRACK_PEAK':
-                existingMetadata['replaygain_track_peak']?.toString() ?? '',
-            'REPLAYGAIN_ALBUM_GAIN':
-                existingMetadata['replaygain_album_gain']?.toString() ?? '',
-            'REPLAYGAIN_ALBUM_PEAK':
-                existingMetadata['replaygain_album_peak']?.toString() ?? '',
-          };
-          rgFields.forEach((key, value) {
-            if (value.isNotEmpty) {
-              vorbisMap[key] = value;
-            }
-          });
-        } catch (_) {
-          // Lyrics/ReplayGain preservation is best-effort.
-        }
-
-        String? existingCoverPath = coverPathForSave ?? _currentCoverPath;
-        if (existingCoverPath == null || existingCoverPath.isEmpty) {
-          // Preserve current embedded cover when user does not pick a new one.
-          final extractedCover = await _covers.extract(ffmpegTarget);
-          existingCoverPath = extractedCover?.path;
-          extractedCoverTempDir = extractedCover?.tempDir;
-        }
-
-        String? ffmpegResult;
-        if (isMp3) {
-          ffmpegResult = await FFmpegService.embedMetadataToMp3(
-            mp3Path: ffmpegTarget,
-            coverPath: existingCoverPath,
-            metadata: vorbisMap,
-            preserveMetadata: true,
-          );
-        } else if (isM4A) {
-          ffmpegResult = await FFmpegService.embedMetadataToM4a(
-            m4aPath: ffmpegTarget,
-            coverPath: existingCoverPath,
-            metadata: vorbisMap,
-            preserveMetadata: true,
-          );
-        } else if (isOpus) {
-          ffmpegResult = await FFmpegService.embedMetadataToOpus(
-            opusPath: ffmpegTarget,
-            coverPath: existingCoverPath,
-            metadata: vorbisMap,
-            artistTagMode: widget.artistTagMode,
-            preserveMetadata: true,
-          );
-        }
-
-        if (ffmpegResult == null) {
-          if (mounted) {
-            _showSheetSnackBar(context.l10n.metadataSaveFailedFfmpeg);
-          }
-          return;
-        }
-
-        if (tempPath != null && safUri != null) {
-          final ok = await PlatformBridge.writeTempToSaf(ffmpegResult, safUri);
-          if (!ok) {
-            if (mounted) {
-              _showSheetSnackBar(context.l10n.metadataSaveFailedStorage);
-            }
-            return;
-          }
-        }
-      }
-
-      if (mounted) {
-        Navigator.pop(context, true);
-      }
-    } catch (e) {
-      if (mounted) {
-        _showSheetSnackBar(
-          context.l10n.snackbarError(context.friendlyError(e)),
-        );
-      }
+      final l10n = context.l10n;
+      _showSheetSnackBar(switch (result.failure!) {
+        MetadataSaveFailure.backend => context.friendlyError(
+          result.error,
+          fallback: l10n.metadataSaveFailedFfmpeg,
+        ),
+        MetadataSaveFailure.ffmpeg => l10n.metadataSaveFailedFfmpeg,
+        MetadataSaveFailure.storage => l10n.metadataSaveFailedStorage,
+        MetadataSaveFailure.noCover => l10n.snackbarError(
+          l10n.trackCoverNoEmbeddedArt,
+        ),
+        MetadataSaveFailure.resize => l10n.snackbarError(
+          l10n.trackCoverResizeFailed,
+        ),
+        MetadataSaveFailure.unexpected => l10n.snackbarError(
+          context.friendlyError(result.error),
+        ),
+      });
     } finally {
-      await _covers.release(extractedCoverTempDir);
-      if (resizedCoverTempDir != null) {
-        await _covers.release(resizedCoverTempDir);
-      }
-      await releaseCoverLease();
       if (mounted) setState(() => _saving = false);
     }
   }
