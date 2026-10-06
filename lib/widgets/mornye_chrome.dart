@@ -2,6 +2,7 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/mornye_selection_pill.dart';
@@ -69,7 +70,7 @@ class MornyeGlassPanel extends ConsumerWidget {
     this.tintColor,
     this.blurEnabled = true,
     this.highlightBorder = false,
-  });
+  }) : _composedBackdrop = false;
 
   const MornyeGlassPanel.overlay({
     super.key,
@@ -81,7 +82,8 @@ class MornyeGlassPanel extends ConsumerWidget {
     this.tintColor,
     this.blurEnabled = true,
     this.highlightBorder = false,
-  }) : strongTint = true;
+  }) : strongTint = true,
+       _composedBackdrop = true;
 
   final Widget child;
   final double radius;
@@ -92,20 +94,27 @@ class MornyeGlassPanel extends ConsumerWidget {
   final Color? tintColor;
   final bool blurEnabled;
   final bool highlightBorder;
+  final bool _composedBackdrop;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) => MornyeGlass.navigation(
-    radius: radius,
-    firstInGroup: firstInGroup,
-    lastInGroup: lastInGroup,
-    strongTint: strongTint,
-    tintOpacity: tintOpacity,
-    tintColor: tintColor,
-    blurEnabled: blurEnabled && ref.watch(mornyeBlurEnabledProvider),
-    highlightBorder: highlightBorder,
-    // Tile ink must paint above the glass tint rather than beneath it.
-    child: Material(type: MaterialType.transparency, child: child),
-  );
+  Widget build(BuildContext context, WidgetRef ref) {
+    final glass = MornyeGlass.navigation(
+      radius: radius,
+      firstInGroup: firstInGroup,
+      lastInGroup: lastInGroup,
+      strongTint: strongTint,
+      tintOpacity: tintOpacity,
+      tintColor: tintColor,
+      blurEnabled: blurEnabled && ref.watch(mornyeBlurEnabledProvider),
+      highlightBorder: highlightBorder,
+      // Tile ink must paint above the glass tint rather than beneath it.
+      child: Material(type: MaterialType.transparency, child: child),
+    );
+    // One overlay gets its own key: the package composes blur and refraction
+    // into one backdrop read, including while the route moves. Sharing that
+    // key with the page or another overlapping menu would lose their glass.
+    return _composedBackdrop ? LiquidGlassBatch(child: glass) : glass;
+  }
 }
 
 /// Bounded glass: Impeller lenses refract a blurred backdrop, while frosted
