@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
-import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/native_log_source.dart';
 
 const int _maxLogMessageLength = 500;
 const int _maxBufferedLogMessageLength = 4000;
@@ -121,6 +121,7 @@ class LogBuffer extends ChangeNotifier {
   LogBuffer._internal();
 
   static const int maxEntries = 500;
+  static const _nativeLogs = NativeLogSource();
   static const Duration _goLogPollingInterval = Duration(milliseconds: 800);
   final Queue<LogEntry> _entries = Queue<LogEntry>();
   Timer? _goLogTimer;
@@ -131,11 +132,7 @@ class LogBuffer extends ChangeNotifier {
   static bool get loggingEnabled => _loggingEnabled;
   static set loggingEnabled(bool value) {
     _loggingEnabled = value;
-    if (value) {
-      PlatformBridge.setGoLoggingEnabled(true).catchError((_) {});
-    } else {
-      PlatformBridge.setGoLoggingEnabled(false).catchError((_) {});
-    }
+    _nativeLogs.setLoggingEnabled(value).catchError((_) {});
   }
 
   List<LogEntry> get entries => _entries.toList();
@@ -209,7 +206,7 @@ class LogBuffer extends ChangeNotifier {
 
   Future<void> _fetchGoLogs() async {
     try {
-      final result = await PlatformBridge.getGoLogsSince(_lastGoLogIndex);
+      final result = await _nativeLogs.getSince(_lastGoLogIndex);
       final logs = result['logs'] as List<dynamic>? ?? [];
       final nextIndex = result['next_index'] as int? ?? _lastGoLogIndex;
       final keepNonErrorLogs = _loggingEnabled;
@@ -268,7 +265,7 @@ class LogBuffer extends ChangeNotifier {
   void clear() {
     _entries.clear();
     _lastGoLogIndex = 0;
-    PlatformBridge.clearGoLogs().catchError((_) {});
+    _nativeLogs.clear().catchError((_) {});
     notifyListeners();
   }
 

@@ -1726,17 +1726,6 @@ class PlatformBridge {
     );
   }
 
-  static Future<Map<String, dynamic>> getGoLogsSince(int index) async {
-    final result = await _channel.invokeMethod('getLogsSince', {
-      'index': index,
-    });
-    return _decodeRequiredMapResult(result, 'getGoLogsSince');
-  }
-
-  static Future<void> clearGoLogs() async {
-    await _channel.invokeMethod('clearLogs');
-  }
-
   /// Ask the native backend to release unused memory. Best-effort:
   /// safe to call on memory pressure or when the app is backgrounded.
   static Future<void> releaseNativeMemory({bool underPressure = false}) async {
@@ -1753,10 +1742,6 @@ class PlatformBridge {
     try {
       await _channel.invokeMethod('setMetadataLanguage', {'tag': tag});
     } catch (_) {}
-  }
-
-  static Future<void> setGoLoggingEnabled(bool enabled) async {
-    await _channel.invokeMethod('setLoggingEnabled', {'enabled': enabled});
   }
 
   static Future<void> initExtensionSystem(
