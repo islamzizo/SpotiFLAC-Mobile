@@ -655,6 +655,7 @@ class HeaderCircleButton extends ConsumerWidget {
     this.glassTintOpacity,
     this.buttonSize,
     this.iconSize = 22,
+    this.iconWidget,
   });
 
   final IconData icon;
@@ -672,6 +673,7 @@ class HeaderCircleButton extends ConsumerWidget {
   final double? glassTintOpacity;
   final double? buttonSize;
   final double iconSize;
+  final Widget? iconWidget;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -690,13 +692,14 @@ class HeaderCircleButton extends ConsumerWidget {
                 alpha: scheme.brightness == Brightness.dark ? 0.10 : 0.06,
               ),
               onPressed: onPressed,
-              child: Icon(
-                mornyeIconFor(icon),
-                size: iconSize,
-                color: onPressed == null
-                    ? scheme.onSurfaceVariant
-                    : iconColor ?? scheme.primary,
-              ),
+              child: iconWidget ??
+                  Icon(
+                    mornyeIconFor(icon),
+                    size: iconSize,
+                    color: onPressed == null
+                        ? scheme.onSurfaceVariant
+                        : iconColor ?? scheme.primary,
+                  ),
             ),
           ),
         );
@@ -705,7 +708,7 @@ class HeaderCircleButton extends ConsumerWidget {
       final button = IconButton(
         onPressed: onPressed,
         tooltip: tooltip,
-        icon: Icon(mornyeIconFor(icon), size: iconSize),
+        icon: iconWidget ?? Icon(mornyeIconFor(icon), size: iconSize),
         style: IconButton.styleFrom(
           minimumSize: Size.square(buttonSize ?? 44),
           foregroundColor: iconColor ?? scheme.onSurface,
@@ -730,7 +733,7 @@ class HeaderCircleButton extends ConsumerWidget {
     }
     return ExpressiveIconButton(
       onPressed: onPressed,
-      icon: Icon(icon, size: iconSize),
+      icon: iconWidget ?? Icon(icon, size: iconSize),
       tooltip: tooltip,
       size: buttonSize ?? tokens.minTouchTarget,
       backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
