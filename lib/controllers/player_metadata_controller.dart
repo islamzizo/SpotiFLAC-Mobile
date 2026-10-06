@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:spotiflac_android/services/playback_metadata.dart';
@@ -10,14 +12,21 @@ final _log = AppLogger('PlayerMetadata');
 /// Owns file metadata and lyrics for the full player. Requests are scoped to
 /// the current queue item so a late probe cannot replace another track's data.
 class PlayerMetadataController extends ChangeNotifier {
-  PlayerMetadataController({PlaybackMetadataReader? readMetadata})
-    : _readMetadata = readMetadata ?? readPlaybackFileMetadataWithRetry;
+  PlayerMetadataController({
+    PlaybackMetadataReader? readMetadata,
+    Future<ParsedLyrics> Function(String?)? parseLyrics,
+  }) : _readMetadata = readMetadata ?? readPlaybackFileMetadataWithRetry,
+       _parseLyrics = parseLyrics ?? LyricsParser.parseAsyncNative;
 
   final PlaybackMetadataReader _readMetadata;
+  final Future<ParsedLyrics> Function(String?) _parseLyrics;
   (String, String, String?)? _requestKey;
   String? _loadedPath;
   Map<String, dynamic> _fallback = const {};
   int _generation = 0;
+  int _metadataRevision = 0;
+  String _lyricsRaw = '';
+  bool _probePending = false;
   bool _disposed = false;
 
   String? get source => _requestKey?.$2;
@@ -37,9 +46,11 @@ class PlayerMetadataController extends ChangeNotifier {
     if (item == null || source.isEmpty) {
       if (_requestKey == null) return;
       _generation++;
+      _probePending = false;
       _requestKey = null;
       _loadedPath = null;
-      _replaceMetadata(const {});
+      final pending = _replaceMetadata(const {});
+      if (pending != null) await pending;
       return;
     }
     final resolvedSource = item.extras?['resolvedSource']?.toString().trim();
@@ -48,12 +59,14 @@ class PlayerMetadataController extends ChangeNotifier {
     _fallback = Map.unmodifiable(playbackAudioMetadataFromMediaItem(item));
     if (!sameItem) {
       _generation++;
+      _probePending = false;
       _requestKey = key;
       _loadedPath = null;
     }
     if (const {'http', 'https'}.contains(Uri.tryParse(source)?.scheme)) {
       _loadedPath = source;
-      _replaceMetadata(_fallback);
+      final pending = _replaceMetadata(_fallback);
+      if (pending != null) await pending;
       return;
     }
     final path = _metadataPath(source, resolvedSource);
@@ -65,30 +78,86 @@ class PlayerMetadataController extends ChangeNotifier {
       }
       if (loading || _loadedPath == path) return;
     } else {
-      _replaceMetadata(_fallback);
+      final pending = _replaceMetadata(_fallback);
+      // A fallback parse must never postpone the file probe. Its revision
+      // guard discards it as soon as richer metadata supersedes it.
+      if (pending != null) unawaited(pending);
     }
     // Opening the player must not copy an unresolved SAF document. Lyrics
     // requests may inspect it until playback publishes its resolved source.
     if (unresolved && !inspectUnresolvedContentUri) return;
+    _probePending = true;
     _loading = true;
     notifyListeners();
     final generation = _generation;
     try {
       final probed = await _readMetadata(path);
       if (_disposed || generation != _generation) return;
+      _probePending = false;
       _loadedPath = path;
-      _replaceMetadata(mergePlaybackFileMetadata(_fallback, probed));
+      final pending = _replaceMetadata(
+        mergePlaybackFileMetadata(_fallback, probed),
+      );
+      if (pending != null) await pending;
     } catch (error) {
       if (_disposed || generation != _generation) return;
+      _probePending = false;
       _log.w('Failed to read metadata: $error');
-      _replaceMetadata(_fallback);
+      final pending = _replaceMetadata(_fallback);
+      if (pending != null) await pending;
     }
   }
 
-  void _replaceMetadata(Map<String, dynamic> value) {
+  Future<void>? _replaceMetadata(Map<String, dynamic> value) {
+    final revision = ++_metadataRevision;
+    final raw = (value['lyrics'] ?? '').toString();
+    // Empty fallback metadata stays synchronous, so file probes start at the
+    // same point and changing tracks clears the previous lyrics immediately.
+    if (raw.isEmpty) {
+      _publishMetadata(value, ParsedLyrics.empty);
+      return null;
+    }
     _metadata = value.isEmpty ? null : Map.unmodifiable(value);
-    _lyrics = LyricsParser.parse((value['lyrics'] ?? '').toString());
-    _loading = false;
+    if (raw != _lyricsRaw) _lyrics = ParsedLyrics.empty;
+    _loading = true;
+    notifyListeners();
+    return _parseAndReplaceMetadata(value, raw, _generation, revision);
+  }
+
+  Future<void> _parseAndReplaceMetadata(
+    Map<String, dynamic> value,
+    String raw,
+    int generation,
+    int revision,
+  ) async {
+    try {
+      final parsed = await _parseLyrics(raw);
+      if (_disposed ||
+          generation != _generation ||
+          revision != _metadataRevision) {
+        return;
+      }
+      _publishMetadata(value, parsed, raw: raw);
+    } catch (error) {
+      if (_disposed ||
+          generation != _generation ||
+          revision != _metadataRevision) {
+        return;
+      }
+      _log.w('Failed to parse lyrics: $error');
+      _publishMetadata(value, ParsedLyrics.empty);
+    }
+  }
+
+  void _publishMetadata(
+    Map<String, dynamic> value,
+    ParsedLyrics parsed, {
+    String raw = '',
+  }) {
+    _metadata = value.isEmpty ? null : Map.unmodifiable(value);
+    _lyrics = parsed;
+    _lyricsRaw = raw;
+    _loading = _probePending;
     notifyListeners();
   }
 

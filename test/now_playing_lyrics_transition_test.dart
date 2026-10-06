@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:spotiflac_android/controllers/player_metadata_controller.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
@@ -25,6 +26,7 @@ import 'package:video_player/video_player.dart';
 import 'package:spotiflac_android/screens/now_playing_screen.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/theme/app_theme.dart';
+import 'package:spotiflac_android/utils/lyrics_parser.dart';
 import 'package:spotiflac_android/widgets/expressive_icon_button.dart';
 import 'package:spotiflac_android/widgets/expressive_seek_track.dart';
 import 'package:spotiflac_android/widgets/mornye_volume_control.dart';
@@ -54,6 +56,7 @@ void main() {
   late List<double> volumeWrites;
   late Map<String, dynamic> metadataOverrides;
   late List<String> metadataReads;
+  late List<({String? raw, Completer<ParsedLyrics> completion})> lyricsRequests;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
@@ -61,11 +64,20 @@ void main() {
     volumeWrites = [];
     metadataOverrides = {};
     metadataReads = [];
+    lyricsRequests = [];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(secureStorageChannel, (_) async => null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(backendChannel, (call) async {
           if (call.method == 'setScreenAwake') return null;
+          if (call.method == 'runNativeDataJob') {
+            final arguments = (call.arguments as Map).cast<String, dynamic>();
+            final request =
+                jsonDecode(arguments['request_json'] as String) as Map;
+            expect(request['operation'], 'parse_lyrics');
+            final raw = utf8.decode(arguments['bytes'] as List<int>);
+            return jsonEncode(_lyricsDto(LyricsParser.parse(raw)));
+          }
           if (call.method != 'readFileMetadata') {
             fail('Unexpected platform call: ${call.method}');
           }
@@ -127,6 +139,16 @@ void main() {
     );
   }
 
+  NowPlayingScreen playerScreen() => NowPlayingScreen(
+    metadataControllerFactory: () => PlayerMetadataController(
+      parseLyrics: (raw) {
+        final completion = Completer<ParsedLyrics>();
+        lyricsRequests.add((raw: raw, completion: completion));
+        return completion.future;
+      },
+    ),
+  );
+
   Future<void> pumpNowPlaying(
     WidgetTester tester, {
     ThemeData? theme,
@@ -184,12 +206,52 @@ void main() {
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           theme: theme,
-          home:
-              wrapPlayer?.call(const NowPlayingScreen()) ??
-              const NowPlayingScreen(),
+          home: wrapPlayer?.call(playerScreen()) ?? playerScreen(),
         ),
       ),
     );
+  }
+
+  Future<void> completeLyrics(WidgetTester tester) async {
+    await tester.pump();
+    // Start the actual encode/native DTO/hydration pipeline in the real async
+    // zone: futures started under FakeAsync cannot finish isolate messages.
+    while (lyricsRequests.isNotEmpty) {
+      final pending = List.of(lyricsRequests);
+      lyricsRequests.clear();
+      await tester.runAsync(() async {
+        for (final request in pending) {
+          try {
+            request.completion.complete(
+              await LyricsParser.parseAsyncNative(request.raw),
+            );
+          } catch (error, stack) {
+            request.completion.completeError(error, stack);
+          }
+        }
+      });
+      await tester.pump();
+    }
+  }
+
+  Future<int> settlePlayer(
+    WidgetTester tester, [
+    Duration duration = const Duration(milliseconds: 100),
+  ]) async {
+    final deadline = tester.binding.clock.fromNowBy(
+      const Duration(minutes: 10),
+    );
+    var frames = 0;
+    do {
+      if (tester.binding.clock.now().isAfter(deadline)) {
+        fail('Player animations did not settle');
+      }
+      // A track change may start another metadata read during a later frame.
+      await completeLyrics(tester);
+      await tester.pump(duration);
+      frames++;
+    } while (tester.binding.hasScheduledFrame || lyricsRequests.isNotEmpty);
+    return frames;
   }
 
   testWidgets('Material seek wave follows playback, buffering and pause', (
@@ -199,7 +261,7 @@ void main() {
     addTearDown(playback.close);
     await pumpNowPlaying(tester, playbackEvents: playback.stream);
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     for (final state in [
       PlaybackState(playing: true, processingState: AudioProcessingState.ready),
@@ -224,7 +286,7 @@ void main() {
         state.playing && state.processingState == AudioProcessingState.ready,
       );
     }
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(tester.takeException(), isNull);
   });
 
@@ -245,7 +307,7 @@ void main() {
         playback: PlaybackState(queueIndex: 0),
       );
       mediaItems.add(queue.first);
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       if (page != 'player') {
         await tester.tap(
           find.byIcon(
@@ -254,7 +316,7 @@ void main() {
                 : CupertinoIcons.list_bullet,
           ),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
       }
       final cover = find
           .byKey(
@@ -271,11 +333,11 @@ void main() {
       await tester.pump();
       expect(tester.getRect(cover), rect);
       await gesture.up();
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(controller.selected, [1]);
       expect(find.text('Second').hitTestable(), findsOneWidget);
       await tester.drag(cover, const Offset(110, 0));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(controller.selected, [1, 0]);
       expect(find.text('First').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -293,7 +355,7 @@ void main() {
           motionArtwork: artwork,
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final title = tester.getTopLeft(find.text('First').hitTestable()).dy;
         final transport = tester
             .getCenter(
@@ -343,9 +405,9 @@ void main() {
         updatePosition: const Duration(seconds: 30),
       ),
     );
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final list = find.byType(ListView);
     final bounds = tester.getRect(list);
     final scroll = tester.widget<ListView>(list).controller!;
@@ -416,9 +478,9 @@ void main() {
           ),
         );
         mediaItems.add(item('first').copyWith(title: longTitle));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         playbackEvents.add(PlaybackState(playing: true));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
 
         final cover = find.byType(MornyePlayerArtwork);
         final playingCover = tester.getRect(cover);
@@ -450,7 +512,7 @@ void main() {
             inExclusiveRange(playingCover.width * 0.73, playingCover.width),
           );
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final pausedCover = tester.getRect(cover);
         expect(pausedCover.width, closeTo(playingCover.width * 0.73, 0.01));
         expect(pausedCover.center.dx, closeTo(playingCover.center.dx, 0.01));
@@ -459,7 +521,7 @@ void main() {
         expect(tester.getRect(find.byType(MornyeVolumeControl)), volume);
 
         playbackEvents.add(PlaybackState(playing: true));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(tester.getRect(cover).width, closeTo(playingCover.width, 0.01));
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
@@ -480,7 +542,7 @@ void main() {
       ),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final background = tester.widget<MornyePlayerBackground>(
       find.byType(MornyePlayerBackground),
     );
@@ -543,9 +605,9 @@ void main() {
     );
     mediaItems.add(item('many'));
     playback.add(PlaybackState(updatePosition: const Duration(seconds: 140)));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final current = find.text(
       'Line 70 with enough words to wrap across several rows',
     );
@@ -559,15 +621,15 @@ void main() {
 
     expectUpperFocus(current);
     await tester.drag(list, const Offset(0, 200));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expectUpperFocus(current);
     for (final index in [99, 0]) {
       playback.add(PlaybackState(updatePosition: Duration(seconds: index * 2)));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expectUpperFocus(
         find.text('Line $index with enough words to wrap across several rows'),
       );
@@ -595,9 +657,9 @@ void main() {
         playback: PlaybackState(updatePosition: const Duration(seconds: 2)),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
 
       final track = seekTrackBounds(tester);
       for (final text in [original, pronunciation, translation]) {
@@ -664,9 +726,9 @@ void main() {
           playback.add(
             PlaybackState(updatePosition: const Duration(seconds: 1)),
           );
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           final slider = find.descendant(
             of: find.byType(PlaybackSeekSlider),
             matching: find.byType(Slider),
@@ -696,7 +758,7 @@ void main() {
           }
 
           final gesture = await tester.startGesture(point(0.02));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           final initial = offset();
           await gesture.moveTo(point(0.82));
           await tester.pump();
@@ -704,7 +766,7 @@ void main() {
           await tester.pump(const Duration(milliseconds: 70));
           final intermediate = offset();
           expect(intermediate, greaterThan(initial));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           if (!reducedMotion) expect(offset(), greaterThan(intermediate));
           expectFocus();
           expect(controller.seeks, isEmpty);
@@ -715,7 +777,7 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 70));
           expect(offset(), lessThan(forward));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           expectFocus();
           final held = offset();
           // Neither playback ticks nor the automatic next-line timer may
@@ -739,7 +801,7 @@ void main() {
           playback.add(PlaybackState(updatePosition: controller.seeks.single));
           await tester.pump();
           controller.completions.single.complete();
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           expect(offset(), closeTo(held, 0.01));
           expectFocus();
           expect(tester.takeException(), isNull);
@@ -769,9 +831,9 @@ void main() {
     );
     mediaItems.add(item('first'));
     playback.add(PlaybackState(updatePosition: const Duration(seconds: 1)));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final sliderFinder = find.descendant(
       of: find.byType(PlaybackSeekSlider),
       matching: find.byType(Slider),
@@ -782,7 +844,7 @@ void main() {
     slider().onChangeStart!(1000);
     Future<void> preview(int milliseconds) async {
       slider().onChanged!(milliseconds.toDouble());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
     }
 
     Future<List<int>> wordPixels() async {
@@ -846,7 +908,7 @@ void main() {
     metadataOverrides['lyrics'] = '[00:02.00]New track start\n[00:14.00]Later';
     mediaItems.add(item('second'));
     playback.add(PlaybackState(updatePosition: Duration.zero));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(slider().value, 0);
     expect(find.text('New track start'), findsOneWidget);
     expect(find.byType(LyricGapIndicator), findsNothing);
@@ -856,7 +918,7 @@ void main() {
     final list = tester.widget<ListView>(find.byType(ListView));
     expect(list.controller!.offset, 0);
     controller.completions.single.complete();
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(slider().value, 0);
     expect(
       tester
@@ -867,7 +929,7 @@ void main() {
     );
     slider().onChangeEnd!(0);
     controller.completions.last.complete();
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(tester.takeException(), isNull);
   });
 
@@ -882,7 +944,7 @@ void main() {
       size: const Size(900, 420),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final bar = tester.widget<AppBar>(find.byType(AppBar));
     expect(bar.toolbarHeight, 0);
     expect(bar.title, isNull);
@@ -914,9 +976,9 @@ void main() {
           ),
         );
         mediaItems.add(item('many'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final list = find.byType(ListView);
         final bounds = tester.getRect(list);
         final scrollable = find.descendant(
@@ -982,11 +1044,11 @@ void main() {
         expect(tester.getTopLeft(find.text('Second')).dy, headerTop);
         expect(transport.hitTestable(), findsNWidgets(3));
         await touch.up();
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final releasedOffset = state.position.pixels;
         clarity.value = 0.5;
         await tester.pump();
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(state.position.pixels, closeTo(releasedOffset, 0.01));
         await tester.pump(const Duration(seconds: 3));
 
@@ -1004,9 +1066,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 400));
         expect(state.position.pixels, closeTo(nextOffset, 0.01));
         await nextTouch.up();
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.pump(const Duration(seconds: 4));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(state.position.pixels, closeTo(initialOffset, 0.01));
         await tester.pumpWidget(const SizedBox());
         expect(tester.takeException(), isNull);
@@ -1035,7 +1097,7 @@ void main() {
           ),
         );
         mediaItems.add(item('many'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final lyricsButton = find.byIcon(CupertinoIcons.quote_bubble);
         final queueButton = find.byIcon(CupertinoIcons.list_bullet);
         final play = find.widgetWithIcon(
@@ -1045,6 +1107,7 @@ void main() {
         final volume = find.byType(MornyeVolumeControl);
         await tester.tap(lyricsButton);
         await tester.pump();
+        await completeLyrics(tester);
         await tester.pump(const Duration(milliseconds: 4900));
         expect(play.hitTestable(), findsOneWidget);
         final list = find.byType(ListView);
@@ -1058,7 +1121,7 @@ void main() {
             closeTo(originalTop, 1),
           );
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(play.hitTestable(), findsNothing);
         expect(volume.hitTestable(), findsNothing);
         expect(lyricsButton.hitTestable(), findsNothing);
@@ -1079,7 +1142,7 @@ void main() {
               closeTo(originalTop, 1),
             );
           }
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           expect(play.hitTestable(), findsOneWidget);
           expect(lyricsButton.hitTestable(), findsOneWidget);
         }
@@ -1096,17 +1159,17 @@ void main() {
         await tester.pump(const Duration(milliseconds: 4900));
         expect(volume.hitTestable(), findsOneWidget);
         await tester.pump(const Duration(milliseconds: 100));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(volume.hitTestable(), findsNothing);
 
         await reveal();
         await tester.tap(queueButton.hitTestable());
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.pump(const Duration(seconds: 6));
         expect(play.hitTestable(), findsOneWidget);
         expect(queueButton.hitTestable(), findsOneWidget);
         await tester.tap(queueButton.hitTestable());
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.pump(const Duration(seconds: 6));
         expect(play.hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);
@@ -1128,10 +1191,10 @@ void main() {
         );
         playback.add(PlaybackState(playing: false));
         mediaItems.add(item('many'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final lyricsButton = find.byIcon(CupertinoIcons.quote_bubble);
         await tester.tap(lyricsButton);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.pump(const Duration(seconds: 6));
         expect(lyricsButton.hitTestable(), findsOneWidget);
 
@@ -1141,11 +1204,11 @@ void main() {
         await tester.pump(const Duration(milliseconds: 4900));
         expect(lyricsButton.hitTestable(), findsOneWidget);
         await tester.pump(const Duration(milliseconds: 100));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(lyricsButton.hitTestable(), findsNothing);
 
         playback.add(PlaybackState(playing: false));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(lyricsButton.hitTestable(), findsOneWidget);
         await tester.pump(const Duration(seconds: 6));
         expect(lyricsButton.hitTestable(), findsOneWidget);
@@ -1156,7 +1219,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(seconds: 3));
         playback.add(PlaybackState(playing: false));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.pump(const Duration(seconds: 6));
         expect(lyricsButton.hitTestable(), findsOneWidget);
 
@@ -1166,7 +1229,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 4900));
         expect(lyricsButton.hitTestable(), findsOneWidget);
         await tester.pump(const Duration(milliseconds: 100));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(lyricsButton.hitTestable(), findsNothing);
         expect(tester.takeException(), isNull);
       },
@@ -1189,9 +1252,9 @@ void main() {
         ),
       );
       mediaItems.add(item('many'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.pump(const Duration(seconds: 6));
       expect(find.byType(MornyeVolumeControl).hitTestable(), findsOneWidget);
       expect(
@@ -1228,7 +1291,7 @@ void main() {
       ),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     Future<List<int>?> edgePixel() => tester.runAsync(() async {
       final boundary = tester.renderObject<RenderRepaintBoundary>(
@@ -1246,7 +1309,7 @@ void main() {
 
     final onWhite = await edgePixel();
     background.value = Colors.red;
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(await edgePixel(), onWhite);
     expect(tester.takeException(), isNull);
   });
@@ -1260,7 +1323,7 @@ void main() {
         size: const Size(393, 780),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       final moreButton = find.byIcon(CupertinoIcons.ellipsis).hitTestable();
       final anchor = tester.getRect(moreButton);
       await tester.tap(moreButton);
@@ -1268,7 +1331,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 40));
       final panel = find.byType(MornyePlayerActionsSheet);
       final enteringWidth = tester.getSize(panel).width;
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(tester.getSize(panel).width, enteringWidth);
       expect(tester.getRect(panel).bottom, lessThan(anchor.top));
       expect(tester.getRect(panel).width, 280);
@@ -1293,7 +1356,7 @@ void main() {
       expect(tester.widget<Text>(find.text('Go to Album')).style?.fontSize, 16);
       await tester.ensureVisible(find.text('Sleep timer'));
       await tester.tap(find.text('Sleep timer'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         Theme.of(tester.element(find.text('15 minutes'))).brightness,
         Brightness.dark,
@@ -1311,9 +1374,9 @@ void main() {
         size: const Size(393, 780),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.text('First').hitTestable());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.text('Go to Artist'), findsOneWidget);
       expect(find.text('Go to Album'), findsOneWidget);
       expect(
@@ -1331,7 +1394,7 @@ void main() {
         findsOneWidget,
       );
       await tester.tapAt(const Offset(5, 770));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.byType(MornyePlayerNavigationMenu), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -1355,13 +1418,13 @@ void main() {
       size: const Size(393, 852),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(metadataReads, isEmpty);
 
     await tester.tap(find.byIcon(CupertinoIcons.ellipsis).hitTestable());
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.text('Details'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     expect(metadataReads, ['content://library/first.flac']);
     final details = tester.widget<MornyePlayerDetailsSheet>(
@@ -1406,11 +1469,11 @@ void main() {
       mediaItems.add(
         item('first').copyWith(extras: {'source': '/library/first.flac'}),
       );
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.byIcon(CupertinoIcons.ellipsis).hitTestable());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.text('Details'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       final sheet = find.byType(MornyePlayerDetailsSheet);
       expect(sheet, findsOneWidget);
       expect(Theme.of(tester.element(sheet)).brightness, Brightness.dark);
@@ -1442,7 +1505,7 @@ void main() {
       expect(tester.getSize(find.text(rights)).height, greaterThan(40));
       expect(find.text('Done').hitTestable(), findsOneWidget);
       await tester.tap(find.text('Done'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(sheet, findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -1457,14 +1520,14 @@ void main() {
         size: const Size(393, 780),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       final container = ProviderScope.containerOf(
         tester.element(find.byType(NowPlayingScreen)),
       );
       final star = find.byIcon(CupertinoIcons.star).hitTestable();
       expect(star, findsOneWidget);
       await tester.tap(star);
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         find.byIcon(CupertinoIcons.star_fill).hitTestable(),
         findsOneWidget,
@@ -1474,30 +1537,30 @@ void main() {
         'first',
       );
       await tester.tap(find.byIcon(CupertinoIcons.ellipsis).hitTestable());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.text('Favorited'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(container.read(libraryCollectionsProvider).loved, isEmpty);
       expect(star, findsOneWidget);
       await tester.tap(find.byIcon(CupertinoIcons.ellipsis).hitTestable());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.text('Favorite'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         container.read(libraryCollectionsProvider).loved.single.track.id,
         'first',
       );
       await tester.tap(find.byIcon(CupertinoIcons.list_bullet));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         find.byIcon(CupertinoIcons.star_fill).hitTestable(),
         findsOneWidget,
       );
       mediaItems.add(item('second'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.byIcon(CupertinoIcons.star).hitTestable(), findsOneWidget);
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         find.byIcon(CupertinoIcons.star_fill).hitTestable(),
         findsOneWidget,
@@ -1512,7 +1575,7 @@ void main() {
       await container
           .read(libraryCollectionsProvider.notifier)
           .toggleLoved(track);
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.byIcon(CupertinoIcons.star).hitTestable(), findsOneWidget);
       expect(
         find.byType(MornyePlayerFavoriteButton).hitTestable(),
@@ -1543,13 +1606,13 @@ void main() {
         playbackEvents: playback.stream,
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       if (layout == 'material') {
         await tester.tap(find.byKey(const ValueKey('material-lyrics-toggle')));
       } else {
         await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
       }
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
 
       Future<void> positionAt(
         int seconds, {
@@ -1564,7 +1627,7 @@ void main() {
           ),
         );
         if (state == AudioProcessingState.ready && !playing) {
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
         } else {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 400));
@@ -1600,7 +1663,7 @@ void main() {
           expect(top - before, lessThan(56));
           previous = top;
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(tester.getTopLeft(firstVocal).dy - before, closeTo(56, 0.1));
       }
 
@@ -1683,7 +1746,7 @@ void main() {
       expect(find.byType(LyricGapIndicator), findsOneWidget);
       metadataOverrides.clear();
       mediaItems.add(item('second'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.byType(LyricGapIndicator), findsNothing);
       expect(tester.takeException(), isNull);
     });
@@ -1712,6 +1775,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
     await tester.pump();
+    await completeLyrics(tester);
     await tester.pump(const Duration(milliseconds: 400));
 
     void expectLine(String text, {required bool active}) {
@@ -1731,7 +1795,7 @@ void main() {
     expectLine('Third line', active: false);
 
     playback.add(PlaybackState(processingState: AudioProcessingState.ready));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expectLine('First line', active: false);
 
     playback.add(
@@ -1755,7 +1819,7 @@ void main() {
         updatePosition: const Duration(seconds: 2),
       ),
     );
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expectLine('Second line', active: true);
 
     playback.add(
@@ -1785,9 +1849,9 @@ void main() {
         playback: PlaybackState(updatePosition: const Duration(seconds: 2)),
       );
       mediaItems.add(item('many'));
-      await tester.pumpAndSettle(const Duration(milliseconds: 16));
+      await settlePlayer(tester, const Duration(milliseconds: 16));
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-      await tester.pumpAndSettle(const Duration(milliseconds: 16));
+      await settlePlayer(tester, const Duration(milliseconds: 16));
       final active = find.text('Second line');
       final inactive = find.text('Third line');
       final activeText = tester.widget<Text>(active);
@@ -1824,13 +1888,13 @@ void main() {
         size: const Size(393, 780),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle(const Duration(milliseconds: 16));
+      await settlePlayer(tester, const Duration(milliseconds: 16));
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-      await tester.pumpAndSettle(const Duration(milliseconds: 16));
+      await settlePlayer(tester, const Duration(milliseconds: 16));
       expect(find.text('First lyric').hitTestable(), findsOneWidget);
       final volume = tester.getRect(find.byType(MornyeVolumeControl));
       await tester.tap(find.byIcon(CupertinoIcons.list_bullet));
-      await tester.pumpAndSettle(const Duration(milliseconds: 16));
+      await settlePlayer(tester, const Duration(milliseconds: 16));
       expect(find.byType(MornyePlayerQueue), findsOneWidget);
       expect(find.byType(BottomSheet), findsNothing);
       expect(tester.getRect(find.byType(MornyeVolumeControl)), volume);
@@ -1842,7 +1906,7 @@ void main() {
       expect(find.text('First lyric'), findsNothing);
       expect(find.byType(MornyePlayerQueue), findsOneWidget);
       expect(find.byType(MornyePlayerQueue).hitTestable(), findsNothing);
-      await tester.pumpAndSettle(const Duration(milliseconds: 16));
+      await settlePlayer(tester, const Duration(milliseconds: 16));
       expect(find.byType(MornyePlayerQueue), findsNothing);
       expect(tester.getRect(find.byType(MornyeVolumeControl)), volume);
     },
@@ -1862,7 +1926,7 @@ void main() {
         );
         playback.add(PlaybackState(playing: true));
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final pause = find.widgetWithIcon(
           MornyePlaybackButton,
           CupertinoIcons.pause_fill,
@@ -1878,7 +1942,7 @@ void main() {
         final volumeBounds = tester.getRect(find.byType(MornyeVolumeControl));
 
         playback.add(PlaybackState(playing: false));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final play = find.widgetWithIcon(
           MornyePlaybackButton,
           CupertinoIcons.play_fill,
@@ -1892,7 +1956,7 @@ void main() {
         expect(tester.getRect(find.byType(MornyeVolumeControl)), volumeBounds);
 
         playback.add(PlaybackState(playing: true));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(
           tester.getSize(find.byIcon(CupertinoIcons.pause_fill)),
           pauseSize,
@@ -1911,7 +1975,7 @@ void main() {
         size: Size(width, 900),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.byType(ExpressiveIconButton), findsNWidgets(6));
       for (final element in find.byType(ExpressiveIconButton).evaluate()) {
         final bounds = tester.getRect(find.byWidget(element.widget));
@@ -1956,7 +2020,7 @@ void main() {
             extras: {'source': '/music/first.flac'},
           ),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.byType(PageView), findsNothing);
         final slider = find.byType(PlaybackSeekSlider);
         final play = find.byTooltip('Play');
@@ -1975,7 +2039,7 @@ void main() {
           expect(tester.getRect(play), playBounds);
           expect(tester.state(slider), same(sliderState));
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.text('First lyric').hitTestable(), findsOneWidget);
         expect(
           find.byKey(const ValueKey('material-player-cover')),
@@ -1987,10 +2051,10 @@ void main() {
         expect(controller.seeks, hasLength(1));
         expect(controller.seeks.single.inSeconds, closeTo(90, 1));
         controller.completions.single.complete();
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
 
         await tester.tap(toggle);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(
           find.byKey(const ValueKey('material-player-cover')),
           findsOneWidget,
@@ -2024,9 +2088,9 @@ void main() {
         ),
       );
       mediaItems.add(queue.first);
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.byIcon(Icons.queue_music));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       final rows = find.descendant(
         of: find.byType(ReorderableListView),
         matching: find.byType(ListTile),
@@ -2059,7 +2123,7 @@ void main() {
       await tester.tap(
         find.descendant(of: rows, matching: find.text('Second')),
       );
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(controller.selected, [1]);
       expect(tester.takeException(), isNull);
     });
@@ -2070,7 +2134,7 @@ void main() {
   ) async {
     await pumpNowPlaying(tester, theme: MornyeTheme.build(Brightness.light));
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     expect(find.byIcon(CupertinoIcons.play_fill), findsOneWidget);
     expect(find.byIcon(CupertinoIcons.backward_fill), findsOneWidget);
@@ -2084,7 +2148,7 @@ void main() {
     );
     final nextState = tester.state(nextButton);
     mediaItems.add(item('second'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(tester.state(nextButton), same(nextState));
   });
 
@@ -2131,7 +2195,7 @@ void main() {
     }
 
     await positionAt(34200);
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expectTimes(34, 146);
     final transport = tester
         .widgetList<MornyePlaybackButton>(find.byType(MornyePlaybackButton))
@@ -2172,7 +2236,7 @@ void main() {
     expectTimes(35, 145);
     await positionAt(36000);
     expectTimes(36, 144);
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(tester.takeException(), isNull);
   });
 
@@ -2185,7 +2249,7 @@ void main() {
       size: const Size(393, 700),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     final volume = find.byType(MornyeVolumeControl);
     final lyricsButton = find.byIcon(CupertinoIcons.quote_bubble);
@@ -2201,7 +2265,7 @@ void main() {
     expect(volumeWrites, isNotEmpty);
     expect(volumeWrites.last, greaterThan(0.5));
     await gesture.up();
-    await tester.pumpAndSettle(const Duration(milliseconds: 16));
+    await settlePlayer(tester, const Duration(milliseconds: 16));
     expect(volumeWrites, isNotEmpty);
     expect(volumeWrites.last, greaterThan(0.5));
     expect(tester.takeException(), isNull);
@@ -2217,12 +2281,12 @@ void main() {
         playback: PlaybackState(playing: true),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
 
       tester.view.physicalSize = const Size(852, 393);
       tester.view.padding = FakeViewPadding(left: 59, right: 59, bottom: 21);
       addTearDown(tester.view.resetPadding);
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
 
       final artwork = find.byType(Hero);
       final volume = find.byType(MornyeVolumeControl);
@@ -2261,11 +2325,11 @@ void main() {
       expect(volumeWrites, isNotEmpty);
       await drag.up();
       await tester.pump(const Duration(seconds: 4));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(volume.hitTestable(), findsOneWidget);
 
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble).hitTestable());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(volume, findsNothing);
       expect(find.text('First lyric').hitTestable(), findsOneWidget);
       expect(tester.getRect(lyric).left, greaterThan(artRect.right));
@@ -2274,7 +2338,7 @@ void main() {
         greaterThan(tester.getRect(header).bottom),
       );
       await tester.pump(const Duration(seconds: 5));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         find.byIcon(CupertinoIcons.quote_bubble).hitTestable(),
         findsNothing,
@@ -2284,25 +2348,25 @@ void main() {
         findsNothing,
       );
       await tester.tap(find.byKey(const ValueKey('landscape-actions-reveal')));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         find.byIcon(CupertinoIcons.quote_bubble).hitTestable(),
         findsOneWidget,
       );
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble).hitTestable());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(volume.hitTestable(), findsOneWidget);
       expect(lyric, findsNothing);
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble).hitTestable());
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
 
       mediaItems.add(item('second'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.text('Second lyric').hitTestable(), findsOneWidget);
       expect(find.text('First lyric'), findsNothing);
       tester.view.physicalSize = const Size(393, 852);
       tester.view.resetPadding();
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(
         find.byIcon(CupertinoIcons.quote_bubble).hitTestable(),
         findsOneWidget,
@@ -2340,7 +2404,7 @@ void main() {
                 child: TextButton(
                   onPressed: () => Navigator.of(
                     context,
-                  ).push(NowPlayingRoute(child: const NowPlayingScreen())),
+                  ).push(NowPlayingRoute(child: playerScreen())),
                   child: const Hero(
                     tag: kNowPlayingArtworkHeroTag,
                     child: SizedBox.square(dimension: 38, child: Text('Open')),
@@ -2352,7 +2416,7 @@ void main() {
         ),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.text('Open'));
       await tester.pump();
 
@@ -2374,7 +2438,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 40));
         expectAttached();
       }
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expectAttached();
       Navigator.of(tester.element(find.byType(NowPlayingScreen))).pop();
       await tester.pump();
@@ -2386,7 +2450,7 @@ void main() {
           greaterThan(0),
         );
       }
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.byType(NowPlayingScreen), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -2416,7 +2480,7 @@ void main() {
             ),
           );
           mediaItems.add(item('first'));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           final mini = find.byType(MiniPlayer);
           final miniCover = find.descendant(
             of: mini,
@@ -2426,7 +2490,7 @@ void main() {
           await tester.tap(
             find.descendant(of: mini, matching: find.text('First')),
           );
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           final player = find.byType(NowPlayingScreen);
           final route =
               ModalRoute.of(tester.element(player))! as NowPlayingRoute;
@@ -2475,7 +2539,7 @@ void main() {
             );
             previousDistance = distance;
           }
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           expect(player, findsNothing);
           expect(tester.getRect(miniCover), destination);
           expect(tester.takeException(), isNull);
@@ -2502,7 +2566,7 @@ void main() {
           ),
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final fullCover = find.descendant(
           of: find.byType(MornyePlayerBackground),
           matching: find.byType(MornyePlayerArtwork),
@@ -2528,7 +2592,7 @@ void main() {
           expect(playback.hitTestable(), findsOneWidget);
           previous = bounds;
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final compactBounds = tester.getRect(compact);
         expect(compactBounds.size, const Size(72, 72));
         final header = find.byKey(const ValueKey('player-track-header'));
@@ -2546,7 +2610,7 @@ void main() {
           expect(playback.hitTestable(), findsOneWidget);
           previous = bounds;
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(compact, findsNothing);
         expect(tester.getRect(fullCover), fullBounds);
         expect(tester.takeException(), isNull);
@@ -2562,7 +2626,7 @@ void main() {
           size: const Size(393, 852),
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final toggle = find.byIcon(
           lyrics ? CupertinoIcons.quote_bubble : CupertinoIcons.list_bullet,
         );
@@ -2592,7 +2656,7 @@ void main() {
             expect(tester.getRect(play), controlsBounds);
             previous = bounds;
           }
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           final cover = tester.getRect(
             find.byKey(const ValueKey('compact-player-artwork')),
           );
@@ -2626,7 +2690,7 @@ void main() {
             expect(tester.getRect(play), controlsBounds);
             previous = bounds;
           }
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           expect(tester.getRect(header), expandedBounds);
           expect(
             find.byKey(const ValueKey('full-player-artwork')),
@@ -2653,13 +2717,13 @@ void main() {
           ),
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final artwork = find.byType(MornyePlayerArtwork);
         final restingBounds = tester.getRect(artwork);
         final lyrics = find.byIcon(CupertinoIcons.quote_bubble);
         final compact = find.byKey(const ValueKey('compact-player-artwork'));
         await tester.tap(lyrics);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final compactBounds = tester.getRect(compact);
         await tester.tap(compact);
         await tester.pump();
@@ -2673,7 +2737,7 @@ void main() {
           expect(tester.getRect(compact), bounds);
           previous = bounds;
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(tester.getRect(artwork), restingBounds);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox());
@@ -2700,9 +2764,9 @@ void main() {
           ),
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final scrollable = find
             .ancestor(
               of: find.text('Line 10'),
@@ -2720,7 +2784,7 @@ void main() {
           expect(state.position.pixels, offset);
           await tester.pump(const Duration(milliseconds: 50));
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(state.mounted, isFalse);
         expect(tester.takeException(), isNull);
       },
@@ -2736,7 +2800,7 @@ void main() {
       size: const Size(393, 852),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final header = find.byKey(const ValueKey('player-track-header'));
     final element = tester.element(header);
     final expandedBounds = tester.getRect(header);
@@ -2752,18 +2816,18 @@ void main() {
     await tester.pump(const Duration(milliseconds: 80));
     expect(tester.getRect(header).top, greaterThan(interruptedBounds.top));
     expect(tester.getRect(header).left, lessThan(interruptedBounds.left));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(tester.getRect(header), expandedBounds);
 
     await tester.tap(lyrics);
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final compactBounds = tester.getRect(header);
     await tester.tap(queue);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 160));
     expect(tester.getRect(header), compactBounds);
     expect(tester.element(header), same(element));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(tester.getRect(header), compactBounds);
     expect(tester.takeException(), isNull);
   });
@@ -2786,7 +2850,7 @@ void main() {
       ),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final header = find.byKey(const ValueKey('player-track-header'));
     final expandedBounds = tester.getRect(header);
     final lyrics = find.byIcon(CupertinoIcons.quote_bubble);
@@ -2814,7 +2878,7 @@ void main() {
       size: const Size(393, 700),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     final artwork = find.byType(Hero);
     final fullArtwork = tester.getRect(artwork);
@@ -2838,7 +2902,7 @@ void main() {
         .value;
     expect(fullCover, findsOneWidget);
     expect(fullCoverOpacity(), inExclusiveRange(0.0, 1.0));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     expect(find.byType(PageView), findsNothing);
     expect(find.text('First lyric').hitTestable(), findsOneWidget);
@@ -2849,7 +2913,7 @@ void main() {
     expect(tester.getRect(play), playRect);
 
     mediaItems.add(item('second'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(find.text('Second lyric').hitTestable(), findsOneWidget);
     expect(find.text('First lyric'), findsNothing);
 
@@ -2861,7 +2925,7 @@ void main() {
       find.descendant(of: fullCover, matching: find.byType(Hero)),
       findsOneWidget,
     );
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(tester.getRect(artwork), fullArtwork);
     expect(find.text('Second lyric').hitTestable(), findsNothing);
     expect(tester.takeException(), isNull);
@@ -2899,9 +2963,9 @@ void main() {
         },
       ),
     );
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byKey(const ValueKey('material-lyrics-toggle')));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     expect(find.text('First lyric'), findsOneWidget);
     expect(metadataReads, hasLength(1));
     expect(tester.takeException(), isNull);
@@ -2913,13 +2977,13 @@ void main() {
       await pumpNowPlaying(tester);
 
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.byKey(const ValueKey('material-lyrics-toggle')));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(find.text('First lyric'), findsOneWidget);
 
       mediaItems.add(item('second'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
 
       expect(find.text('Second lyric'), findsOneWidget);
       expect(find.text('First lyric'), findsNothing);
@@ -2938,9 +3002,9 @@ void main() {
         size: const Size(390, 844),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       final credit = find.text(
         'Written by: Example Composer\nLyrics: Example Lyrics',
       );
@@ -2951,7 +3015,7 @@ void main() {
       );
       metadataOverrides.clear();
       mediaItems.add(item('second'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       expect(credit, findsNothing);
       expect(find.text('Second lyric'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -2978,9 +3042,9 @@ void main() {
       ),
     );
     mediaItems.add(item('anchored-supplements'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     final original = find.text('Original 3');
     final anchor = tester.getTopLeft(original).dy;
     for (final action in [
@@ -2990,7 +3054,7 @@ void main() {
       'Show Translation',
     ]) {
       await tester.tap(find.byKey(const ValueKey('lyrics-language-options')));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.text(action));
       await tester.pump();
       for (var frame = 0; frame < 32; frame++) {
@@ -3019,15 +3083,15 @@ void main() {
         size: const Size(390, 844),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       final options = find.byKey(const ValueKey('lyrics-language-options'));
       if (supplement == 'none') {
         expect(options, findsNothing);
       } else {
         await tester.tap(options);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final glass = tester.widget<MornyeGlassPanel>(
           find.byType(MornyeGlassPanel).last,
         );
@@ -3072,12 +3136,12 @@ void main() {
           ),
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final options = find.byKey(const ValueKey('lyrics-language-options'));
         await tester.tap(options);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.pump(const Duration(seconds: 6));
         expect(find.text('Hide Pronunciation').hitTestable(), findsOneWidget);
         await tester.tap(find.text('Hide Pronunciation'));
@@ -3087,7 +3151,7 @@ void main() {
         expect(options.hitTestable(), findsOneWidget);
 
         await tester.pump(const Duration(seconds: 5));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(options.hitTestable(), findsNothing);
         if (landscape) {
           await tester.tap(
@@ -3097,9 +3161,9 @@ void main() {
           final bounds = tester.getRect(find.byType(ListView));
           await tester.tapAt(Offset(bounds.right - 6, bounds.top + 10));
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(options);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(find.text('Show Pronunciation'));
         await tester.pump();
         await tester.pump();
@@ -3127,7 +3191,7 @@ void main() {
           playbackEvents: playback.stream,
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         if (mornye) {
           await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
         } else {
@@ -3135,7 +3199,7 @@ void main() {
             find.byKey(const ValueKey('material-lyrics-toggle')),
           );
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         for (final seconds in [0, 2, 4, 7, 4]) {
           playback.add(
             PlaybackState(
@@ -3144,7 +3208,7 @@ void main() {
               updatePosition: Duration(seconds: seconds),
             ),
           );
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           expect(
             tester.widget<Text>(find.text('Together')).textAlign,
             TextAlign.left,
@@ -3182,7 +3246,7 @@ void main() {
             playbackEvents: playback.stream,
           );
           mediaItems.add(item('first'));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           if (mornye) {
             await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
           } else {
@@ -3190,7 +3254,7 @@ void main() {
               find.byKey(const ValueKey('material-lyrics-toggle')),
             );
           }
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           final lead = tester.widget<Text>(find.text('Lead'));
           expect(find.text('Echo'), findsNothing);
           expect(find.textContaining('[bg:'), findsNothing);
@@ -3211,7 +3275,7 @@ void main() {
                 updatePosition: Duration(milliseconds: milliseconds),
               ),
             );
-            await tester.pumpAndSettle();
+            await settlePlayer(tester);
           }
 
           double offset() =>
@@ -3291,13 +3355,13 @@ void main() {
           playbackEvents: playback.stream,
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(
           mornye
               ? find.byIcon(CupertinoIcons.quote_bubble)
               : find.byKey(const ValueKey('material-lyrics-toggle')),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         playback.add(
           PlaybackState(
             processingState: AudioProcessingState.ready,
@@ -3305,7 +3369,7 @@ void main() {
             updatePosition: const Duration(seconds: 2),
           ),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final scrollable = find
             .ancestor(of: find.text(lead), matching: find.byType(Scrollable))
             .first;
@@ -3345,7 +3409,7 @@ void main() {
           playbackEvents: playback.stream,
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         if (mornye) {
           await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
         } else {
@@ -3353,7 +3417,7 @@ void main() {
             find.byKey(const ValueKey('material-lyrics-toggle')),
           );
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(
           tester.widget<Text>(find.text('Lead')).textAlign,
           TextAlign.left,
@@ -3380,7 +3444,7 @@ void main() {
             updatePosition: const Duration(seconds: 3),
           ),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         for (final text in ['Lead', 'Guest']) {
           final paint = timed(text);
           expect(
@@ -3432,7 +3496,7 @@ void main() {
             updatePosition: const Duration(seconds: 7),
           ),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(timed('Guest'), findsOneWidget);
         expect(find.text('Lead'), findsNothing);
         playback.add(
@@ -3442,7 +3506,7 @@ void main() {
             updatePosition: const Duration(seconds: 9),
           ),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.text('Lead'), findsOneWidget);
         expect(timed('Guest'), findsOneWidget);
         expect(tester.takeException(), isNull);
@@ -3462,13 +3526,13 @@ void main() {
         size: const Size(390, 844),
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       if (mornye) {
         await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
       } else {
         await tester.tap(find.byKey(const ValueKey('material-lyrics-toggle')));
       }
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       for (final text in ['Original text', 'Romanized text', 'English text']) {
         expect(find.text(text), findsOneWidget);
       }
@@ -3508,7 +3572,7 @@ void main() {
             ),
           );
           mediaItems.add(item(id));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           if (mornye) {
             await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
           } else {
@@ -3516,13 +3580,13 @@ void main() {
               find.byKey(const ValueKey('material-lyrics-toggle')),
             );
           }
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
         }
 
         final options = find.byKey(const ValueKey('lyrics-language-options'));
         Future<void> choose(String label) async {
           await tester.tap(options);
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           await tester.tap(find.text(label));
           await tester.pump();
         }
@@ -3548,7 +3612,7 @@ void main() {
         expect(pronunciationOpacity(), inExclusiveRange(0, 1));
         final intermediateGap = gap();
         expect(intermediateGap, lessThan(expandedGap));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.text('Romanized text'), findsNothing);
         expect(find.text('English text'), findsOneWidget);
         expect(gap(), lessThan(intermediateGap));
@@ -3556,14 +3620,14 @@ void main() {
         await choose('Show Pronunciation');
         await tester.pump(const Duration(milliseconds: 100));
         expect(pronunciationOpacity(), inExclusiveRange(0, 1));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(gap(), closeTo(expandedGap, 1));
         await choose('Hide Translation');
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.text('English text'), findsNothing);
         expect(find.text('Romanized text'), findsOneWidget);
         await choose('Hide Pronunciation');
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.text('Original text'), findsOneWidget);
         expect(find.text('Romanized text'), findsNothing);
         expect(options.hitTestable(), findsOneWidget);
@@ -3573,7 +3637,7 @@ void main() {
         expect(find.text('English text'), findsNothing);
         expect(find.text('Romanized text'), findsNothing);
         await choose('Show Translation');
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.text('English text'), findsOneWidget);
         expect(find.text('Romanized text'), findsNothing);
         expect(tester.takeException(), isNull);
@@ -3595,13 +3659,13 @@ void main() {
         playbackEvents: playback.stream,
       );
       mediaItems.add(item('first'));
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
       await tester.tap(
         mornye
             ? find.byIcon(CupertinoIcons.quote_bubble)
             : find.byKey(const ValueKey('material-lyrics-toggle')),
       );
-      await tester.pumpAndSettle();
+      await settlePlayer(tester);
 
       Finder timed(String text) => find.descendant(
         of: find.byWidgetPredicate(
@@ -3617,7 +3681,7 @@ void main() {
             updatePosition: Duration(milliseconds: milliseconds),
           ),
         );
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final text = milliseconds < 7000 ? 'Held' : 'Next';
         expect(timed(text), findsOneWidget);
         final opacity = tester.widget<AnimatedOpacity>(
@@ -3656,7 +3720,7 @@ void main() {
           playbackEvents: playback.stream,
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         if (mornye) {
           await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
         } else {
@@ -3664,7 +3728,7 @@ void main() {
             find.byKey(const ValueKey('material-lyrics-toggle')),
           );
         }
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
 
         Future<List<int>> pixelsAt(int milliseconds, String text) async {
           playback.add(
@@ -3674,7 +3738,7 @@ void main() {
               updatePosition: Duration(milliseconds: milliseconds),
             ),
           );
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           final pixels = <int>[];
           for (final phrase in mornye ? text.split(' ') : [text]) {
             final paint = find.descendant(
@@ -3737,21 +3801,21 @@ void main() {
         if (mornye && options.hitTestable().evaluate().isEmpty) {
           final bounds = tester.getRect(find.byType(ListView));
           await tester.tapAt(Offset(bounds.right - 6, bounds.top + 10));
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
         }
         await tester.tap(options);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(find.text('Hide Pronunciation'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         expect(find.bySemanticsLabel('Firsu secondu'), findsNothing);
         expect(
           await pixelsAt(1100, 'First second'),
           orderedEquals(originalPixels),
         );
         await tester.tap(options);
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(find.text('Show Pronunciation'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await pixelsAt(2150, 'Firsu secondu');
         expect(tester.takeException(), isNull);
       },
@@ -3783,9 +3847,9 @@ void main() {
           ),
         );
         mediaItems.add(item('first'));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-        await tester.pumpAndSettle();
+        await settlePlayer(tester);
         final paintFinder = find.descendant(
           of: find.bySemanticsLabel(text),
           matching: find.byType(CustomPaint),
@@ -3849,7 +3913,7 @@ void main() {
               updatePosition: Duration(milliseconds: milliseconds),
             ),
           );
-          await tester.pumpAndSettle();
+          await settlePlayer(tester);
           return paintedHeights();
         }
 
@@ -3913,9 +3977,9 @@ void main() {
       ),
     );
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byIcon(CupertinoIcons.quote_bubble));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     final paintFinder = find.descendant(
       of: find.bySemanticsLabel(lyricText),
@@ -3961,9 +4025,9 @@ void main() {
     await pumpNowPlaying(tester);
 
     mediaItems.add(item('timed'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.byKey(const ValueKey('material-lyrics-toggle')));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     final lyric = find.bySemanticsLabel('Short');
     expect(lyric, findsOneWidget);
@@ -3975,10 +4039,10 @@ void main() {
   ) async {
     await pumpNowPlaying(tester);
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     await tester.tap(find.byIcon(Icons.more_vert));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     expect(find.text('Go to Album'), findsOneWidget);
     expect(find.byIcon(Icons.album_outlined), findsOneWidget);
@@ -3989,12 +4053,12 @@ void main() {
   ) async {
     await pumpNowPlaying(tester);
     mediaItems.add(item('first'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     await tester.tap(find.byIcon(Icons.more_vert));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
     await tester.tap(find.text('Sleep timer'));
-    await tester.pumpAndSettle();
+    await settlePlayer(tester);
 
     expect(find.text('15 minutes'), findsOneWidget);
     expect(find.text('30 minutes'), findsOneWidget);
@@ -4003,6 +4067,43 @@ void main() {
     expect(find.text('Turn off sleep timer'), findsNothing);
   });
 }
+
+Map<String, dynamic> _lyricsDto(ParsedLyrics value) => {
+  'synced': value.synced,
+  'wordSynced': value.wordSynced,
+  'plainText': value.plainText,
+  'writers': value.writers,
+  'provider': value.provider,
+  'lines': [
+    for (final line in value.lines)
+      {
+        'timeMs': line.time.inMilliseconds,
+        'endMs': line.end?.inMilliseconds,
+        'text': line.text,
+        'words': [for (final word in line.words) _wordDto(word)],
+        'romanization': line.romanization,
+        'romanizationWords': [
+          for (final word in line.romanizationWords) _wordDto(word),
+        ],
+        'translation': line.translation,
+        'voice': line.voice == null
+            ? null
+            : {
+                'id': line.voice!.id,
+                'index': line.voice!.index,
+                'isGroup': line.voice!.isGroup,
+              },
+        'isBackground': line.isBackground,
+        'vocalGroup': line.vocalGroup,
+      },
+  ],
+};
+
+Map<String, dynamic> _wordDto(LyricWord word) => {
+  'timeMs': word.time.inMilliseconds,
+  'endMs': word.end?.inMilliseconds,
+  'text': word.text,
+};
 
 class _QueueController extends MusicPlayerController {
   _QueueController(this.onSelected);

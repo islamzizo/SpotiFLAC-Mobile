@@ -63,7 +63,9 @@ class _FadingAppBar extends StatelessWidget implements PreferredSizeWidget {
 }
 
 class NowPlayingScreen extends ConsumerStatefulWidget {
-  const NowPlayingScreen({super.key});
+  const NowPlayingScreen({super.key, this.metadataControllerFactory});
+
+  final PlayerMetadataController Function()? metadataControllerFactory;
 
   @override
   ConsumerState<NowPlayingScreen> createState() => _NowPlayingScreenState();
@@ -72,7 +74,8 @@ class NowPlayingScreen extends ConsumerStatefulWidget {
 class _NowPlayingScreenState extends ConsumerState<NowPlayingScreen> {
   ProviderSubscription<AsyncValue<MediaItem?>>? _mediaItemSub;
   ProviderSubscription<bool>? _lyricsPlayingSub;
-  final _trackMetadata = PlayerMetadataController();
+  late final _trackMetadata =
+      widget.metadataControllerFactory?.call() ?? PlayerMetadataController();
   int _currentPage = 0;
   bool _landscape = false;
   bool _queueSheetShowing = false;

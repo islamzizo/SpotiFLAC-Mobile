@@ -80,6 +80,10 @@ fn execute(
             check,
         ),
         "parse_network_listing" => crate::native_listing::execute(request, Some(bytes)),
+        "write_id3v23_lyrics" | "build_metadata_picture" => {
+            crate::native_id3::execute(request, Some(bytes), check)
+        }
+        "parse_lyrics" => crate::native_lyrics::execute(request, Some(bytes), check),
         "palette" => {
             let colors = spotiflac_core::native_palette::quantize_rgba(bytes, check)?;
             Ok(json!({"colors": colors}))

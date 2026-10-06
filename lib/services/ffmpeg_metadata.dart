@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:spotiflac_android/services/audio_metadata_mapper.dart';
 import 'package:spotiflac_android/services/ffmpeg_models.dart';
 import 'package:spotiflac_android/services/ffmpeg_support.dart';
@@ -379,6 +381,25 @@ abstract final class FFmpegMetadata {
   }
 
   static Future<String?> _createMetadataBlockPicture(String imagePath) async {
+    try {
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'build_metadata_picture',
+        'file_path': imagePath,
+      });
+      return result['picture'] as String?;
+    } on MissingPluginException {
+      return Isolate.run(
+        () => _createMetadataBlockPictureInBackground(imagePath),
+      );
+    } catch (e) {
+      _log.e('Error creating METADATA_BLOCK_PICTURE: $e');
+      return null;
+    }
+  }
+
+  static Future<String?> _createMetadataBlockPictureInBackground(
+    String imagePath,
+  ) async {
     try {
       final file = File(imagePath);
       if (!await file.exists()) {

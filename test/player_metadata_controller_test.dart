@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/controllers/player_metadata_controller.dart';
+import 'package:spotiflac_android/utils/lyrics_parser.dart';
 
 MediaItem _item(
   String id, {
@@ -22,6 +23,98 @@ MediaItem _item(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'new metadata is visible immediately while lyrics parse is pending',
+    () async {
+      final parse = Completer<ParsedLyrics>();
+      final controller = PlayerMetadataController(
+        readMetadata: (path) async => path.endsWith('a.flac')
+            ? {'lyrics': '[00:01]Old', 'format': 'MP3'}
+            : {'lyrics': '[00:01]New', 'format': 'FLAC', 'bit_depth': 24},
+        parseLyrics: (raw) => raw == '[00:01]Old'
+            ? Future.value(LyricsParser.parse(raw))
+            : parse.future,
+      );
+      addTearDown(controller.dispose);
+      await controller.load(_item('a'));
+      expect(controller.lyrics.lines.single.text, 'Old');
+      final pending = controller.load(_item('b', metadata: {'format': 'AAC'}));
+      expect(controller.lyrics.isEmpty, isTrue);
+      expect(controller.qualityLabel, 'AAC');
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.qualityLabel, 'FLAC  ·  24-bit');
+      expect(controller.lyrics.isEmpty, isTrue);
+      expect(controller.loading, isTrue);
+      parse.complete(LyricsParser.parse('[00:01]New'));
+      await pending;
+      expect(controller.lyrics.lines.single.text, 'New');
+      expect(controller.loading, isFalse);
+    },
+  );
+
+  test(
+    'failed native lyrics retain new quality metadata and clear loading',
+    () async {
+      final controller = PlayerMetadataController(
+        readMetadata: (_) async => {'lyrics': '[00:01]Text', 'format': 'FLAC'},
+        parseLyrics: (_) async => throw StateError('Invalid native lyrics'),
+      );
+      addTearDown(controller.dispose);
+      await controller.load(_item('a'));
+      expect(controller.qualityLabel, 'FLAC');
+      expect(controller.lyrics.isEmpty, isTrue);
+      expect(controller.loading, isFalse);
+    },
+  );
+
+  test(
+    'late native lyrics cannot publish after switching away and back',
+    () async {
+      final parses = <String, Completer<ParsedLyrics>>{};
+      final controller = PlayerMetadataController(
+        readMetadata: (path) async => {'lyrics': path},
+        parseLyrics: (raw) => (parses[raw!] = Completer<ParsedLyrics>()).future,
+      );
+      addTearDown(controller.dispose);
+      final first = controller.load(_item('a'));
+      await Future<void>.delayed(Duration.zero);
+      final oldParse = parses['/music/a.flac']!;
+      final second = controller.load(_item('b'));
+      await Future<void>.delayed(Duration.zero);
+      final current = controller.load(_item('a'));
+      await Future<void>.delayed(Duration.zero);
+      parses['/music/a.flac']!.complete(LyricsParser.parse('[00:01]Current A'));
+      await current;
+      oldParse.complete(LyricsParser.parse('[00:01]Old A'));
+      parses['/music/b.flac']!.complete(LyricsParser.parse('[00:01]Old B'));
+      await Future.wait([first, second]);
+      expect(controller.lyrics.lines.single.text, 'Current A');
+      expect(controller.loading, isFalse);
+    },
+  );
+
+  test(
+    'disposal while native lyrics parse is pending never publishes',
+    () async {
+      final parse = Completer<ParsedLyrics>();
+      final controller = PlayerMetadataController(
+        readMetadata: (_) async => {'lyrics': '[00:01]Late'},
+        parseLyrics: (_) => parse.future,
+      );
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+      final pending = controller.load(_item('a'));
+      await Future<void>.delayed(Duration.zero);
+      final beforeDispose = notifications;
+      controller.dispose();
+      parse.complete(LyricsParser.parse('[00:01]Late'));
+      await pending;
+      expect(notifications, beforeDispose);
+      expect(controller.lyrics.isEmpty, isTrue);
+    },
+  );
   test('late result cannot overwrite a track switched away and back', () async {
     final reads = <Completer<Map<String, dynamic>>>[];
     final controller = PlayerMetadataController(
