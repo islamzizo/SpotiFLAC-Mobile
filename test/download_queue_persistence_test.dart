@@ -329,6 +329,118 @@ void main() {
     expect(await persistence.loadUserPaused(), isFalse);
   });
 
+  test(
+    'large worker snapshots retry and retain the latest ordered write',
+    () async {
+      final store = _Store();
+      var items = List.generate(2100, (index) => _item('initial:$index'));
+      final latest = List.generate(
+        1100,
+        (index) => _item('latest:$index', status: DownloadStatus.skipped),
+      );
+      final errors = <Object>[];
+      final started = Completer<void>();
+      final release = Completer<void>();
+      var attempts = 0;
+      final persistence = DownloadQueuePersistence(
+        currentItems: () => items,
+        onError: errors.add,
+        loadRows: store.load,
+        applyChanges: ({required upserts, required deletedIds}) async {
+          attempts++;
+          if (attempts == 1) throw StateError('disk unavailable');
+          if (attempts == 2) {
+            started.complete();
+            await release.future;
+          }
+          await store.apply(upserts: upserts, deletedIds: deletedIds);
+        },
+      );
+      await persistence.flush();
+      expect(errors, hasLength(1));
+      expect(store.rows, isEmpty);
+      final initialWrite = persistence.flush();
+      await started.future;
+      items = latest;
+      final latestWrite = persistence.flush();
+      persistence.dispose();
+      release.complete();
+      await Future.wait([initialWrite, latestWrite]);
+      expect(store.rows.keys, latest.map((item) => item.id));
+      for (final item in latest) {
+        expect(
+          store.rows[item.id]!['item_json'],
+          encodeDownloadQueueItemForPersistence(item),
+        );
+      }
+      await persistence.flush();
+      expect(attempts, 3);
+      expect(errors, hasLength(1));
+    },
+  );
+
+  test(
+    'restore worker cannot be overtaken by a flush or pending disposal',
+    () async {
+      final store = _Store();
+      final old = List.generate(2100, (index) => _item('old:$index'));
+      for (final item in old) {
+        store.seed(item);
+      }
+      final loaded = Completer<void>();
+      final release = Completer<void>();
+      var items = [_item('latest')];
+      var disposed = false;
+      final errors = <Object>[];
+      final persistence = DownloadQueuePersistence(
+        currentItems: () {
+          if (disposed) throw StateError('provider disposed');
+          return items;
+        },
+        onError: errors.add,
+        loadRows: () async {
+          final rows = await store.load();
+          loaded.complete();
+          await release.future;
+          return rows;
+        },
+        applyChanges: store.apply,
+      );
+      final restored = persistence.restore();
+      await loaded.future;
+      final flushed = persistence.flush();
+      persistence.schedule();
+      persistence.dispose();
+      disposed = true;
+      items = [];
+      expect(store.writes, 0);
+      release.complete();
+      expect(
+        (await restored).map((item) => item.id),
+        old.map((item) => item.id),
+      );
+      await flushed;
+      expect(store.rows.keys, ['latest']);
+      expect(errors, isEmpty);
+    },
+  );
+
+  test(
+    'a failed restore propagates without poisoning later durable writes',
+    () async {
+      final store = _Store();
+      final persistence = DownloadQueuePersistence(
+        currentItems: () => [_item('latest')],
+        onError: (error) => fail('$error'),
+        loadRows: () async => throw StateError('database unavailable'),
+        applyChanges: store.apply,
+      );
+      await expectLater(persistence.restore(), throwsStateError);
+      await persistence.flush();
+      expect(store.rows.keys, ['latest']);
+    },
+  );
+
   test('SQLite restores cancelled rows in creation order for retry', () async {
     SharedPreferences.setMockInitialValues({
       'app_state_migrated_queue_to_sqlite_v1': true,

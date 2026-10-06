@@ -1,27 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/models/download_item.dart';
 import 'package:spotiflac_android/services/app_state_database.dart';
+import 'package:spotiflac_android/services/download_queue_codec.dart';
 
-DownloadStatus downloadQueuePersistenceStatus(DownloadStatus status) =>
-    switch (status) {
-      DownloadStatus.downloading ||
-      DownloadStatus.finalizing => DownloadStatus.queued,
-      _ => status,
-    };
-
-/// Transfer samples are transient; only restart-relevant state reaches SQLite.
-String encodeDownloadQueueItemForPersistence(DownloadItem item) => jsonEncode(
-  item.toJson()
-    ..['status'] = downloadQueuePersistenceStatus(item.status).name
-    ..['progress'] = 0.0
-    ..['speedMBps'] = 0.0
-    ..['bytesReceived'] = 0
-    ..['bytesTotal'] = 0
-    ..['preparationStage'] = '',
-);
+export 'package:spotiflac_android/services/download_queue_codec.dart'
+    show downloadQueuePersistenceStatus, encodeDownloadQueueItemForPersistence;
 
 /// Owns durable queue snapshots, including corrupt-row cleanup and write order.
 /// A failed write leaves the previous snapshot intact so a later flush retries.
@@ -46,7 +31,7 @@ class DownloadQueuePersistence {
   List<DownloadItem>? _pendingItems;
   Future<void> _write = Future<void>.value();
   Future<void> _pauseWrite = Future<void>.value();
-  Map<String, ({DownloadItem? item, String? payload})> _saved = {};
+  Map<String, DownloadQueueSavedItem> _saved = {};
 
   static Future<List<Map<String, dynamic>>> _loadRows() async {
     final database = AppStateDatabase.instance;
@@ -78,41 +63,16 @@ class DownloadQueuePersistence {
         .catchError(onError);
   }
 
-  Future<List<DownloadItem>> restore() async {
-    final rows = await loadRows();
-    _saved.clear();
-    final pending = <DownloadItem>[];
-    for (final row in rows) {
-      final id = row['id']?.toString() ?? '';
-      // Retain corrupt IDs so the next successful flush deletes those rows.
-      _saved[id] = (item: null, payload: null);
-      final payload = row['item_json'];
-      if (id.isEmpty || payload is! String || payload.isEmpty) continue;
-      try {
-        final decoded = jsonDecode(payload);
-        if (decoded is! Map) continue;
-        var item = DownloadItem.fromJson(Map<String, dynamic>.from(decoded));
-        final status = downloadQueuePersistenceStatus(item.status);
-        _saved[id] = (
-          item: item,
-          payload:
-              row['status']?.toString() == status.name &&
-                  payload == encodeDownloadQueueItemForPersistence(item)
-              ? payload
-              : null,
-        );
-        if (item.status != status) {
-          item = item.copyWith(status: status, progress: 0);
-        }
-        if (status == DownloadStatus.queued ||
-            status == DownloadStatus.skipped) {
-          pending.add(item);
-        }
-      } catch (_) {
-        continue;
-      }
-    }
-    return pending;
+  Future<List<DownloadItem>> restore() {
+    final restored = _write.then((_) async {
+      final decoded = await decodeDownloadQueueRows(await loadRows());
+      _saved = decoded.saved;
+      return decoded.items;
+    });
+    // A restore is ordered with durable writes now that decoding can yield to
+    // a worker. Its error still reaches the caller without poisoning retries.
+    _write = restored.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return restored;
   }
 
   void schedule() {
@@ -140,20 +100,34 @@ class DownloadQueuePersistence {
   Future<void> _enqueue(List<DownloadItem> items) {
     return _write = _write
         .then((_) async {
-          final nextSaved = <String, ({DownloadItem? item, String? payload})>{};
+          final nextSaved = <String, DownloadQueueSavedItem>{};
           final upserts = <Map<String, dynamic>>[];
           final now = DateTime.now().toIso8601String();
+          final changed = <DownloadItem>[];
           for (final item in items) {
             if (item.status == DownloadStatus.completed ||
                 item.status == DownloadStatus.failed) {
               continue;
             }
             final saved = _saved[item.id];
-            final payload =
-                identical(saved?.item, item) && saved?.payload != null
-                ? saved!.payload!
-                : encodeDownloadQueueItemForPersistence(item);
-            nextSaved[item.id] = (item: item, payload: payload);
+            final cached =
+                identical(saved?.item, item) && saved?.payload != null;
+            nextSaved[item.id] = (
+              item: item,
+              payload: cached ? saved!.payload : null,
+            );
+            if (!cached) {
+              changed.add(item);
+            }
+          }
+          final encoded = await encodeDownloadQueueItems(changed);
+          for (var index = 0; index < changed.length; index++) {
+            final item = changed[index];
+            final saved = _saved[item.id];
+            final payload = encoded[index];
+            if (identical(nextSaved[item.id]?.item, item)) {
+              nextSaved[item.id] = (item: item, payload: payload);
+            }
             if (saved?.payload == payload) continue;
             upserts.add({
               'id': item.id,
