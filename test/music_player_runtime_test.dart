@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/models/settings.dart';
@@ -12,6 +14,8 @@ import 'package:spotiflac_android/services/listening_statistics.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
+import 'package:spotiflac_android/services/source_deletion_events.dart';
+import 'package:spotiflac_android/utils/file_access.dart';
 
 class _Deck implements MusicPlaybackDeck {
   @override
@@ -20,6 +24,7 @@ class _Deck implements MusicPlaybackDeck {
   Map<String, bool>? outputOptions;
   Duration position = Duration.zero;
   int disposals = 0;
+  bool failStop = false;
 
   @override
   bool get isDirect => false;
@@ -44,7 +49,11 @@ class _Deck implements MusicPlaybackDeck {
   @override
   Future<void> cancelPreparation() async {}
   @override
-  Future<void> stop() async => state = PlayerState.stopped;
+  Future<void> stop() async {
+    if (failStop) throw StateError('Transport failed');
+    state = PlayerState.stopped;
+  }
+
   @override
   Future<void> pause() async => state = PlayerState.paused;
   @override
@@ -118,6 +127,16 @@ class _SessionStore implements AppStateDatabase {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _DeletionHandler extends MusicPlayerHandler {
+  _DeletionHandler(MusicPlayerRuntime runtime) : super(runtime: runtime);
+
+  final deletedSources = <String>[];
+
+  @override
+  Future<void> onSourceDeleted(String source) async =>
+      deletedSources.add(source);
+}
+
 MusicPlayerRuntime _runtime({
   AppSettings settings = const AppSettings(pauseOnMute: false),
   Future<MusicPlayerHandler> Function(MusicPlayerHandler Function())?
@@ -125,6 +144,7 @@ MusicPlayerRuntime _runtime({
   List<_Deck>? decks,
   MusicPlaybackDeck Function(String)? createDeck,
   Stream<double> volumeChanges = const Stream.empty(),
+  SourceDeletionEvents? sourceDeletionEvents,
 }) {
   final runtime = MusicPlayerRuntime(
     settings: settings,
@@ -148,6 +168,7 @@ MusicPlayerRuntime _runtime({
         now: () => DateTime(2026),
       ),
       volumeChanges: volumeChanges,
+      sourceDeletionEvents: sourceDeletionEvents ?? SourceDeletionEvents(),
       isAndroid: false,
       isIOS: false,
     ),
@@ -169,6 +190,209 @@ const _track = PlayableMedia(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test(
+    'deletion subscriptions follow handler ownership and scoped overrides',
+    () async {
+      final events = SourceDeletionEvents();
+      late MusicPlayerRuntime first;
+      late MusicPlayerRuntime second;
+      first = _runtime(
+        sourceDeletionEvents: events,
+        initialize: (_) async => _DeletionHandler(first),
+      );
+      second = _runtime(
+        sourceDeletionEvents: events,
+        initialize: (_) async => _DeletionHandler(second),
+      );
+      late MusicPlayerRuntime isolated;
+      isolated = _runtime(initialize: (_) async => _DeletionHandler(isolated));
+      final firstHandler = await first.initialize() as _DeletionHandler;
+      final secondHandler = await second.initialize() as _DeletionHandler;
+      final isolatedHandler = await isolated.initialize() as _DeletionHandler;
+      first.attach(firstHandler); // Reattaching must not subscribe twice.
+      await events.publish('/one.flac');
+      expect(firstHandler.deletedSources, ['/one.flac']);
+      expect(secondHandler.deletedSources, ['/one.flac']);
+      expect(isolatedHandler.deletedSources, isEmpty);
+      await firstHandler.dispose();
+      final replacement = await first.initialize() as _DeletionHandler;
+      await events.publish('/two.flac');
+      expect(firstHandler.deletedSources, ['/one.flac']);
+      expect(replacement.deletedSources, ['/two.flac']);
+      expect(secondHandler.deletedSources, ['/one.flac', '/two.flac']);
+      await first.dispose();
+      await second.dispose();
+      await events.publish('/three.flac');
+      expect(replacement.deletedSources, ['/two.flac']);
+      expect(secondHandler.deletedSources, ['/one.flac', '/two.flac']);
+    },
+  );
+
+  test(
+    'storage deletion removes duplicates and advances every attached player',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'queued-deletion-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = await File(
+        '${directory.path}/one.flac',
+      ).writeAsString('audio');
+      final events = SourceDeletionEvents();
+      final runtimes = [
+        _runtime(sourceDeletionEvents: events),
+        _runtime(sourceDeletionEvents: events),
+      ];
+      final removed = PlayableMedia(
+        id: 'removed',
+        source: file.path,
+        title: 'Removed',
+        artist: '',
+      );
+      for (final runtime in runtimes) {
+        await (await runtime.initialize()).setQueueAndPlay([
+          removed,
+          removed,
+          _track,
+        ]);
+      }
+      expect(await deleteFile(file.path, deletionEvents: events), isTrue);
+      for (final runtime in runtimes) {
+        expect(runtime.handler!.queue.value.map((item) => item.id), ['one']);
+        expect(runtime.handler!.mediaItem.value?.id, 'one');
+        expect(runtime.handler!.playbackState.value.queueIndex, 0);
+      }
+    },
+  );
+
+  test(
+    'SAF deletion releases cached playback copies before returning',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'cached-deletion-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final cached = await File(
+        '${directory.path}/copy.flac',
+      ).writeAsString('audio');
+      const channel = MethodChannel('com.zarz.spotiflac/backend');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        channel,
+        (call) async => switch (call.method) {
+          'safCopyToTemp' => cached.path,
+          'safDelete' => true,
+          _ => null,
+        },
+      );
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final events = SourceDeletionEvents();
+      final runtime = _runtime(sourceDeletionEvents: events);
+      final handler = await runtime.initialize();
+      const source = 'content://test.provider/document/song.flac';
+      const removed = PlayableMedia(
+        id: 'removed',
+        source: source,
+        title: 'Removed',
+        artist: '',
+        artUri: 'https://example.com/cover.jpg',
+      );
+      await handler.setQueueAndPlay([removed, _track]);
+      expect(await cached.exists(), isTrue);
+      expect(await deleteFile(source, deletionEvents: events), isTrue);
+      expect(await cached.exists(), isFalse);
+      expect(handler.queue.value.map((item) => item.id), ['one']);
+      expect(handler.mediaItem.value?.id, 'one');
+    },
+  );
+
+  test('failed player stop cannot undo a confirmed storage deletion', () async {
+    final directory = await Directory.systemTemp.createTemp('failed-reaction-');
+    addTearDown(() => directory.delete(recursive: true));
+    final file = await File(
+      '${directory.path}/song.flac',
+    ).writeAsString('audio');
+    final events = SourceDeletionEvents();
+    final decks = <_Deck>[];
+    final runtime = _runtime(decks: decks, sourceDeletionEvents: events);
+    final handler = await runtime.initialize();
+    await handler.setQueueAndPlay([
+      PlayableMedia(
+        id: 'removed',
+        source: file.path,
+        title: 'Removed',
+        artist: '',
+      ),
+    ]);
+    decks.single.failStop = true;
+    expect(await deleteFile(file.path, deletionEvents: events), isTrue);
+    expect(await file.exists(), isFalse);
+    expect(handler.queue.value, isEmpty);
+  });
+
+  test(
+    'deletion retires a pending SAF copy without blocking a later copy',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'pending-deletion-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final stale = await File(
+        '${directory.path}/stale.flac',
+      ).writeAsString('old');
+      final replacement = await File(
+        '${directory.path}/new.flac',
+      ).writeAsString('new');
+      final copying = Completer<void>();
+      final release = Completer<String>();
+      const channel = MethodChannel('com.zarz.spotiflac/backend');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var copies = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'safDelete') return true;
+        if (call.method != 'safCopyToTemp') return null;
+        if (++copies > 1) return replacement.path;
+        copying.complete();
+        return release.future;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final events = SourceDeletionEvents();
+      final handler = await _runtime(sourceDeletionEvents: events).initialize();
+      const source = 'content://test.provider/document/pending.flac';
+      const removed = PlayableMedia(
+        id: 'removed',
+        source: source,
+        title: 'Removed',
+        artist: '',
+        artUri: 'https://example.com/cover.jpg',
+      );
+      final playing = handler.setQueueAndPlay([removed]);
+      await copying.future;
+      try {
+        expect(
+          await deleteFile(
+            source,
+            deletionEvents: events,
+          ).timeout(const Duration(seconds: 1)),
+          isTrue,
+        );
+        expect(handler.queue.value, isEmpty);
+      } finally {
+        release.complete(stale.path);
+      }
+      final restarted = handler.setQueueAndPlay([removed]);
+      await playing;
+      await restarted;
+      expect(copies, 2);
+      expect(await stale.exists(), isFalse);
+      expect(await replacement.exists(), isTrue);
+      expect(handler.mediaItem.value?.id, 'removed');
+      expect(handler.playbackState.value.playing, isTrue);
+    },
+  );
 
   test(
     'pre-init events have empty values and cancellation never waits for init',

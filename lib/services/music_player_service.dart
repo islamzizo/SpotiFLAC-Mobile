@@ -1008,19 +1008,22 @@ class MusicPlayerHandler extends BaseAudioHandler
     final inFlight = _pendingSourceResolutions[media.source];
     if (inFlight != null) return inFlight;
 
-    final resolution = () async {
+    late final Future<String?> resolution;
+    resolution = () async {
       try {
         final tempPath = await PlatformBridge.copyContentUriToTemp(
           media.source,
         );
         if (tempPath == null || tempPath.isEmpty) return null;
-        if (_disposed) {
+        final size = await File(tempPath).length();
+        if (_disposed ||
+            !identical(_pendingSourceResolutions[media.source], resolution)) {
           await _discardResolvedPath(tempPath);
           return null;
         }
 
         _resolvedPathCache[media.source] = tempPath;
-        _resolvedPathSizes[media.source] = await File(tempPath).length();
+        _resolvedPathSizes[media.source] = size;
         _resolvedPathOrder
           ..remove(media.source)
           ..add(media.source);
@@ -2143,9 +2146,13 @@ class MusicPlayerHandler extends BaseAudioHandler
   /// no longer be played.
   Future<void> onSourceDeleted(String source) async {
     final target = source.trim();
-    if (target.isEmpty || _media.isEmpty) return;
+    if (_disposed || target.isEmpty) return;
 
+    // A provider copy can finish after deletion. Retire its identity so it
+    // discards its result without evicting a later resolution of this source.
+    final pendingResolution = _pendingSourceResolutions.remove(target);
     final discardedPath = _resolvedPathCache.remove(target);
+    _resolvedPathSizes.remove(target);
     _resolvedPathOrder.remove(target);
     if (discardedPath != null) {
       await _discardResolvedPath(discardedPath);
@@ -2182,18 +2189,26 @@ class MusicPlayerHandler extends BaseAudioHandler
     _playHistory.clear();
     queue.add(List<MediaItem>.unmodifiable(_queueItems));
 
+    Future<void>? reaction;
     if (_media.isEmpty) {
-      await stop();
-      return;
-    }
-
-    if (wasCurrent) {
+      reaction = stop();
+    } else if (wasCurrent) {
       final nextIndex = _index.clamp(0, _media.length - 1);
-      await _playIndex(nextIndex);
+      reaction = _playIndex(nextIndex);
     } else {
       _index = (_index - removedBeforeCurrent).clamp(0, _media.length - 1);
       _broadcastState();
       unawaited(_persistSession(position: playbackState.value.position));
+    }
+    if (pendingResolution == null) {
+      await reaction;
+    } else {
+      // Queue invalidation must not wait behind an unavailable SAF provider.
+      unawaited(
+        reaction?.catchError((Object error) {
+          _log.w('Could not update playback after source deletion: $error');
+        }),
+      );
     }
   }
 

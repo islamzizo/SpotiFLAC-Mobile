@@ -16,6 +16,7 @@ import 'package:spotiflac_android/services/network_storage_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
 import 'package:spotiflac_android/services/player_widget_service.dart';
+import 'package:spotiflac_android/services/source_deletion_events.dart';
 import 'package:spotiflac_android/services/system_volume_service.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -34,6 +35,7 @@ class PlaybackDependencies {
     AppStateDatabase? sessionDatabase,
     LibraryDatabase? libraryDatabase,
     ListeningRecorder? recorder,
+    SourceDeletionEvents? sourceDeletionEvents,
     Stream<double>? volumeChanges,
     bool? isIOS,
     bool? isAndroid,
@@ -43,6 +45,7 @@ class PlaybackDependencies {
   }) : _sessionDatabase = sessionDatabase,
        _libraryDatabase = libraryDatabase,
        _recorder = recorder,
+       _sourceDeletionEvents = sourceDeletionEvents,
        _volumeChanges = volumeChanges,
        _isIOS = isIOS,
        _isAndroid = isAndroid;
@@ -59,6 +62,7 @@ class PlaybackDependencies {
   final AppStateDatabase? _sessionDatabase;
   final LibraryDatabase? _libraryDatabase;
   final ListeningRecorder? _recorder;
+  final SourceDeletionEvents? _sourceDeletionEvents;
   final Stream<double>? _volumeChanges;
   final bool? _isIOS, _isAndroid;
 
@@ -67,6 +71,8 @@ class PlaybackDependencies {
   LibraryDatabase get libraryDatabase =>
       _libraryDatabase ?? LibraryDatabase.instance;
   ListeningRecorder get recorder => _recorder ?? listeningRecorder;
+  SourceDeletionEvents get sourceDeletionEvents =>
+      _sourceDeletionEvents ?? SourceDeletionEvents.instance;
   Stream<double> get volumeChanges =>
       _volumeChanges ?? SystemVolumeService.instance.changes;
   bool get isIOS => _isIOS ?? Platform.isIOS;
@@ -103,6 +109,7 @@ class MusicPlayerRuntime {
   final PlaybackDependencies dependencies;
   AppSettings _settings;
   MusicPlayerHandler? _handler;
+  void Function()? _unsubscribeSourceDeletion;
   Future<MusicPlayerHandler>? _initFuture;
   Future<void>? _restoreFuture;
   final _handlers = StreamController<MusicPlayerHandler?>.broadcast(sync: true);
@@ -181,11 +188,18 @@ class MusicPlayerRuntime {
       throw StateError('This playback runtime already owns a handler');
     }
     _handler = handler;
+    if (!identical(existing, handler)) {
+      _unsubscribeSourceDeletion = dependencies.sourceDeletionEvents.subscribe(
+        handler.onSourceDeleted,
+      );
+    }
     if (!_initializing && !identical(existing, handler)) _handlers.add(handler);
   }
 
   void detach(MusicPlayerHandler handler) {
     if (!identical(_handler, handler)) return;
+    _unsubscribeSourceDeletion?.call();
+    _unsubscribeSourceDeletion = null;
     _handler = null;
     _restoreFuture = null;
     if (!_handlers.isClosed) _handlers.add(null);
