@@ -885,7 +885,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       return null;
     }
 
-    final sourceTrack = await _prepareDownloadSourceTrack(item.track);
+    final sourceTrack = await _metadataResolver.prepareSourceTrack(item.track);
     item = item.copyWith(
       track: await _resolveDownloadAlbumCredit(sourceTrack, settings),
     );
@@ -948,32 +948,40 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
 
     var trackForPayload = item.track;
     final extensionState = ref.read(extensionProvider);
-    final skipMetadataEnrichment = _shouldSkipMetadataEnrichment(
-      extensionState,
-      trackForPayload.source,
-      item.service,
-    );
+    final skipMetadataEnrichment =
+        DownloadMetadataResolver.shouldSkipMetadataEnrichment(
+          extensionState,
+          trackForPayload.source,
+          item.service,
+        );
     String? nativeDeezerTrackId;
     if (skipMetadataEnrichment) {
-      nativeDeezerTrackId = _extractKnownDeezerTrackId(trackForPayload);
+      nativeDeezerTrackId = DownloadMetadataResolver.knownDeezerTrackId(
+        trackForPayload,
+      );
     } else {
-      nativeDeezerTrackId = await _resolveDeezerIdFromKnownOrIsrc(
-        trackForPayload,
-        item.id,
-        lookupContext: 'native worker ISRC',
-      );
-      final providerResolved = await _resolveDeezerIdViaProviderIfNeeded(
-        trackForPayload,
-        nativeDeezerTrackId,
-        item.id,
-      );
+      nativeDeezerTrackId = await _metadataResolver
+          .resolveDeezerIdFromKnownOrIsrc(
+            trackForPayload,
+            item.id,
+            lookupContext: 'native worker ISRC',
+          );
+      final providerResolved = await _metadataResolver
+          .resolveDeezerIdViaProviderIfNeeded(
+            trackForPayload,
+            nativeDeezerTrackId,
+            item.id,
+            extensionState: extensionState,
+          );
       trackForPayload = providerResolved.track;
       nativeDeezerTrackId = providerResolved.deezerTrackId;
     }
 
     final extendedMetadata = skipMetadataEnrichment
         ? null
-        : await _loadExtendedMetadataForDeezerId(nativeDeezerTrackId);
+        : await _metadataResolver.loadExtendedMetadataForDeezerId(
+            nativeDeezerTrackId,
+          );
 
     final payload = _buildDownloadRequestPayload(
       track: trackForPayload,
@@ -1353,7 +1361,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       actualQuality = resolvedQuality;
     }
 
-    final resolvedAlbumArtist = _resolveAlbumArtistForMetadata(
+    final resolvedAlbumArtist = DownloadMetadataResolver.albumArtistForMetadata(
       item.track,
       settings,
     );

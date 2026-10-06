@@ -22,11 +22,12 @@ import 'package:spotiflac_android/services/download_queue_persistence.dart';
 import 'package:spotiflac_android/services/download_progress.dart';
 import 'package:spotiflac_android/services/download_file_finalizer.dart';
 import 'package:spotiflac_android/services/download_container_finalizer.dart';
+import 'package:spotiflac_android/services/download_metadata_resolver.dart';
+import 'package:spotiflac_android/services/download_metadata_embedding.dart';
 import 'package:spotiflac_android/services/download_saf_file_replacer.dart';
 import 'package:spotiflac_android/services/download_connectivity_policy.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/download_request_payload.dart';
-import 'package:spotiflac_android/services/download_album_metadata.dart';
 import 'package:spotiflac_android/services/download_motion_artwork_source.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/hires_check_service.dart';
@@ -46,10 +47,11 @@ import 'package:spotiflac_android/utils/progress_stream_poller.dart';
 
 import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/services/native_download_history.dart';
-import 'package:spotiflac_android/services/download_track_metadata.dart';
 
 export 'package:spotiflac_android/providers/download_history_provider.dart';
 export 'package:spotiflac_android/providers/download_queue_state.dart';
+export 'package:spotiflac_android/services/download_metadata_resolver.dart'
+    show copyTrackWithResolvedMetadata;
 export 'package:spotiflac_android/services/download_queue_persistence.dart'
     show encodeDownloadQueueItemForPersistence, downloadQueuePersistenceStatus;
 
@@ -318,10 +320,10 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   static const _nativeWorkerRunIdPrefsKey =
       'download_queue_native_worker_run_id';
   final NotificationService _notificationService = NotificationService();
-  // Shared across tracks in a batch: an album's tracks embed the same cover,
-  // so fetch it once instead of once per track. LRU-capped; files are deleted
-  // on eviction and when the queue drains.
-  final Map<String, Future<String?>> _embedCoverCache = {};
+  final _metadataResolver = DownloadMetadataResolver();
+  late final _metadataEmbedding = DownloadMetadataEmbedding(
+    onReplayGain: _storeTrackReplayGainForAlbum,
+  );
   late final ProgressStreamPoller<Map<String, dynamic>> _progressPoller =
       ProgressStreamPoller<Map<String, dynamic>>(
         streamProvider: PlatformBridge.downloadProgressStream,
@@ -631,7 +633,10 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     bool stageSafForDeferredPublish = false,
     bool qualityVariantCollisionOnly = false,
   }) {
-    final resolvedAlbumArtist = _resolveAlbumArtistForMetadata(track, settings);
+    final resolvedAlbumArtist = DownloadMetadataResolver.albumArtistForMetadata(
+      track,
+      settings,
+    );
     final postProcessingEnabled =
         settings.useExtensionProviders &&
         extensionState.extensions.any((e) => e.enabled && e.hasPostProcessing);
@@ -693,7 +698,11 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       embedLyrics:
           settings.embedMetadata &&
           settings.embedLyrics &&
-          !_shouldSkipLyrics(extensionState, track.source, item.service),
+          !DownloadMetadataResolver.shouldSkipLyrics(
+            extensionState,
+            track.source,
+            item.service,
+          ),
       embedReplayGain: settings.embedReplayGain,
       postProcessingEnabled: postProcessingEnabled,
       autoConvertDownloads: settings.autoConvertDownloads,
@@ -1735,7 +1744,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         stoppedWhilePaused && _networkPausedByWifiOnly;
 
     _stopProgressPolling();
-    _clearEmbedCoverCache();
+    _metadataEmbedding.clearCoverCache();
     if (!keepConnectivityMonitoring) {
       _stopConnectivityMonitoring();
     }

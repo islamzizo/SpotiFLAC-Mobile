@@ -13,10 +13,8 @@ extension _SingleItemDownload on DownloadQueueNotifier {
     try {
       final settings = ref.read(settingsProvider);
       final extensionState = ref.read(extensionProvider);
-      final resolvedAlbumArtist = _resolveAlbumArtistForMetadata(
-        track,
-        settings,
-      );
+      final resolvedAlbumArtist =
+          DownloadMetadataResolver.albumArtistForMetadata(track, settings);
 
       if (!settings.useExtensionProviders) return null;
 
@@ -207,7 +205,7 @@ class _DownloadRun {
       );
       if (await _shouldAbort('during album metadata lookup')) return;
 
-      resolvedAlbumArtist = n._resolveAlbumArtistForMetadata(
+      resolvedAlbumArtist = DownloadMetadataResolver.albumArtistForMetadata(
         trackToDownload,
         settings,
       );
@@ -220,13 +218,13 @@ class _DownloadRun {
       // with the download instead of delaying its start; it is awaited right
       // after the download returns.
       final extendedMetadataFuture = shouldSkipMetadataEnrichment
-          ? Future<_DeezerExtendedMetadataFields?>.value(null)
-          : n._loadExtendedMetadataForDeezerId(deezerTrackId).catchError((
-              Object e,
-            ) {
-              _log.w('Extended metadata lookup failed: $e');
-              return null;
-            });
+          ? Future<DownloadExtendedMetadata?>.value(null)
+          : n._metadataResolver
+                .loadExtendedMetadataForDeezerId(deezerTrackId)
+                .catchError((Object e) {
+                  _log.w('Extended metadata lookup failed: $e');
+                  return null;
+                });
 
       if (await _shouldAbort('before native download start')) {
         return;
@@ -326,7 +324,9 @@ class _DownloadRun {
   }
 
   Future<bool> _enrichDeezerTrackIfNeeded() async {
-    trackToDownload = await n._prepareDownloadSourceTrack(trackToDownload);
+    trackToDownload = await n._metadataResolver.prepareSourceTrack(
+      trackToDownload,
+    );
     return !await _shouldAbort('during metadata enrichment');
   }
 
@@ -414,22 +414,25 @@ class _DownloadRun {
               e.hasMetadataProvider &&
               e.id.toLowerCase() == trackSource,
         );
-    shouldSkipMetadataEnrichment = n._shouldSkipMetadataEnrichment(
-      extensionState,
-      trackToDownload.source,
-      item.service,
-    );
+    shouldSkipMetadataEnrichment =
+        DownloadMetadataResolver.shouldSkipMetadataEnrichment(
+          extensionState,
+          trackToDownload.source,
+          item.service,
+        );
     final hasActiveExtensions = extensionState.extensions.any((e) => e.enabled);
     useExtensions = settings.useExtensionProviders && hasActiveExtensions;
   }
 
   Future<bool> _resolveTrackIdentifiers() async {
     if (shouldSkipMetadataEnrichment) {
-      deezerTrackId = n._extractKnownDeezerTrackId(trackToDownload);
+      deezerTrackId = DownloadMetadataResolver.knownDeezerTrackId(
+        trackToDownload,
+      );
       _log.d('Skipping cross-provider metadata enrichment for ${item.service}');
       return true;
     }
-    deezerTrackId = await n._resolveDeezerIdFromKnownOrIsrc(
+    deezerTrackId = await n._metadataResolver.resolveDeezerIdFromKnownOrIsrc(
       trackToDownload,
       item.id,
       lookupContext: 'ISRC',
@@ -440,11 +443,13 @@ class _DownloadRun {
 
     // For tidal:/qobuz: tracks without ISRC, resolve ISRC from provider
     // API directly (faster than SongLink and avoids rate limits).
-    final providerResolved = await n._resolveDeezerIdViaProviderIfNeeded(
-      trackToDownload,
-      deezerTrackId,
-      item.id,
-    );
+    final providerResolved = await n._metadataResolver
+        .resolveDeezerIdViaProviderIfNeeded(
+          trackToDownload,
+          deezerTrackId,
+          item.id,
+          extensionState: extensionState,
+        );
     trackToDownload = providerResolved.track;
     deezerTrackId = providerResolved.deezerTrackId;
     if (await _shouldAbort('during provider ISRC resolution')) {
@@ -459,9 +464,8 @@ class _DownloadRun {
         !trackToDownload.id.startsWith('extension:') &&
         !trackToDownload.id.startsWith('tidal:') &&
         !trackToDownload.id.startsWith('qobuz:')) {
-      final spotifyLookup = await n._resolveSpotifyTrackViaDeezer(
-        trackToDownload,
-      );
+      final spotifyLookup = await n._metadataResolver
+          .resolveSpotifyTrackViaDeezer(trackToDownload);
       trackToDownload = spotifyLookup.track;
       deezerTrackId ??= spotifyLookup.deezerTrackId;
 

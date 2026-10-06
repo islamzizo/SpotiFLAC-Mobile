@@ -815,7 +815,11 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     final shouldSaveExternalLrc =
         settings.embedMetadata &&
         settings.embedLyrics &&
-        !_shouldSkipLyrics(extensionState, track.source, service) &&
+        !DownloadMetadataResolver.shouldSkipLyrics(
+          extensionState,
+          track.source,
+          service,
+        ) &&
         (lyricsMode == 'external' || lyricsMode == 'both');
     if (!shouldSaveExternalLrc) {
       return false;
