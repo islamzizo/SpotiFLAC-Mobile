@@ -31,12 +31,12 @@ class _Settings extends SettingsNotifier {
 }
 
 class _Local extends LocalLibraryNotifier {
-  int builds = 0;
-  int reloads = 0;
+  int _builds = 0;
+  int _reloads = 0;
 
   @override
   LocalLibraryState build() {
-    builds++;
+    _builds++;
     return LocalLibraryState();
   }
 
@@ -46,19 +46,19 @@ class _Local extends LocalLibraryNotifier {
 
   @override
   Future<void> reloadFromStorage() async {
-    reloads++;
+    _reloads++;
   }
 }
 
 class _History extends DownloadHistoryNotifier {
-  int reloads = 0;
+  int _reloads = 0;
 
   @override
   DownloadHistoryState build() => DownloadHistoryState();
 
   @override
   Future<void> reloadFromStorage() async {
-    reloads++;
+    _reloads++;
   }
 }
 
@@ -154,10 +154,10 @@ void main() {
       }
 
       await settle();
-      expect(local.builds, 0);
+      expect(local._builds, 0);
       container.read(settingsProvider.notifier).setLocalLibraryEnabled(true);
       await settle();
-      expect(local.builds, 1);
+      expect(local._builds, 1);
       final enabledQueries = queries;
       local.publishIndexChange();
       await settle();
@@ -171,7 +171,7 @@ void main() {
       expect(queries, disabledQueries);
       container.read(settingsProvider.notifier).setLocalLibraryEnabled(true);
       await settle();
-      expect(local.builds, 1);
+      expect(local._builds, 1);
       expect(queries, greaterThan(disabledQueries));
     },
   );
@@ -214,15 +214,15 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(history.reloads, greaterThan(0));
-      expect(local.builds, 0);
-      expect(local.reloads, 0);
+      expect(history._reloads, greaterThan(0));
+      expect(local._builds, 0);
+      expect(local._reloads, 0);
       final container = ProviderScope.containerOf(
         tester.element(find.byType(QueueTab)),
       );
       container.read(settingsProvider.notifier).setLocalLibraryEnabled(true);
       await tester.pumpAndSettle();
-      expect(local.builds, 1);
+      expect(local._builds, 1);
       container.read(settingsProvider.notifier).setLocalLibraryEnabled(false);
       await tester.pumpAndSettle();
       final disabledQueries = queries;

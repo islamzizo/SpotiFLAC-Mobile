@@ -6,8 +6,8 @@ import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/widgets/download_queue_feedback.dart';
 
 class _Queue extends DownloadQueueNotifier {
-  int retryCalls = 0;
-  bool? retriedNetworkOnly;
+  int _retryCalls = 0;
+  bool? _retriedNetworkOnly;
 
   @override
   DownloadQueueState build() => const DownloadQueueState();
@@ -20,8 +20,8 @@ class _Queue extends DownloadQueueNotifier {
 
   @override
   Future<void> retryAllFailed({bool networkOnly = false}) async {
-    retryCalls++;
-    retriedNetworkOnly = networkOnly;
+    _retryCalls++;
+    _retriedNetworkOnly = networkOnly;
   }
 }
 
@@ -65,8 +65,8 @@ void main() {
       expect(find.text(l10n.queueNetworkFailedOffline(3)), findsOneWidget);
       await tester.tap(find.text(l10n.dialogRetry));
       await tester.pumpAndSettle();
-      expect(queue.retryCalls, 1);
-      expect(queue.retriedNetworkOnly, isTrue);
+      expect(queue._retryCalls, 1);
+      expect(queue._retriedNetworkOnly, isTrue);
       queue.progressSnapshot();
       await tester.pumpAndSettle();
       expect(find.byType(SnackBar), findsNothing);

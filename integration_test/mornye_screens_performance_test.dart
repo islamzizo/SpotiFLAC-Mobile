@@ -241,7 +241,7 @@ void main() {
         await probe.wait(const Duration(milliseconds: 100));
       }
       await probe.wait(const Duration(milliseconds: 900));
-      expect(search.resultCount, greaterThan(0));
+      expect(search._resultCount, greaterThan(0));
       await tester.tap(find.byTooltip('Clear').hitTestable());
       await probe.wait(const Duration(milliseconds: 400));
       expect(field.controller.text, isEmpty);
@@ -292,7 +292,7 @@ void main() {
         'maximumBrowseLimit': requests
             .map((request) => request.limit)
             .reduce((a, b) => a > b ? a : b),
-        'searchRequests': search.requests,
+        'searchRequests': search._requests,
         'settingsUnchanged': true,
         'databaseCalls': databaseCalls.length,
       },
@@ -440,8 +440,8 @@ class _Profile extends UserProfileNotifier {
 }
 
 class _Search extends TrackNotifier {
-  int requests = 0;
-  int get resultCount => state.tracks.length;
+  int _requests = 0;
+  int get _resultCount => state.tracks.length;
 
   @override
   Future<void> customSearch(
@@ -451,7 +451,7 @@ class _Search extends TrackNotifier {
     String? selectedFilter,
     bool allowVerificationRetry = true,
   }) async {
-    requests++;
+    _requests++;
     state = TrackState(
       hasSearchText: true,
       searchExtensionId: 'example',
