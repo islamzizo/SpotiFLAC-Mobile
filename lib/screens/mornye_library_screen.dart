@@ -44,7 +44,6 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   String? _completeness;
   String _query = '';
   late String _sort;
-  int _limit = 40;
   List<LibraryBrowseEntry> _rows = const [];
   bool _loading = true;
 
@@ -55,7 +54,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     artist: widget.artist,
     search: _query,
     sort: _sort,
-    limit: _limit,
+    limit: 40,
     completeness: _completeness,
   );
 
@@ -66,8 +65,10 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     _scroll.addListener(() {
       if (_scroll.position.extentAfter < 500 &&
           !_loading &&
-          _rows.length >= _limit) {
-        setState(() => _limit += 40);
+          !(_overview && _query.isNotEmpty)) {
+        unawaited(
+          ref.read(libraryBrowseProvider(_request).notifier).loadMore(),
+        );
       }
     });
   }
@@ -86,7 +87,6 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
       if (!mounted || _query == value.trim()) return;
       setState(() {
         _query = value.trim();
-        _limit = 40;
         _rows = const [];
       });
     });
@@ -159,7 +159,6 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     if (!mounted || selected == null || selected == _sort) return;
     setState(() {
       _sort = selected;
-      _limit = 40;
       _rows = const [];
     });
     _scroll.jumpTo(0);
@@ -194,7 +193,6 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     }
     setState(() {
       _completeness = selected.isEmpty ? null : selected;
-      _limit = 40;
       _rows = const [];
     });
     _scroll.jumpTo(0);
@@ -237,10 +235,10 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     final colors = Theme.of(context).colorScheme;
     final searchingLibrary = _overview && _query.isNotEmpty;
     final result = searchingLibrary
-        ? const AsyncData<List<LibraryBrowseEntry>>([])
+        ? const AsyncData(LibraryBrowseState([], hasMore: false))
         : ref.watch(libraryBrowseProvider(_request));
-    _loading = result.isLoading;
-    if (result.hasValue) _rows = result.requireValue;
+    _loading = result.isLoading || (result.value?.isLoadingMore ?? false);
+    if (result.hasValue) _rows = result.requireValue.entries;
     final title =
         widget.artist ??
         (_overview
@@ -505,7 +503,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                     },
                   ),
                 ),
-            if (result.hasError)
+            if (result.hasError || result.value?.loadMoreError != null)
               SliverToBoxAdapter(
                 child: Center(
                   child: TextButton.icon(

@@ -84,6 +84,7 @@ void main() {
     final index = ValueNotifier(0);
     addTearDown(index.dispose);
     final requests = <LibraryBrowseRequest>[];
+    final pageOffsets = <int>[];
     final search = _Search();
     await tester.pumpWidget(
       ProviderScope(
@@ -101,8 +102,10 @@ void main() {
           trackProvider.overrideWith(() => search),
           userProfileProvider.overrideWith(_Profile.new),
           currentMediaItemProvider.overrideWith((ref) => Stream.value(null)),
-          libraryBrowseProvider.overrideWith((ref, request) async {
+          libraryBrowsePageLoaderProvider.overrideWithValue((page) async {
+            final request = page.browse;
             requests.add(request);
+            pageOffsets.add(page.offset);
             final rows = _albums.where((album) {
               return '${album.name} ${album.artist}'.toLowerCase().contains(
                     request.search.toLowerCase(),
@@ -114,9 +117,13 @@ void main() {
                               : 'unknown'));
             }).toList();
             if (request.sort == 'latest') {
-              return rows.reversed.take(request.limit).toList();
+              return LibraryBrowsePage(
+                rows.reversed.skip(page.offset).take(request.limit).toList(),
+              );
             }
-            return rows.take(request.limit).toList();
+            return LibraryBrowsePage(
+              rows.skip(page.offset).take(request.limit).toList(),
+            );
           }),
         ],
         child: MaterialApp(
@@ -167,7 +174,8 @@ void main() {
         await probe.wait(const Duration(milliseconds: 250));
       }
       position.jumpTo(0);
-      expect(requests.last.limit, 200);
+      expect(requests.last.limit, 40);
+      expect(pageOffsets.last, 160);
     });
     await probe.measure(
       'library_album_grid_scroll_2000_tracks',

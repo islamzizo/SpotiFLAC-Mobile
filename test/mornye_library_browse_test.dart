@@ -4,12 +4,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/download_item.dart';
 import 'package:spotiflac_android/models/track.dart';
+import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/library_browse_provider.dart';
 import 'package:spotiflac_android/providers/library_search_provider.dart';
+import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/screens/mornye_library_screen.dart';
 import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
+
+class _Settings extends SettingsNotifier {
+  @override
+  AppSettings build() => const AppSettings(localLibraryEnabled: false);
+}
+
+class _History extends DownloadHistoryNotifier {
+  @override
+  DownloadHistoryState build() => DownloadHistoryState();
+}
 
 LibraryBrowseEntry _album(int index) => LibraryBrowseEntry(
   source: 'downloaded',
@@ -31,10 +43,13 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            libraryBrowseProvider.overrideWith((ref, request) async {
+            settingsProvider.overrideWith(_Settings.new),
+            downloadHistoryProvider.overrideWith(_History.new),
+            libraryBrowsePageLoaderProvider.overrideWithValue((page) async {
+              final request = page.browse;
               requests.add(request);
               final filter = request.completeness;
-              return [
+              return LibraryBrowsePage([
                 LibraryBrowseEntry.fromRow({
                   'queue_source': 'downloaded',
                   'album_key': 'album',
@@ -53,7 +68,7 @@ void main() {
                         : null,
                   },
                 }, isArtist: false),
-              ];
+              ]);
             }),
           ],
           child: MaterialApp(
@@ -131,9 +146,12 @@ void main() {
         ProviderScope(
           overrides: [
             downloadQueueLookupProvider.overrideWithValue(queue),
-            libraryBrowseProvider.overrideWith((ref, request) async {
+            settingsProvider.overrideWith(_Settings.new),
+            downloadHistoryProvider.overrideWith(_History.new),
+            libraryBrowsePageLoaderProvider.overrideWithValue((page) async {
+              final request = page.browse;
               requests.add(request);
-              return [_album(0), _album(1)];
+              return LibraryBrowsePage([_album(0), _album(1)]);
             }),
             librarySearchProvider.overrideWith((ref, request) async {
               searches.add(request);
@@ -195,12 +213,19 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     final requests = <LibraryBrowseRequest>[];
+    final offsets = <int>[];
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
-          libraryBrowseProvider.overrideWith((ref, request) async {
+          settingsProvider.overrideWith(_Settings.new),
+          downloadHistoryProvider.overrideWith(_History.new),
+          libraryBrowsePageLoaderProvider.overrideWithValue((page) async {
+            final request = page.browse;
             requests.add(request);
-            return List.generate(request.limit, _album);
+            offsets.add(page.offset);
+            return LibraryBrowsePage(
+              List.generate(request.limit, (i) => _album(page.offset + i)),
+            );
           }),
         ],
         child: MaterialApp(
@@ -222,7 +247,15 @@ void main() {
     );
     scroll.controller!.jumpTo(scroll.controller!.position.maxScrollExtent);
     await tester.pumpAndSettle();
-    expect(requests.last.limit, 80);
+    expect(requests.last.limit, 40);
+    expect(offsets, [0, 40]);
+    expect(
+      tester
+          .widget<SliverGrid>(find.byType(SliverGrid))
+          .delegate
+          .estimatedChildCount,
+      80,
+    );
     scroll.controller!.jumpTo(0);
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Search your library'));
@@ -233,6 +266,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(requests.last.search, 'My album');
     expect(requests.last.limit, 40);
+    expect(offsets.last, 0);
     expect(tester.takeException(), isNull);
   });
 }
