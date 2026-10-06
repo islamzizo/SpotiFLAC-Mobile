@@ -171,6 +171,28 @@ class UserPlaylistCollection {
     return _trackKeys.contains(trackKey);
   }
 
+  bool sharesMembershipIndexWith(UserPlaylistCollection other) =>
+      identical(_trackKeys, other._trackKeys);
+
+  /// Publishes tracks and their index built by the hydration worker. When it
+  /// verified unchanged membership, keep the original index so the enclosing
+  /// collections state need not rescan every other playlist's tracks.
+  UserPlaylistCollection withHydratedTracks({
+    required List<CollectionTrackEntry> tracks,
+    required Set<String> trackKeys,
+    required bool membershipUnchanged,
+  }) => UserPlaylistCollection(
+    id: id,
+    name: name,
+    coverImagePath: coverImagePath,
+    createdAt: createdAt,
+    updatedAt: updatedAt,
+    tracks: tracks,
+    previewCover: previewCover,
+    tracksLoaded: true,
+    trackKeys: membershipUnchanged ? _trackKeys : trackKeys,
+  );
+
   Set<String> get trackKeys => UnmodifiableSetView(_trackKeys);
   int get trackCount => _trackKeys.length;
 
@@ -365,8 +387,28 @@ class LibraryCollectionsState {
       lovedKeys: keepLovedIndex ? _lovedKeys : null,
       favoriteArtistKeys: keepFavoriteArtistIndex ? _favoriteArtistKeys : null,
       playlistsById: keepPlaylistIndex ? _playlistsById : null,
-      allPlaylistTrackKeys: keepPlaylistIndex ? _allPlaylistTrackKeys : null,
+      allPlaylistTrackKeys:
+          keepPlaylistIndex || _hasSamePlaylistMembership(nextPlaylists)
+          ? _allPlaylistTrackKeys
+          : null,
     );
+  }
+
+  bool _hasSamePlaylistMembership(List<UserPlaylistCollection> nextPlaylists) {
+    if (nextPlaylists.length != playlists.length ||
+        _playlistsById.length != playlists.length) {
+      return false;
+    }
+    final seen = <String>{};
+    for (final playlist in nextPlaylists) {
+      final previous = _playlistsById[playlist.id];
+      if (!seen.add(playlist.id) ||
+          previous == null ||
+          !identical(previous._trackKeys, playlist._trackKeys)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Map<String, dynamic> toJson() => {

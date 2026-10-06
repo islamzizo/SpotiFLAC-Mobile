@@ -106,4 +106,37 @@ void main() {
     expect(loaded.tracksLoaded, isTrue);
     expect(loaded.trackCount, 0);
   });
+
+  test(
+    'membership remains correct after metadata copies and playlist changes',
+    () {
+      UserPlaylistCollection playlist(String id, String key) =>
+          UserPlaylistCollection(
+            id: id,
+            name: id,
+            createdAt: DateTime.utc(2026),
+            updatedAt: DateTime.utc(2026),
+            tracks: const [],
+            tracksLoaded: false,
+            trackKeys: {key},
+          );
+      final first = playlist('first', 'example:first');
+      final second = playlist('second', 'example:second');
+      final state = LibraryCollectionsState(playlists: [first, second]);
+      final renamed = state.copyWith(
+        playlists: [
+          second.copyWith(name: 'Renamed'),
+          first,
+        ],
+      );
+      expect(renamed.isTrackInAnyPlaylist('example:first'), isTrue);
+      expect(renamed.isTrackInAnyPlaylist('example:second'), isTrue);
+      final replaced = renamed.copyWith(playlists: [first, first]);
+      expect(replaced.isTrackInAnyPlaylist('example:first'), isTrue);
+      expect(replaced.isTrackInAnyPlaylist('example:second'), isFalse);
+      final removed = renamed.copyWith(playlists: [second]);
+      expect(removed.isTrackInAnyPlaylist('example:first'), isFalse);
+      expect(removed.isTrackInAnyPlaylist('example:second'), isTrue);
+    },
+  );
 }
