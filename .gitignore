@@ -53,6 +53,10 @@ AGENTS.md
 /android/*.keystore
 /android/app/*.jks
 
+# Android build outputs from vendored Flutter plugins
+/third_party/**/android/.gradle/
+/third_party/**/android/build/
+
 # Only the pinned encrypted CI payload belongs in the checkout.
 /third_party/discord/*
 !/third_party/discord/discord-mobile-1.10.19337.zip.gpg
