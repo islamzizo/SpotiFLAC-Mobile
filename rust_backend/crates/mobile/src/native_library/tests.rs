@@ -110,6 +110,76 @@ fn track(id: &str, path: &str) -> Value {
 }
 
 #[test]
+fn private_incremental_manifest_retains_selected_paths_and_order() {
+    let fixture = Fixture::new();
+    let mut request = fixture.request.clone();
+    request["operation"] = "library_incremental_import".into();
+    request["retain_removed_paths"] = true.into();
+    request["delta"] =
+        json!({"files":[],"removedUris":["/z","/a","/z"],"deletedPaths":["/ignored"]});
+    execute(&request, &|| Ok(())).unwrap();
+    let paths = fixture
+        .db
+        .prepare("SELECT path FROM native_library_removed_paths ORDER BY ordinal")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(paths, ["/z", "/a", "/z"]);
+    request["delta"] = json!({"scanned":[],"deletedPaths":["/fallback"]});
+    execute(&request, &|| Ok(())).unwrap();
+    let path: String = fixture
+        .db
+        .query_row("SELECT path FROM native_library_removed_paths", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(path, "/fallback");
+    request["delta"] = json!({"files":[],"removedUris":[]});
+    execute(&request, &|| Ok(())).unwrap();
+    assert_eq!(
+        fixture
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM native_library_removed_paths",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn invalid_private_removal_manifest_rolls_back_rows_and_manifest() {
+    let fixture = Fixture::new();
+    fixture.add("old", "/music/old.flac", "source");
+    let mut request = fixture.request.clone();
+    request["operation"] = "library_incremental_import".into();
+    request["retain_removed_paths"] = true.into();
+    request["delta"] =
+        json!({"files":[track("new","/music/new.flac")],"removedUris":["/music/old.flac",42]});
+    assert!(
+        execute(&request, &|| Ok(()))
+            .unwrap_err()
+            .contains("must be a string")
+    );
+    assert_eq!(fixture.ids(), ["old"]);
+    assert_eq!(
+        fixture
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name='native_library_removed_paths'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn production_dart_row_and_path_codec_parity() {
     let fixture: Value = serde_json::from_str(include_str!(
         "../../../../../test/fixtures/native_library_contract.json"

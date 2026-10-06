@@ -509,12 +509,28 @@ fn import(request: &Value, delta: Option<&Value>, check: Check<'_>) -> Result<Va
         let paths = delta["removedUris"]
             .as_array()
             .or_else(|| delta["deletedPaths"].as_array());
+        // The platform adapter can delete its spilled delta immediately after
+        // this operation. Retain its exact removal selection in the private
+        // staging database for publication by the live database's owner.
+        let retain_removed = request["retain_removed_paths"] == true;
+        if retain_removed {
+            transaction.execute_batch("CREATE TABLE IF NOT EXISTS main.native_library_removed_paths(ordinal INTEGER PRIMARY KEY,path TEXT NOT NULL); DELETE FROM main.native_library_removed_paths;")
+                .map_err(|e| error("stage removed Library paths", e))?;
+        }
         if let Some(paths) = paths {
-            for path in paths {
+            for (ordinal, path) in paths.iter().enumerate() {
                 check()?;
                 let path = path
                     .as_str()
                     .ok_or("Deleted Library path must be a string")?;
+                if retain_removed {
+                    transaction
+                        .execute(
+                            "INSERT INTO main.native_library_removed_paths VALUES(?,?)",
+                            params![ordinal as i64, path],
+                        )
+                        .map_err(|e| error("retain removed Library path", e))?;
+                }
                 transaction.execute("DELETE FROM library_path_keys WHERE item_id IN(SELECT id FROM library WHERE source_id = ? AND file_path = ?)", params![source,path]).map_err(|e| error("delete removed path keys", e))?;
                 deleted += transaction
                     .execute(
