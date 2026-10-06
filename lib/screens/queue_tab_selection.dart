@@ -283,22 +283,18 @@ extension _QueueTabSelectionActions on _QueueTabState {
           enqueueAll(qualityOverride: quality, service: service);
           if (!mounted) return;
           _exitPlaylistSelectionMode();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                context.l10n.snackbarAddedTracksToQueue(totalTracks),
-              ),
-            ),
+          showAppSnackBar(
+            context,
+            content: Text(context.l10n.snackbarAddedTracksToQueue(totalTracks)),
           );
         },
       );
     } else {
       enqueueAll();
       _exitPlaylistSelectionMode();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.snackbarAddedTracksToQueue(totalTracks)),
-        ),
+      showAppSnackBar(
+        context,
+        content: Text(context.l10n.snackbarAddedTracksToQueue(totalTracks)),
       );
     }
   }

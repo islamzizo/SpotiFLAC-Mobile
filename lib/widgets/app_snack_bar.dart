@@ -87,6 +87,7 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(
   required Widget content,
   Duration duration = const Duration(seconds: 3),
   SnackBarBehavior? behavior,
+  SnackBarAction? action,
 }) {
   final messenger = ScaffoldMessenger.of(context);
   if (!context.isMornye) {
@@ -95,6 +96,7 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(
         content: content,
         duration: duration,
         behavior: behavior,
+        action: action,
         persist: false,
         showCloseIcon: true,
       ),
@@ -117,16 +119,39 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(
             style: theme.textTheme.bodyMedium!.copyWith(
               color: theme.colorScheme.onSurface,
             ),
-            child: Row(
-              children: [
-                Expanded(child: content),
-                IconButton(
-                  tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
-                  color: theme.colorScheme.onSurface,
-                  onPressed: messenger.hideCurrentSnackBar,
-                  icon: const Icon(Icons.close, size: 20),
-                ),
-              ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final actionBelow =
+                    action != null &&
+                    (constraints.maxWidth < 280 ||
+                        MediaQuery.textScalerOf(context).scale(14) > 18);
+                final message = Row(
+                  children: [
+                    Expanded(child: content),
+                    if (!actionBelow) ?action,
+                    IconButton(
+                      tooltip: MaterialLocalizations.of(
+                        context,
+                      ).closeButtonTooltip,
+                      color: theme.colorScheme.onSurface,
+                      onPressed: messenger.hideCurrentSnackBar,
+                      icon: const Icon(Icons.close, size: 20),
+                    ),
+                  ],
+                );
+                return actionBelow
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          message,
+                          Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: action,
+                          ),
+                        ],
+                      )
+                    : message;
+              },
             ),
           ),
         ),

@@ -48,6 +48,7 @@ import 'package:spotiflac_android/widgets/playlist_picker_sheet.dart';
 import 'package:spotiflac_android/widgets/motion_header_banner.dart';
 import 'package:spotiflac_android/widgets/cross_extension_share_sheet.dart';
 import 'package:spotiflac_android/widgets/view_queue_snackbar_action.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/downloadable_cover.dart';
 
 part 'artist_screen_widgets.dart';
@@ -1217,11 +1218,10 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
             )
           : context.l10n.discographyAddedToQueue(tracksToQueue.length);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          action: buildViewQueueSnackBarAction(context),
-        ),
+      showAppSnackBar(
+        context,
+        content: Text(message),
+        action: buildViewQueueSnackBarAction(context),
       );
     }
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 
 SnackBarAction buildViewQueueSnackBarAction(BuildContext context) {
   return SnackBarAction(
@@ -14,13 +15,9 @@ SnackBarAction buildViewQueueSnackBarAction(BuildContext context) {
 /// Shared "Added to queue" snackbar with a View action jumping to Library.
 void showAddedToQueueSnackBar(BuildContext context, String trackName) {
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(context.l10n.snackbarAddedToQueue(trackName)),
-      action: buildViewQueueSnackBarAction(context),
-      duration: const Duration(seconds: 3),
-      persist: false,
-      showCloseIcon: true,
-    ),
+  showAppSnackBar(
+    context,
+    content: Text(context.l10n.snackbarAddedToQueue(trackName)),
+    action: buildViewQueueSnackBarAction(context),
   );
 }

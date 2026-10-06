@@ -217,11 +217,10 @@ extension _HomeTabCsvImport on _HomeTabState {
                     qualityOverride: quality,
                   );
               if (mounted) {
-                ScaffoldMessenger.of(this.context).showSnackBar(
-                  SnackBar(
-                    content: Text(queueSnackbarMessage),
-                    action: buildViewQueueSnackBarAction(this.context),
-                  ),
+                showAppSnackBar(
+                  this.context,
+                  content: Text(queueSnackbarMessage),
+                  action: buildViewQueueSnackBarAction(this.context),
                 );
               }
             },
@@ -246,11 +245,10 @@ extension _HomeTabCsvImport on _HomeTabState {
               .read(downloadQueueProvider.notifier)
               .addMultipleToQueue(tracksToQueue, service);
           if (mounted) {
-            ScaffoldMessenger.of(this.context).showSnackBar(
-              SnackBar(
-                content: Text(queueSnackbarMessage),
-                action: buildViewQueueSnackBarAction(this.context),
-              ),
+            showAppSnackBar(
+              this.context,
+              content: Text(queueSnackbarMessage),
+              action: buildViewQueueSnackBarAction(this.context),
             );
           }
         }

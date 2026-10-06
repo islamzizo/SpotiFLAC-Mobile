@@ -10,6 +10,7 @@ import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/widgets/download_service_picker.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/view_queue_snackbar_action.dart';
 
 /// Shared single-track "add to queue" flow for detail screens: shows the
@@ -117,7 +118,7 @@ void showQueuedSnackbar(BuildContext context, int added, int skipped) {
   final message = skipped > 0
       ? context.l10n.discographySkippedDownloaded(added, skipped)
       : context.l10n.snackbarAddedTracksToQueue(added);
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  showAppSnackBar(context, content: Text(message));
 }
 
 bool shouldShowBatchDownloadPicker({

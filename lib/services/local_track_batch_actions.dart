@@ -23,6 +23,7 @@ import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/widgets/batch_progress_dialog.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/re_enrich_field_dialog.dart';
 import 'package:spotiflac_android/widgets/re_enrich_review_sheet.dart';
 
@@ -142,7 +143,7 @@ Future<void> queueLocalTracksAsFlac(
           skippedCount,
         );
 
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(summary)));
+  showAppSnackBar(context, content: Text(summary));
   onComplete();
 }
 
