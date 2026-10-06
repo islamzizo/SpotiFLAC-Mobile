@@ -78,6 +78,164 @@ LibraryCollectionsSnapshot collectionFixture(int count) =>
     );
 
 void main() {
+  Future<LibraryCollectionsState> nativeBytes(
+    List<int> bytes,
+    int count,
+    Directory directory,
+  ) async {
+    final file = File('${directory.path}/rows.ndjson');
+    await file.writeAsBytes(bytes);
+    return hydrateLibraryCollectionsSnapshot(
+      LibraryCollectionsSnapshot(
+        wishlistRows: const [],
+        lovedRows: const [],
+        playlistRows: const [],
+        playlistTrackRows: const [],
+        favoriteArtistRows: const [],
+        nativeRowsPath: file.path,
+        nativeRowsDirectory: directory.path,
+        nativeRowCount: count,
+      ),
+    );
+  }
+
+  String nativeLine(String kind, Map<String, dynamic> row) =>
+      jsonEncode({'kind': kind, 'row': row});
+
+  test(
+    'native chunked reader retains interleaved group order across 256-row batches',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'collection-row-groups-',
+      );
+      final wishlist = List.generate(513, trackRow);
+      final loved = List.generate(3, (index) => trackRow(900 + index));
+      final snapshot = LibraryCollectionsSnapshot(
+        wishlistRows: wishlist,
+        lovedRows: loved,
+        favoriteArtistRows: const [],
+        playlistRows: const [],
+        playlistTrackRows: const [],
+      );
+      final lines = [
+        for (final row in wishlist.take(257)) nativeLine('wishlist', row),
+        nativeLine('loved', loved[0]),
+        for (final row in wishlist.skip(257)) nativeLine('wishlist', row),
+        for (final row in loved.skip(1)) nativeLine('loved', row),
+      ];
+      // Include LF, CRLF and lone CR; the last row intentionally has no newline.
+      final text = StringBuffer();
+      for (var index = 0; index < lines.length; index++) {
+        text.write(lines[index]);
+        if (index + 1 != lines.length) {
+          text.write(['\n', '\r\n', '\r'][index % 3]);
+        }
+      }
+      final actual = await nativeBytes(
+        utf8.encode(text.toString()),
+        lines.length,
+        directory,
+      );
+      expect(
+        jsonEncode(actual.toJson()),
+        jsonEncode(decodeLibraryCollectionsSnapshot(snapshot).toJson()),
+      );
+      expect(
+        actual.wishlist.map((entry) => entry.key),
+        wishlist.map((row) => row['track_key']),
+      );
+      expect(
+        actual.loved.map((entry) => entry.key),
+        loved.map((row) => row['track_key']),
+      );
+      expect(await directory.exists(), isFalse);
+    },
+  );
+
+  test(
+    'native UTF-8 and CRLF survive exact file chunk boundaries and unterminated tail',
+    () async {
+      Map<String, dynamic> commentRow(int id, String comment) => {
+        ...trackRow(id),
+        'track_json': jsonEncode(
+          (jsonDecode(trackRow(id)['track_json'] as String)
+                as Map<String, dynamic>)
+            ..['comment'] = comment,
+        ),
+      };
+      final initial = nativeLine('wishlist', commentRow(0, '🎵終わり'));
+      final emojiPrefix = utf8
+          .encode(initial.substring(0, initial.indexOf('🎵')))
+          .length;
+      final unicodeRow = commentRow(0, '${'x' * (65535 - emojiPrefix)}🎵終わり');
+      final unicodeLine = nativeLine('wishlist', unicodeRow);
+      final unicodeBytes = utf8.encode(unicodeLine);
+      expect(unicodeBytes[65535], 0xf0);
+      expect(unicodeBytes[65536], 0x9f);
+      final unicodeDirectory = await Directory.systemTemp.createTemp(
+        'collection-utf8-boundary-',
+      );
+      final unicode = await nativeBytes(unicodeBytes, 1, unicodeDirectory);
+      expect(
+        unicode.wishlist.single.track.comment,
+        (jsonDecode(unicodeRow['track_json'] as String) as Map)['comment'],
+      );
+      expect(await unicodeDirectory.exists(), isFalse);
+
+      final unpadded = nativeLine('wishlist', commentRow(1, ''));
+      final crRow = commentRow(1, 'y' * (65535 - utf8.encode(unpadded).length));
+      final crLine = nativeLine('wishlist', crRow);
+      final tail = trackRow(2);
+      final crBytes = utf8.encode('$crLine\r\n${nativeLine('wishlist', tail)}');
+      expect(crBytes[65535], 13);
+      expect(crBytes[65536], 10);
+      final crDirectory = await Directory.systemTemp.createTemp(
+        'collection-crlf-boundary-',
+      );
+      final crlf = await nativeBytes(crBytes, 2, crDirectory);
+      expect(crlf.wishlist.map((entry) => entry.key), [
+        'example:1',
+        'example:2',
+      ]);
+      expect(
+        crlf.wishlist.first.track.comment,
+        'y' * (65535 - utf8.encode(unpadded).length),
+      );
+      expect(await crDirectory.exists(), isFalse);
+    },
+  );
+
+  test(
+    'native malformed bytes/envelopes and row-count mismatch always remove staging',
+    () async {
+      final valid = nativeLine('wishlist', trackRow(1));
+      final invalid = <({List<int> bytes, int count})>[
+        (bytes: [...utf8.encode('$valid\n'), 0xc3, 0x28], count: 2),
+        (bytes: utf8.encode('$valid\n{"kind":'), count: 2),
+        (bytes: utf8.encode('$valid\n\n'), count: 2),
+        (bytes: utf8.encode(nativeLine('unknown', {})), count: 1),
+        (
+          bytes: utf8.encode(
+            jsonEncode({'kind': 'wishlist', 'row': <dynamic>[]}),
+          ),
+          count: 1,
+        ),
+        (bytes: utf8.encode(valid), count: 0),
+        (bytes: utf8.encode('$valid\r\n'), count: 2),
+      ];
+      for (final input in invalid) {
+        final directory = await Directory.systemTemp.createTemp(
+          'collection-invalid-chunks-',
+        );
+        await expectLater(
+          nativeBytes(input.bytes, input.count, directory),
+          throwsA(isA<Error>()),
+        );
+        expect(await directory.exists(), isFalse);
+      }
+    },
+  );
+
   test(
     'native row file preserves snapshot parity and is always cleaned',
     () async {

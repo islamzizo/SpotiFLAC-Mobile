@@ -449,10 +449,8 @@ Future<void> _readNativeCollectionRows(
   var count = 0;
   _CollectionRows? previousKind;
   var batch = <Map<String, dynamic>>[];
-  try {
-    await for (final line in File(
-      input.path,
-    ).openRead().transform(utf8.decoder).transform(const LineSplitter())) {
+  final lines = const LineSplitter().startChunkedConversion(
+    _CollectionLineSink((line) {
       final decoded = jsonDecode(line) as Map<String, dynamic>;
       final kind = switch (decoded['kind']) {
         'wishlist' || 'playlist_track' => _CollectionRows.wishlist,
@@ -466,15 +464,26 @@ Future<void> _readNativeCollectionRows(
       };
       if (previousKind != null &&
           (kind != previousKind || batch.length == 256)) {
-        accumulator.add(previousKind, batch);
+        accumulator.add(previousKind!, batch);
         batch = <Map<String, dynamic>>[];
       }
       previousKind = kind;
       batch.add(Map<String, dynamic>.from(decoded['row'] as Map));
       count++;
+    }),
+  );
+  try {
+    // Decode file chunks asynchronously, then split and consume their lines
+    // synchronously on this worker. A stream event per row adds avoidable
+    // scheduling overhead to large snapshots.
+    await for (final chunk in File(
+      input.path,
+    ).openRead().transform(utf8.decoder)) {
+      lines.add(chunk);
     }
+    lines.close();
     if (previousKind != null && batch.isNotEmpty) {
-      accumulator.add(previousKind, batch);
+      accumulator.add(previousKind!, batch);
     }
     if (input.count != null && count != input.count) {
       throw const FormatException('Incomplete native collection snapshot');
@@ -482,6 +491,17 @@ Future<void> _readNativeCollectionRows(
   } finally {
     await File(input.path).delete();
   }
+}
+
+class _CollectionLineSink implements Sink<String> {
+  const _CollectionLineSink(this.onLine);
+  final void Function(String) onLine;
+
+  @override
+  void add(String line) => onLine(line);
+
+  @override
+  void close() {}
 }
 
 enum _CollectionExportRows { wishlist, loved, artist, playlistTrack }
