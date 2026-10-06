@@ -1263,7 +1263,7 @@ class _WordHighlightedLyricLineState
             )
           : position,
     );
-    setState(() {});
+    if (!_shouldAnimate) setState(() {});
   }
 
   void _updateTransportState({bool? playing, bool? loading}) {

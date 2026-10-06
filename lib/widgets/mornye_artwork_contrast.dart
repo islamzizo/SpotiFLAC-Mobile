@@ -50,7 +50,8 @@ class MornyeArtworkContrast extends StatefulWidget {
   State<MornyeArtworkContrast> createState() => _MornyeArtworkContrastState();
 }
 
-class _MornyeArtworkContrastState extends State<MornyeArtworkContrast> {
+class _MornyeArtworkContrastState extends State<MornyeArtworkContrast>
+    with WidgetsBindingObserver {
   final _background = GlobalKey();
   Timer? _timer;
   bool _sampling = false;
@@ -59,8 +60,12 @@ class _MornyeArtworkContrastState extends State<MornyeArtworkContrast> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _schedule();
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) => _schedule();
 
   @override
   void didUpdateWidget(MornyeArtworkContrast oldWidget) {
@@ -74,6 +79,9 @@ class _MornyeArtworkContrastState extends State<MornyeArtworkContrast> {
       _colors = {};
       return;
     }
+    // Playback can keep the Dart isolate alive after the UI is backgrounded.
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
     WidgetsBinding.instance.addPostFrameCallback((_) => _sample());
     _timer = Timer.periodic(
       const Duration(milliseconds: 333),
@@ -152,6 +160,7 @@ class _MornyeArtworkContrastState extends State<MornyeArtworkContrast> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
