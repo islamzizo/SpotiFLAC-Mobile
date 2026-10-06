@@ -1,6 +1,7 @@
 //! Migration APIs. Instances here are not connected to the app's Go-owned work.
 
 mod cancellation;
+mod data_jobs;
 mod extensions;
 mod ffmpeg;
 mod filename;

@@ -274,9 +274,26 @@ import UniformTypeIdentifiers
             return
         }
         if coreBackend.routesApplication && !osMethods.contains(call.method) {
+            if call.method == "cancelNativeDataJob" {
+                do {
+                    result(try coreBackend.invokeApplication(method: call.method, arguments: call.arguments))
+                } catch {
+                    result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil))
+                }
+                return
+            }
+            let arguments: Any?
+            do {
+                arguments = try coreBackend.prepareApplicationArguments(method: call.method, arguments: call.arguments)
+            } catch {
+                result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil))
+                return
+            }
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let response = try self.coreBackend.invokeApplication(method: call.method, arguments: call.arguments)
+                    let value = try self.coreBackend.invokeApplication(method: call.method, arguments: arguments)
+                    let response = call.method == "runNativeDataJob" && value is String
+                        ? self.bridgeJsonResult(value as! String) : value
                     DispatchQueue.main.async { result(response) }
                 } catch {
                     DispatchQueue.main.async { result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil)) }

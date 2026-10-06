@@ -3,6 +3,7 @@ import CryptoKit
 import Darwin
 import ffmpegkit
 import SpotiFLACBackend
+import Flutter
 
 struct CoreFFmpegCommand: Decodable {
     let command_id: String
@@ -154,6 +155,7 @@ final class CoreDirectoryScope {
 protocol CoreBackend {
     var implementation: String { get }
     var routesApplication: Bool { get }
+    func prepareApplicationArguments(method: String, arguments: Any?) throws -> Any?
     func invokeApplication(method: String, arguments: Any?) throws -> Any?
     func completeAuthCallback(state: String, code: String, sessionGrant: Bool, onResolved: (String) -> Void) throws
     func openDownloadProgress() throws -> CoreDownloadProgress
@@ -190,6 +192,8 @@ protocol CoreBackend {
 extension CoreBackend {
     var routesApplication: Bool { false }
 
+    func prepareApplicationArguments(method: String, arguments: Any?) throws -> Any? { arguments }
+
     func invokeApplication(method: String, arguments: Any?) throws -> Any? {
         throw NSError(domain: "CoreBackend", code: 1, userInfo: [NSLocalizedDescriptionKey: "Application routing is unavailable for \(method)"])
     }
@@ -205,6 +209,9 @@ final class RustCoreBackend: CoreBackend {
     private var manager: ExtensionManager?
     private var repository: ExtensionRepository?
     private var requests: CancellationRegistry?
+    private let dataJobs = CancellationRegistry(domain: .extensionRequest)
+    private let dataJobLock = NSLock()
+    private var activeDataJobs: [String: Int] = [:]
     private var identity: [String]?
     private var loggingEnabled = false
     private var allowPrivateNetwork = false
@@ -258,6 +265,48 @@ final class RustCoreBackend: CoreBackend {
         defer { ownerLock.unlock() }
         guard let manager = manager else { throw failure("Rust backend is not initialized") }
         return (manager, try requestRegistryLocked().acquire(id: id))
+    }
+
+    func prepareApplicationArguments(method: String, arguments: Any?) throws -> Any? {
+        guard method == "runNativeDataJob" else { return arguments }
+        guard var args = arguments as? [String: Any], let id = args["request_id"] as? String,
+              !id.isEmpty else { throw failure("Missing native data job ID") }
+        // Only acquire the cancellation lease here. JSON, file I/O and native
+        // processing remain on the background queue. This preserves queued
+        // cancellation without retaining sentinels for already-finished jobs.
+        dataJobLock.lock()
+        defer { dataJobLock.unlock() }
+        let lease = try dataJobs.acquire(id: id)
+        activeDataJobs[id, default: 0] += 1
+        args["_native_data_job_lease"] = lease
+        return args
+    }
+
+    private func finishDataJob(_ id: String, _ lease: RequestLease) {
+        dataJobLock.lock()
+        defer { dataJobLock.unlock() }
+        lease.release()
+        let remaining = (activeDataJobs[id] ?? 1) - 1
+        activeDataJobs[id] = remaining > 0 ? remaining : nil
+    }
+
+    private func cancelDataJob(_ id: String) throws {
+        dataJobLock.lock()
+        defer { dataJobLock.unlock() }
+        if activeDataJobs[id] != nil { try dataJobs.cancel(id: id) }
+    }
+
+    private func runDataJob(_ args: [String: Any]) throws -> String {
+        guard let id = args["request_id"] as? String,
+              let lease = args["_native_data_job_lease"] as? RequestLease else {
+            throw failure("Missing native data job lease")
+        }
+        defer { finishDataJob(id, lease) }
+        guard let raw = args["request_json"] as? String else {
+            throw failure("Missing native data job request")
+        }
+        let bytes = (args["bytes"] as? FlutterStandardTypedData)?.data ?? Data()
+        return try SpotiFLACBackend.runNativeDataJob(requestJson: raw, bytes: bytes, lease: lease)
     }
 
     private func repositoryOwner() throws -> ExtensionRepository {
@@ -600,6 +649,10 @@ final class RustCoreBackend: CoreBackend {
             return value
         }
         switch method {
+        case "runNativeDataJob": return try runDataJob(args)
+        case "cancelNativeDataJob":
+            try cancelDataJob(string("request_id"))
+            return nil
         case "cancelExtensionRequest":
             ownerLock.lock()
             defer { ownerLock.unlock() }

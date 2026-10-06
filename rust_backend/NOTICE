@@ -1,5 +1,9 @@
 # Third-party notices
 
+The native SQLite/TTML data jobs use
+rusqlite 0.40.2 and roxmltree 0.21.1 under their MIT licenses, packaged in
+`assets/licenses/native_data_jobs.txt`.
+
 The English title-casing control flow in
 `crates/core/src/metadata/musicbrainz/casing.rs` follows
 `golang.org/x/text/cases`. Its frozen Unicode 15 data is generated using the

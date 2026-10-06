@@ -487,7 +487,7 @@ class MainActivity: FlutterFragmentActivity() {
         }
     }
 
-    private fun bridgeJsonResult(payload: String): Any {
+    internal fun bridgeJsonResult(payload: String): Any {
         // Decide on char count where possible: UTF-8 size is >= length and
         // <= 3*length, so only the ambiguous band needs the full encode —
         // avoids duplicating multi-MB payloads just to measure them.

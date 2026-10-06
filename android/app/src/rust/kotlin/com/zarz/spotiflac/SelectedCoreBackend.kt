@@ -21,23 +21,39 @@ import org.json.JSONObject
 internal fun createCoreBackend(context: Context): CoreBackend = RustCoreBackend.initialize(context)
 
 internal suspend fun MainActivity.dispatchBackendApplication(call: MethodCall, result: MethodChannel.Result): Boolean {
-    val response = withContext(Dispatchers.IO) {
-        when (call.method) {
-            "getLyricsLRC", "getLyricsLRCWithSource" -> {
-                val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
-                val path = arguments["file_path"] as? String ?: ""
-                readLyricsWithSafCopy(
-                    path,
-                    copyToTemp = { copyUriToTemp(Uri.parse(it))?.let(::File) },
-                    read = { localPath ->
-                        coreBackend.invokeApplication(call.method, arguments + ("file_path" to localPath))
-                    },
-                ) ?: if (call.method == "getLyricsLRC") "" else {
-                    """{"lyrics":"","source":"","sync_type":"","instrumental":false}"""
+    if (call.method == "cancelNativeDataJob") {
+        val args = call.arguments as? Map<*, *>
+        NativeDataJobs.cancel(args?.get("request_id") as? String ?: "")
+        result.success(null)
+        return true
+    }
+    val jobId = if (call.method == "runNativeDataJob") {
+        (call.arguments as? Map<*, *>)?.get("request_id") as? String
+            ?: error("Missing data job ID")
+    } else null
+    val jobLease = jobId?.let { NativeDataJobs.acquire(it) }
+    val response = try {
+        withContext(Dispatchers.IO) {
+            when (call.method) {
+                "runNativeDataJob" -> runNativeDataJobPlatform(call.arguments, checkNotNull(jobLease))
+                "getLyricsLRC", "getLyricsLRCWithSource" -> {
+                    val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+                    val path = arguments["file_path"] as? String ?: ""
+                    readLyricsWithSafCopy(
+                        path,
+                        copyToTemp = { copyUriToTemp(Uri.parse(it))?.let(::File) },
+                        read = { localPath ->
+                            coreBackend.invokeApplication(call.method, arguments + ("file_path" to localPath))
+                        },
+                    ) ?: if (call.method == "getLyricsLRC") "" else {
+                        """{"lyrics":"","source":"","sync_type":"","instrumental":false}"""
+                    }
                 }
+                else -> coreBackend.invokeApplication(call.method, call.arguments)
             }
-            else -> coreBackend.invokeApplication(call.method, call.arguments)
         }
+    } finally {
+        if (jobLease != null) NativeDataJobs.release(checkNotNull(jobId), jobLease)
     }
     result.success(response)
     return true
@@ -119,6 +135,10 @@ internal object RustCoreBackend : CoreBackend {
     @Synchronized
     private fun acquireRequest(id: String): Pair<ExtensionManager, RequestLease> =
         owner() to requestRegistry().acquire(id)
+
+    internal fun runDataJob(request: JSONObject, bytes: ByteArray, lease: RequestLease): String {
+        return com.spotiflac.backend.runNativeDataJob(request.toString(), bytes, lease)
+    }
 
     @Synchronized
     private fun repositoryOwner(): ExtensionRepository =
@@ -592,6 +612,10 @@ internal object RustCoreBackend : CoreBackend {
             return (0 until values.length()).map { values.getString(it) }
         }
         when (method) {
+            "cancelNativeDataJob" -> {
+                NativeDataJobs.cancel(string("request_id"))
+                return null
+            }
             "cancelExtensionRequest" -> synchronized(this) {
                 requestRegistry().cancel(string("request_id"))
                 return null

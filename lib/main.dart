@@ -51,6 +51,10 @@ void main() {
         yield LicenseEntryWithLineBreaks(const [
           'libsmb2',
         ], await rootBundle.loadString('assets/licenses/libsmb2.txt'));
+        yield LicenseEntryWithLineBreaks(const [
+          'rusqlite',
+          'roxmltree',
+        ], await rootBundle.loadString('assets/licenses/native_data_jobs.txt'));
         if (Platform.isAndroid) {
           yield LicenseEntryWithLineBreaks(const [
             'libusb',

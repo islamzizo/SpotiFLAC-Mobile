@@ -130,6 +130,7 @@ flutter:
     - assets/licenses/oboe.txt
     - assets/licenses/wavpack.txt
     - assets/licenses/libsmb2.txt
+    - assets/licenses/native_data_jobs.txt
 
   fonts:
     - family: Inter
