@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -32,28 +33,6 @@ class LibraryCollectionsSnapshot {
     required this.playlistRows,
     required this.playlistTrackRows,
     required this.favoriteArtistRows,
-  });
-}
-
-class PlaylistPickerSummaryRow {
-  final String id;
-  final String name;
-  final String? coverImagePath;
-  final String? previewCover;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-  final int trackCount;
-  final bool containsAllRequestedTracks;
-
-  const PlaylistPickerSummaryRow({
-    required this.id,
-    required this.name,
-    this.coverImagePath,
-    this.previewCover,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.trackCount,
-    required this.containsAllRequestedTracks,
   });
 }
 
@@ -308,7 +287,7 @@ class LibraryCollectionsDatabase {
     );
   }
 
-  Future<List<PlaylistPickerSummaryRow>> loadPlaylistPickerSummaries(
+  Future<List<PlaylistPickerSummary>> loadPlaylistPickerSummaries(
     List<String> requestedTrackKeys,
   ) async => readPlaylistPickerSummaries(await database, requestedTrackKeys);
 
@@ -596,7 +575,7 @@ class LibraryCollectionsDatabase {
 }
 
 /// Reads picker rows with bounded selection queries, preserving playlist order.
-Future<List<PlaylistPickerSummaryRow>> readPlaylistPickerSummaries(
+Future<List<PlaylistPickerSummary>> readPlaylistPickerSummaries(
   DatabaseExecutor db,
   List<String> requestedTrackKeys,
 ) async {
@@ -668,7 +647,7 @@ Future<List<PlaylistPickerSummaryRow>> readPlaylistPickerSummaries(
             }
           } catch (_) {}
         }
-        return PlaylistPickerSummaryRow(
+        return PlaylistPickerSummary(
           id: id,
           name: row['name']?.toString() ?? '',
           coverImagePath: row['cover_image_path'] as String?,

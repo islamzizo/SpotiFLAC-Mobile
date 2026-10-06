@@ -1,440 +1,49 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/library_collections_database.dart';
+import 'package:spotiflac_android/utils/logger.dart';
+
+export 'package:spotiflac_android/models/library_collections.dart';
 
 const _playlistCoverMaxDimension = 1024;
 const _playlistCoverMaxStoredBytes = 2 * 1024 * 1024;
-
-String trackCollectionKey(Track track) {
-  final isrc = track.isrc?.trim();
-  if (isrc != null && isrc.isNotEmpty) {
-    return 'isrc:${isrc.toUpperCase()}';
-  }
-  final source = (track.source?.trim().isNotEmpty ?? false)
-      ? track.source!.trim()
-      : 'builtin';
-  return '$source:${track.id}';
-}
-
-String _stripCollectionResourcePrefix(String value) {
-  final colonIndex = value.indexOf(':');
-  if (colonIndex <= 0 || colonIndex == value.length - 1) {
-    return value.trim();
-  }
-  return value.substring(colonIndex + 1).trim();
-}
-
-String artistCollectionKey({
-  required String artistId,
-  required String? providerId,
-}) {
-  final trimmedArtistId = artistId.trim();
-  final trimmedProviderId = providerId?.trim();
-  final source = trimmedProviderId != null && trimmedProviderId.isNotEmpty
-      ? trimmedProviderId.toLowerCase()
-      : (trimmedArtistId.contains(':')
-            ? trimmedArtistId.split(':').first.toLowerCase()
-            : 'builtin');
-  return '$source:${_stripCollectionResourcePrefix(trimmedArtistId)}';
-}
-
-class CollectionTrackEntry {
-  final String key;
-  final Track track;
-  final DateTime addedAt;
-
-  const CollectionTrackEntry({
-    required this.key,
-    required this.track,
-    required this.addedAt,
-  });
-
-  Map<String, dynamic> toJson() => {
-    'key': key,
-    'track': track.toJson(),
-    'addedAt': addedAt.toIso8601String(),
-  };
-
-  factory CollectionTrackEntry.fromJson(Map<String, dynamic> json) {
-    final addedAtRaw = json['addedAt'] as String?;
-    return CollectionTrackEntry(
-      key: json['key'] as String,
-      track: Track.fromJson(Map<String, dynamic>.from(json['track'] as Map)),
-      addedAt: DateTime.tryParse(addedAtRaw ?? '') ?? DateTime.now(),
-    );
-  }
-}
-
-class CollectionArtistEntry {
-  final String key;
-  final String artistId;
-  final String? providerId;
-  final String name;
-  final String? imageUrl;
-  final DateTime addedAt;
-
-  const CollectionArtistEntry({
-    required this.key,
-    required this.artistId,
-    required this.providerId,
-    required this.name,
-    this.imageUrl,
-    required this.addedAt,
-  });
-
-  Map<String, dynamic> toJson() => {
-    'key': key,
-    'artistId': artistId,
-    'providerId': providerId,
-    'name': name,
-    'imageUrl': imageUrl,
-    'addedAt': addedAt.toIso8601String(),
-  };
-
-  factory CollectionArtistEntry.fromJson(Map<String, dynamic> json) {
-    final artistId = json['artistId'] as String;
-    final providerId = json['providerId'] as String?;
-    final addedAtRaw = json['addedAt'] as String?;
-    return CollectionArtistEntry(
-      key:
-          json['key'] as String? ??
-          artistCollectionKey(artistId: artistId, providerId: providerId),
-      artistId: artistId,
-      providerId: providerId,
-      name: json['name'] as String? ?? '',
-      imageUrl: json['imageUrl'] as String?,
-      addedAt: DateTime.tryParse(addedAtRaw ?? '') ?? DateTime.now(),
-    );
-  }
-}
-
-class UserPlaylistCollection {
-  final String id;
-  final String name;
-  final String? coverImagePath;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-  final List<CollectionTrackEntry> tracks;
-  final String? previewCover;
-  final bool tracksLoaded;
-  final Set<String> _trackKeys;
-
-  UserPlaylistCollection({
-    required this.id,
-    required this.name,
-    this.coverImagePath,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.tracks,
-    this.previewCover,
-    this.tracksLoaded = true,
-    Set<String>? trackKeys,
-  }) : _trackKeys = trackKeys ?? tracks.map((entry) => entry.key).toSet();
-
-  UserPlaylistCollection copyWith({
-    String? id,
-    String? name,
-    String? Function()? coverImagePath,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-    List<CollectionTrackEntry>? tracks,
-    String? previewCover,
-    bool? tracksLoaded,
-  }) {
-    final nextTracks = tracks ?? this.tracks;
-    final keepTrackIndex = identical(nextTracks, this.tracks);
-    return UserPlaylistCollection(
-      id: id ?? this.id,
-      name: name ?? this.name,
-      coverImagePath: coverImagePath != null
-          ? coverImagePath()
-          : this.coverImagePath,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      tracks: nextTracks,
-      previewCover: previewCover ?? this.previewCover,
-      tracksLoaded:
-          tracksLoaded ??
-          (identical(nextTracks, this.tracks) ? this.tracksLoaded : true),
-      trackKeys: keepTrackIndex ? _trackKeys : null,
-    );
-  }
-
-  bool containsTrackKey(String trackKey) {
-    return _trackKeys.contains(trackKey);
-  }
-
-  int get trackCount => _trackKeys.length;
-
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    if (coverImagePath != null) 'coverImagePath': coverImagePath,
-    'createdAt': createdAt.toIso8601String(),
-    'updatedAt': updatedAt.toIso8601String(),
-    'tracks': tracks.map((e) => e.toJson()).toList(),
-  };
-
-  factory UserPlaylistCollection.fromJson(Map<String, dynamic> json) {
-    final createdAtRaw = json['createdAt'] as String?;
-    final updatedAtRaw = json['updatedAt'] as String?;
-    final createdAt = DateTime.tryParse(createdAtRaw ?? '') ?? DateTime.now();
-    final updatedAt = DateTime.tryParse(updatedAtRaw ?? '') ?? createdAt;
-    final tracksRaw = (json['tracks'] as List?) ?? const [];
-    return UserPlaylistCollection(
-      id: json['id'] as String,
-      name: json['name'] as String? ?? '',
-      coverImagePath: json['coverImagePath'] as String?,
-      createdAt: createdAt,
-      updatedAt: updatedAt,
-      tracks: tracksRaw
-          .whereType<Map<Object?, Object?>>()
-          .map(
-            (e) => CollectionTrackEntry.fromJson(Map<String, dynamic>.from(e)),
-          )
-          .toList(growable: false),
-    );
-  }
-}
-
-class PlaylistPickerSummary {
-  final String id;
-  final String name;
-  final String? coverImagePath;
-  final String? previewCover;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-  final int trackCount;
-  final bool containsAllRequestedTracks;
-
-  const PlaylistPickerSummary({
-    required this.id,
-    required this.name,
-    this.coverImagePath,
-    this.previewCover,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.trackCount,
-    required this.containsAllRequestedTracks,
-  });
-}
-
-class PlaylistPickerSummaryRequest {
-  final List<String> trackKeys;
-
-  PlaylistPickerSummaryRequest._(this.trackKeys);
-
-  factory PlaylistPickerSummaryRequest.fromTracks(Iterable<Track> tracks) {
-    final keys =
-        tracks
-            .map(trackCollectionKey)
-            .where((key) => key.trim().isNotEmpty)
-            .toSet()
-            .toList(growable: false)
-          ..sort();
-    return PlaylistPickerSummaryRequest._(keys);
-  }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PlaylistPickerSummaryRequest &&
-          listEquals(trackKeys, other.trackKeys);
-
-  @override
-  int get hashCode => Object.hashAll(trackKeys);
-}
-
-class LibraryCollectionsState {
-  final List<CollectionTrackEntry> wishlist;
-  final List<CollectionTrackEntry> loved;
-  final List<UserPlaylistCollection> playlists;
-  final List<CollectionArtistEntry> favoriteArtists;
-  final bool isLoaded;
-  final Set<String> _wishlistKeys;
-  final Set<String> _lovedKeys;
-  final Set<String> _favoriteArtistKeys;
-  final Map<String, UserPlaylistCollection> _playlistsById;
-  final Set<String> _allPlaylistTrackKeys;
-
-  LibraryCollectionsState({
-    this.wishlist = const [],
-    this.loved = const [],
-    this.playlists = const [],
-    this.favoriteArtists = const [],
-    this.isLoaded = false,
-    Set<String>? wishlistKeys,
-    Set<String>? lovedKeys,
-    Set<String>? favoriteArtistKeys,
-    Map<String, UserPlaylistCollection>? playlistsById,
-    Set<String>? allPlaylistTrackKeys,
-  }) : _wishlistKeys =
-           wishlistKeys ?? wishlist.map((entry) => entry.key).toSet(),
-       _lovedKeys = lovedKeys ?? loved.map((entry) => entry.key).toSet(),
-       _favoriteArtistKeys =
-           favoriteArtistKeys ??
-           favoriteArtists.map((entry) => entry.key).toSet(),
-       _playlistsById =
-           playlistsById ??
-           Map.fromEntries(
-             playlists.map((playlist) => MapEntry(playlist.id, playlist)),
-           ),
-       _allPlaylistTrackKeys =
-           allPlaylistTrackKeys ?? _buildPlaylistTrackKeys(playlists);
-
-  int get wishlistCount => wishlist.length;
-  int get lovedCount => loved.length;
-  int get playlistCount => playlists.length;
-  int get favoriteArtistCount => favoriteArtists.length;
-
-  bool isInWishlist(Track track) {
-    final key = trackCollectionKey(track);
-    return _wishlistKeys.contains(key);
-  }
-
-  bool isLoved(Track track) {
-    final key = trackCollectionKey(track);
-    return _lovedKeys.contains(key);
-  }
-
-  bool containsWishlistKey(String trackKey) {
-    return _wishlistKeys.contains(trackKey);
-  }
-
-  bool containsLovedKey(String trackKey) {
-    return _lovedKeys.contains(trackKey);
-  }
-
-  bool isFavoriteArtist({
-    required String artistId,
-    required String? providerId,
-  }) {
-    final key = artistCollectionKey(artistId: artistId, providerId: providerId);
-    return _favoriteArtistKeys.contains(key);
-  }
-
-  bool containsFavoriteArtistKey(String artistKey) {
-    return _favoriteArtistKeys.contains(artistKey);
-  }
-
-  UserPlaylistCollection? playlistById(String playlistId) {
-    return _playlistsById[playlistId];
-  }
-
-  bool isTrackInAnyPlaylist(String trackKey) {
-    return _allPlaylistTrackKeys.contains(trackKey);
-  }
-
-  bool get hasPlaylistTracks => _allPlaylistTrackKeys.isNotEmpty;
-
-  LibraryCollectionsState copyWith({
-    List<CollectionTrackEntry>? wishlist,
-    List<CollectionTrackEntry>? loved,
-    List<UserPlaylistCollection>? playlists,
-    List<CollectionArtistEntry>? favoriteArtists,
-    bool? isLoaded,
-  }) {
-    final nextWishlist = wishlist ?? this.wishlist;
-    final nextLoved = loved ?? this.loved;
-    final nextPlaylists = playlists ?? this.playlists;
-    final nextFavoriteArtists = favoriteArtists ?? this.favoriteArtists;
-    final keepWishlistIndex = identical(nextWishlist, this.wishlist);
-    final keepLovedIndex = identical(nextLoved, this.loved);
-    final keepPlaylistIndex = identical(nextPlaylists, this.playlists);
-    final keepFavoriteArtistIndex = identical(
-      nextFavoriteArtists,
-      this.favoriteArtists,
-    );
-
-    return LibraryCollectionsState(
-      wishlist: nextWishlist,
-      loved: nextLoved,
-      playlists: nextPlaylists,
-      favoriteArtists: nextFavoriteArtists,
-      isLoaded: isLoaded ?? this.isLoaded,
-      wishlistKeys: keepWishlistIndex ? _wishlistKeys : null,
-      lovedKeys: keepLovedIndex ? _lovedKeys : null,
-      favoriteArtistKeys: keepFavoriteArtistIndex ? _favoriteArtistKeys : null,
-      playlistsById: keepPlaylistIndex ? _playlistsById : null,
-      allPlaylistTrackKeys: keepPlaylistIndex ? _allPlaylistTrackKeys : null,
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-    'wishlist': wishlist.map((e) => e.toJson()).toList(),
-    'loved': loved.map((e) => e.toJson()).toList(),
-    'playlists': playlists.map((e) => e.toJson()).toList(),
-    'favoriteArtists': favoriteArtists.map((e) => e.toJson()).toList(),
-  };
-
-  factory LibraryCollectionsState.fromJson(Map<String, dynamic> json) {
-    final wishlistRaw = (json['wishlist'] as List?) ?? const [];
-    final lovedRaw = (json['loved'] as List?) ?? const [];
-    final playlistsRaw = (json['playlists'] as List?) ?? const [];
-    final favoriteArtistsRaw = (json['favoriteArtists'] as List?) ?? const [];
-
-    return LibraryCollectionsState(
-      wishlist: wishlistRaw
-          .whereType<Map<Object?, Object?>>()
-          .map(
-            (e) => CollectionTrackEntry.fromJson(Map<String, dynamic>.from(e)),
-          )
-          .toList(growable: false),
-      loved: lovedRaw
-          .whereType<Map<Object?, Object?>>()
-          .map(
-            (e) => CollectionTrackEntry.fromJson(Map<String, dynamic>.from(e)),
-          )
-          .toList(growable: false),
-      playlists: playlistsRaw
-          .whereType<Map<Object?, Object?>>()
-          .map(
-            (e) =>
-                UserPlaylistCollection.fromJson(Map<String, dynamic>.from(e)),
-          )
-          .toList(growable: false),
-      favoriteArtists: favoriteArtistsRaw
-          .whereType<Map<Object?, Object?>>()
-          .map(
-            (e) => CollectionArtistEntry.fromJson(Map<String, dynamic>.from(e)),
-          )
-          .toList(growable: false),
-      isLoaded: true,
-    );
-  }
-}
-
-Set<String> _buildPlaylistTrackKeys(List<UserPlaylistCollection> playlists) {
-  final keys = <String>{};
-  for (final playlist in playlists) {
-    keys.addAll(playlist._trackKeys);
-  }
-  return keys;
-}
-
-class PlaylistAddBatchResult {
-  final int addedCount;
-  final int alreadyInPlaylistCount;
-
-  const PlaylistAddBatchResult({
-    required this.addedCount,
-    required this.alreadyInPlaylistCount,
-  });
-}
+final _log = AppLogger('LibraryCollections');
 
 class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
-  final LibraryCollectionsDatabase _db = LibraryCollectionsDatabase.instance;
+  LibraryCollectionsNotifier({LibraryCollectionsDatabase? database})
+    : _db = database ?? LibraryCollectionsDatabase.instance;
+
+  final LibraryCollectionsDatabase _db;
   Future<void>? _loadFuture;
   final Map<String, Future<void>> _playlistLoadFutures = {};
+  Future<void> _mutationTail = Future<void>.value();
+
+  /// Evaluate membership against the preceding completed write, then publish
+  /// only after persistence succeeds. A failed write does not block the next.
+  Future<T> _mutate<T>(Future<T> Function() mutation) {
+    final operation = _mutationTail.then((_) async {
+      await _ensureLoaded();
+      if (!ref.mounted) {
+        throw StateError('Library collections provider was disposed');
+      }
+      return mutation();
+    });
+    _mutationTail = operation.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {},
+    );
+    return operation;
+  }
 
   void _invalidatePlaylistPickerSummaries() {
+    if (!ref.mounted) return;
     ref.invalidate(libraryPlaylistPickerSummariesProvider);
   }
 
@@ -447,7 +56,9 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
   Future<void> _load() async {
     try {
       await _db.migrateFromSharedPreferences();
+      if (!ref.mounted) return;
       final snapshot = await _db.loadSnapshot();
+      if (!ref.mounted) return;
 
       final wishlist = <CollectionTrackEntry>[];
       for (final row in snapshot.wishlistRows) {
@@ -525,18 +136,21 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
         favoriteArtists: favoriteArtists,
         isLoaded: true,
       );
-    } catch (_) {
-      state = state.copyWith(isLoaded: true);
+    } catch (error, stack) {
+      _log.e('Failed to load library collections', error, stack);
+      if (ref.mounted) state = state.copyWith(isLoaded: true);
     }
   }
 
   Future<void> _ensureLoaded() async {
+    if (!ref.mounted) return;
     if (state.isLoaded) return;
     await (_loadFuture ?? _load());
   }
 
   Future<void> ensurePlaylistLoaded(String playlistId) async {
     await _ensureLoaded();
+    if (!ref.mounted) return;
     final playlist = state.playlistById(playlistId);
     if (playlist == null || playlist.tracksLoaded) return;
 
@@ -544,6 +158,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     if (pending != null) return pending;
     final load = () async {
       final rows = await _db.loadPlaylistTracks(playlistId);
+      if (!ref.mounted) return;
       final tracks = rows
           .map(_parseTrackEntryRow)
           .whereType<CollectionTrackEntry>()
@@ -618,6 +233,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     String playlistId,
     UserPlaylistCollection Function(UserPlaylistCollection playlist) update,
   ) {
+    if (!ref.mounted) return false;
     final playlist = state.playlistById(playlistId);
     if (playlist == null) return false;
 
@@ -647,11 +263,11 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
       required String addedAt,
     })
     dbUpsert,
-  }) async {
-    await _ensureLoaded();
+  }) => _mutate(() async {
     final key = trackCollectionKey(track);
     if (contains(key)) {
       await dbDelete(key);
+      if (!ref.mounted) return false;
       state = withList(
         select(
           state,
@@ -670,9 +286,9 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
       trackJson: jsonEncode(track.toJson()),
       addedAt: entry.addedAt.toIso8601String(),
     );
-    state = withList([entry, ...select(state)]);
+    if (ref.mounted) state = withList([entry, ...select(state)]);
     return true;
-  }
+  });
 
   Future<bool> toggleWishlist(Track track) => _toggleTrackEntry(
     track,
@@ -697,8 +313,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     required String? providerId,
     required String name,
     String? imageUrl,
-  }) async {
-    await _ensureLoaded();
+  }) => _mutate(() async {
     final key = artistCollectionKey(artistId: artistId, providerId: providerId);
     final sourceSeparator = key.indexOf(':');
     final source = sourceSeparator > 0 ? key.substring(0, sourceSeparator) : '';
@@ -708,13 +323,19 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
         ? trimmedProviderId
         : (source.isNotEmpty && source != 'builtin' ? source : null);
     if (state.containsFavoriteArtistKey(key)) {
-      await removeFavoriteArtist(key);
+      await _db.deleteFavoriteArtistEntry(key);
+      if (!ref.mounted) return false;
+      state = state.copyWith(
+        favoriteArtists: state.favoriteArtists
+            .where((entry) => entry.key != key)
+            .toList(growable: false),
+      );
       return false;
     }
 
     final entry = CollectionArtistEntry(
       key: key,
-      artistId: _stripCollectionResourcePrefix(artistId),
+      artistId: collectionArtistId(artistId),
       providerId: effectiveProviderId,
       name: name,
       imageUrl: imageUrl,
@@ -725,10 +346,13 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
       artistJson: jsonEncode(entry.toJson()),
       addedAt: entry.addedAt.toIso8601String(),
     );
-    final updated = [entry, ...state.favoriteArtists];
-    state = state.copyWith(favoriteArtists: updated);
+    if (ref.mounted) {
+      state = state.copyWith(
+        favoriteArtists: [entry, ...state.favoriteArtists],
+      );
+    }
     return true;
-  }
+  });
 
   Future<void> _removeEntry<T>(
     String key, {
@@ -737,17 +361,17 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     required String Function(T entry) keyOf,
     required LibraryCollectionsState Function(List<T> list) withList,
     required Future<void> Function(String key) dbDelete,
-  }) async {
-    await _ensureLoaded();
+  }) => _mutate(() async {
     if (!contains(key)) return;
 
     await dbDelete(key);
+    if (!ref.mounted) return;
     state = withList(
       select(
         state,
       ).where((entry) => keyOf(entry) != key).toList(growable: false),
     );
-  }
+  });
 
   Future<void> removeFavoriteArtist(String artistKey) => _removeEntry(
     artistKey,
@@ -776,8 +400,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     dbDelete: _db.deleteLovedEntry,
   );
 
-  Future<String> createPlaylist(String name) async {
-    await _ensureLoaded();
+  Future<String> createPlaylist(String name) => _mutate(() async {
     final now = DateTime.now();
     final id = 'pl_${now.microsecondsSinceEpoch}';
     final trimmedName = name.trim();
@@ -797,79 +420,89 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
       createdAt: now.toIso8601String(),
       updatedAt: now.toIso8601String(),
     );
+    if (!ref.mounted) return id;
     state = state.copyWith(playlists: [playlist, ...state.playlists]);
     _invalidatePlaylistPickerSummaries();
     return id;
-  }
+  });
 
-  Future<void> renamePlaylist(String playlistId, String newName) async {
-    await _ensureLoaded();
-    final trimmed = newName.trim();
-    if (trimmed.isEmpty) return;
-    final playlist = state.playlistById(playlistId);
-    if (playlist == null || playlist.name == trimmed) return;
+  Future<void> renamePlaylist(String playlistId, String newName) =>
+      _mutate(() async {
+        final trimmed = newName.trim();
+        if (trimmed.isEmpty) return;
+        final playlist = state.playlistById(playlistId);
+        if (playlist == null || playlist.name == trimmed) return;
 
-    final now = DateTime.now();
-    await _db.renamePlaylist(
-      playlistId: playlistId,
-      name: trimmed,
-      updatedAt: now.toIso8601String(),
-    );
-    _replacePlaylistById(playlistId, (playlist) {
-      return playlist.copyWith(name: trimmed, updatedAt: now);
-    });
-    _invalidatePlaylistPickerSummaries();
-  }
+        final now = DateTime.now();
+        await _db.renamePlaylist(
+          playlistId: playlistId,
+          name: trimmed,
+          updatedAt: now.toIso8601String(),
+        );
+        _replacePlaylistById(playlistId, (playlist) {
+          return playlist.copyWith(name: trimmed, updatedAt: now);
+        });
+        _invalidatePlaylistPickerSummaries();
+      });
 
-  Future<void> deletePlaylist(String playlistId) async {
-    await _ensureLoaded();
-    final playlistIndex = state.playlists.indexWhere((p) => p.id == playlistId);
-    if (playlistIndex < 0) return;
+  Future<void> deletePlaylist(String playlistId) => _mutate(() async {
+    if (state.playlistById(playlistId) == null) return;
 
     await _db.deletePlaylist(playlistId);
-    final updatedPlaylists = [...state.playlists]..removeAt(playlistIndex);
-    state = state.copyWith(playlists: updatedPlaylists);
-    _invalidatePlaylistPickerSummaries();
-  }
-
-  Future<bool> addTrackToPlaylist(String playlistId, Track track) async {
-    await _ensureLoaded();
-    var playlist = state.playlistById(playlistId);
-    if (playlist == null) return false;
-
-    final key = trackCollectionKey(track);
-    if (playlist.containsTrackKey(key)) return false;
-    await ensurePlaylistLoaded(playlistId);
-    playlist = state.playlistById(playlistId);
-    if (playlist == null) return false;
-
-    final now = DateTime.now();
-    final entry = CollectionTrackEntry(key: key, track: track, addedAt: now);
-    await _db.upsertPlaylistTrack(
-      playlistId: playlistId,
-      trackKey: key,
-      trackJson: jsonEncode(track.toJson()),
-      addedAt: entry.addedAt.toIso8601String(),
-      playlistUpdatedAt: now.toIso8601String(),
+    if (!ref.mounted) return;
+    state = state.copyWith(
+      playlists: state.playlists
+          .where((playlist) => playlist.id != playlistId)
+          .toList(growable: false),
     );
-    final changed = _replacePlaylistById(playlistId, (playlist) {
-      if (playlist.containsTrackKey(key)) return playlist;
-      return playlist.copyWith(
-        tracks: [...playlist.tracks, entry],
-        updatedAt: now,
-      );
-    });
-    if (!changed) return false;
     _invalidatePlaylistPickerSummaries();
-    return true;
-  }
+  });
+
+  Future<bool> addTrackToPlaylist(String playlistId, Track track) => _mutate(
+    () async {
+      var playlist = state.playlistById(playlistId);
+      if (playlist == null) return false;
+
+      final key = trackCollectionKey(track);
+      if (playlist.containsTrackKey(key)) return false;
+      await ensurePlaylistLoaded(playlistId);
+      if (!ref.mounted) return false;
+      playlist = state.playlistById(playlistId);
+      if (playlist == null) return false;
+
+      final now = DateTime.now();
+      final entry = CollectionTrackEntry(key: key, track: track, addedAt: now);
+      await _db.upsertPlaylistTrack(
+        playlistId: playlistId,
+        trackKey: key,
+        trackJson: jsonEncode(track.toJson()),
+        addedAt: entry.addedAt.toIso8601String(),
+        playlistUpdatedAt: now.toIso8601String(),
+      );
+      final changed = _replacePlaylistById(playlistId, (playlist) {
+        if (playlist.containsTrackKey(key)) return playlist;
+        return playlist.copyWith(
+          tracks: [...playlist.tracks, entry],
+          updatedAt: now,
+        );
+      });
+      if (!changed) return false;
+      _invalidatePlaylistPickerSummaries();
+      return true;
+    },
+  );
 
   Future<PlaylistAddBatchResult> addTracksToPlaylist(
     String playlistId,
     Iterable<Track> tracks,
-  ) async {
-    await _ensureLoaded();
+  ) => _mutate(() async {
     await ensurePlaylistLoaded(playlistId);
+    if (!ref.mounted) {
+      return const PlaylistAddBatchResult(
+        addedCount: 0,
+        alreadyInPlaylistCount: 0,
+      );
+    }
     final playlist = state.playlistById(playlistId);
     if (playlist == null) {
       return const PlaylistAddBatchResult(
@@ -879,7 +512,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     }
 
     final now = DateTime.now();
-    final knownKeys = <String>{...playlist._trackKeys};
+    final knownKeys = <String>{...playlist.trackKeys};
     final entriesToAdd = <CollectionTrackEntry>[];
     var alreadyInPlaylistCount = 0;
 
@@ -933,34 +566,32 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
       addedCount: entriesToAdd.length,
       alreadyInPlaylistCount: alreadyInPlaylistCount,
     );
-  }
+  });
 
-  Future<void> removeTrackFromPlaylist(
-    String playlistId,
-    String trackKey,
-  ) async {
-    await _ensureLoaded();
-    var playlist = state.playlistById(playlistId);
-    if (playlist == null || !playlist.containsTrackKey(trackKey)) return;
-    await ensurePlaylistLoaded(playlistId);
-    playlist = state.playlistById(playlistId);
-    if (playlist == null) return;
+  Future<void> removeTrackFromPlaylist(String playlistId, String trackKey) =>
+      _mutate(() async {
+        var playlist = state.playlistById(playlistId);
+        if (playlist == null || !playlist.containsTrackKey(trackKey)) return;
+        await ensurePlaylistLoaded(playlistId);
+        if (!ref.mounted) return;
+        playlist = state.playlistById(playlistId);
+        if (playlist == null) return;
 
-    final now = DateTime.now();
-    await _db.deletePlaylistTrack(
-      playlistId: playlistId,
-      trackKey: trackKey,
-      playlistUpdatedAt: now.toIso8601String(),
-    );
-    _replacePlaylistById(playlistId, (playlist) {
-      final nextTracks = playlist.tracks
-          .where((entry) => entry.key != trackKey)
-          .toList(growable: false);
-      if (nextTracks.length == playlist.tracks.length) return playlist;
-      return playlist.copyWith(tracks: nextTracks, updatedAt: now);
-    });
-    _invalidatePlaylistPickerSummaries();
-  }
+        final now = DateTime.now();
+        await _db.deletePlaylistTrack(
+          playlistId: playlistId,
+          trackKey: trackKey,
+          playlistUpdatedAt: now.toIso8601String(),
+        );
+        _replacePlaylistById(playlistId, (playlist) {
+          final nextTracks = playlist.tracks
+              .where((entry) => entry.key != trackKey)
+              .toList(growable: false);
+          if (nextTracks.length == playlist.tracks.length) return playlist;
+          return playlist.copyWith(tracks: nextTracks, updatedAt: now);
+        });
+        _invalidatePlaylistPickerSummaries();
+      });
 
   Future<Directory> _playlistCoversDir() async {
     final appDir = await getApplicationSupportDirectory();
@@ -971,38 +602,38 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     return dir;
   }
 
-  Future<void> setPlaylistCover(
-    String playlistId,
-    String sourceFilePath,
-  ) async {
-    await _ensureLoaded();
-    final playlist = state.playlistById(playlistId);
-    if (playlist == null) return;
+  Future<void> setPlaylistCover(String playlistId, String sourceFilePath) =>
+      _mutate(() async {
+        final playlist = state.playlistById(playlistId);
+        if (playlist == null) return;
 
-    final previousCoverPath = playlist.coverImagePath;
-    final destPath = await _normalizePlaylistCoverFile(
-      playlistId,
-      sourceFilePath,
-    );
+        final previousCoverPath = playlist.coverImagePath;
+        final destPath = await _normalizePlaylistCoverFile(
+          playlistId,
+          sourceFilePath,
+        );
 
-    final now = DateTime.now();
-    await _db.updatePlaylistCover(
-      playlistId: playlistId,
-      coverImagePath: destPath,
-      updatedAt: now.toIso8601String(),
-    );
-    _replacePlaylistById(playlistId, (playlist) {
-      if (playlist.coverImagePath == destPath) return playlist;
-      return playlist.copyWith(coverImagePath: () => destPath, updatedAt: now);
-    });
-    _invalidatePlaylistPickerSummaries();
-    if (previousCoverPath != null && previousCoverPath != destPath) {
-      try {
-        final previous = File(previousCoverPath);
-        if (await previous.exists()) await previous.delete();
-      } catch (_) {}
-    }
-  }
+        final now = DateTime.now();
+        await _db.updatePlaylistCover(
+          playlistId: playlistId,
+          coverImagePath: destPath,
+          updatedAt: now.toIso8601String(),
+        );
+        _replacePlaylistById(playlistId, (playlist) {
+          if (playlist.coverImagePath == destPath) return playlist;
+          return playlist.copyWith(
+            coverImagePath: () => destPath,
+            updatedAt: now,
+          );
+        });
+        _invalidatePlaylistPickerSummaries();
+        if (previousCoverPath != null && previousCoverPath != destPath) {
+          try {
+            final previous = File(previousCoverPath);
+            if (await previous.exists()) await previous.delete();
+          } catch (_) {}
+        }
+      });
 
   Future<String> _normalizePlaylistCoverFile(
     String playlistId,
@@ -1070,8 +701,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
         dimensions.height > _playlistCoverMaxDimension;
   }
 
-  Future<void> removePlaylistCover(String playlistId) async {
-    await _ensureLoaded();
+  Future<void> removePlaylistCover(String playlistId) => _mutate(() async {
     final playlist = state.playlistById(playlistId);
     if (playlist == null || playlist.coverImagePath == null) return;
 
@@ -1094,7 +724,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
       return playlist.copyWith(coverImagePath: () => null, updatedAt: now);
     });
     _invalidatePlaylistPickerSummaries();
-  }
+  });
 
   /// Returns the full collections snapshot (wishlist, loved, playlists,
   /// favorite artists) for a backup, ensuring data is loaded first.
@@ -1170,7 +800,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
   Future<void> restoreFromBackup(
     Map<String, dynamic> collectionsJson, {
     Map<String, dynamic>? coverImages,
-  }) async {
+  }) => _mutate(() async {
     final normalized = Map<String, dynamic>.from(collectionsJson);
     final coversDir = await _playlistCoversDir();
 
@@ -1231,7 +861,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     await _db.replaceAllFromBackup(normalized);
     await _load();
     _invalidatePlaylistPickerSummaries();
-  }
+  });
 }
 
 final libraryCollectionsProvider =
@@ -1246,19 +876,5 @@ final libraryPlaylistPickerSummariesProvider = FutureProvider.autoDispose
     ) async {
       final db = LibraryCollectionsDatabase.instance;
       await db.migrateFromSharedPreferences();
-      final rows = await db.loadPlaylistPickerSummaries(request.trackKeys);
-      return rows
-          .map(
-            (row) => PlaylistPickerSummary(
-              id: row.id,
-              name: row.name,
-              coverImagePath: row.coverImagePath,
-              previewCover: row.previewCover,
-              createdAt: row.createdAt,
-              updatedAt: row.updatedAt,
-              trackCount: row.trackCount,
-              containsAllRequestedTracks: row.containsAllRequestedTracks,
-            ),
-          )
-          .toList(growable: false);
+      return db.loadPlaylistPickerSummaries(request.trackKeys);
     });

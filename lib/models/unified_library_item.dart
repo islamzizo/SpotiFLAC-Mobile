@@ -1,6 +1,7 @@
+import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/models/track.dart';
-import 'package:spotiflac_android/providers/download_history_provider.dart';
-import 'package:spotiflac_android/services/library_database.dart';
+import 'package:spotiflac_android/models/download_history.dart';
+import 'package:spotiflac_android/services/library_database_models.dart';
 import 'package:spotiflac_android/utils/audio_quality_badge_policy.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 
@@ -155,23 +156,23 @@ class UnifiedLibraryItem {
       '${albumName.toLowerCase()}|${artistName.toLowerCase()}';
 
   /// Returns the collection key used to match this item against playlist
-  /// entries. Uses the same logic as [trackCollectionKey] from the collections
-  /// provider: prefer ISRC, fall back to source:id.
+  /// entries: prefer ISRC, fall back to source:id.
   String get collectionKey {
     if (historyItem != null) {
-      final isrc = historyItem!.isrc?.trim();
-      if (isrc != null && isrc.isNotEmpty) return 'isrc:${isrc.toUpperCase()}';
-      final source = historyItem!.service.trim().isNotEmpty
-          ? historyItem!.service.trim()
-          : 'builtin';
-      return '$source:${historyItem!.id}';
+      return libraryTrackCollectionKey(
+        id: historyItem!.id,
+        source: historyItem!.service,
+        isrc: historyItem!.isrc,
+      );
     }
     if (localItem != null) {
-      final isrc = localItem!.isrc?.trim();
-      if (isrc != null && isrc.isNotEmpty) return 'isrc:${isrc.toUpperCase()}';
-      return 'local:${localItem!.id}';
+      return libraryTrackCollectionKey(
+        id: localItem!.id,
+        source: 'local',
+        isrc: localItem!.isrc,
+      );
     }
-    return 'builtin:$id';
+    return libraryTrackCollectionKey(id: id);
   }
 
   Track toTrack() {

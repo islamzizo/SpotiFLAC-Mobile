@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:spotiflac_android/providers/library_collections_provider.dart';
+import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 
 class WeeklyRelease {
