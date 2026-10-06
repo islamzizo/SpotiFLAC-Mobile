@@ -426,8 +426,14 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     Future.microtask(() async {
       try {
         updateSettings(ref.read(settingsProvider));
-        await _initOutputDir();
+        try {
+          await _initOutputDir();
+        } catch (error, stack) {
+          _log.e('Failed to initialize download folder: $error', error, stack);
+        }
         await _loadQueueFromStorage();
+      } catch (error, stack) {
+        _log.e('Failed to initialize download queue: $error', error, stack);
       } finally {
         if (!_queueRestored.isCompleted) _queueRestored.complete();
       }
@@ -1498,6 +1504,29 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     try {
       if (state.isProcessing) return;
       await _processQueueSingleFlight();
+    } catch (error, stack) {
+      _log.e('Download queue processing failed: $error', error, stack);
+      _stopProgressPolling();
+      _metadataEmbedding.clearCoverCache();
+      _stopConnectivityMonitoring();
+      if (ref.mounted) {
+        state = state.copyWith(isProcessing: false, currentDownload: null);
+      }
+      // Setup and finalization can fail outside the per-item pipeline. The
+      // queue owner still releases the execution window before another run.
+      try {
+        if (Platform.isAndroid) {
+          await PlatformBridge.stopDownloadService();
+        } else if (Platform.isIOS) {
+          await PlatformBridge.endBackgroundDownloadTask();
+        }
+      } catch (cleanupError, cleanupStack) {
+        _log.e(
+          'Failed to release download execution window: $cleanupError',
+          cleanupError,
+          cleanupStack,
+        );
+      }
     } finally {
       if (_queueProcessingGate.leave()) {
         Future.microtask(_processQueue);
