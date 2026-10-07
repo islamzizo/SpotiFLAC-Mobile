@@ -34,14 +34,14 @@ class _Collections extends LibraryCollectionsNotifier {
   @override
   LibraryCollectionsState build() => LibraryCollectionsState(isLoaded: true);
 
-  CollectionTrackEntry get entry => CollectionTrackEntry(
+  CollectionTrackEntry get _entry => CollectionTrackEntry(
     key: trackCollectionKey(_track),
     track: _track,
     addedAt: DateTime.utc(2026),
   );
 
-  void publishWishlist() => state = state.copyWith(wishlist: [entry]);
-  void publishLoved() => state = state.copyWith(loved: [entry]);
+  void publishWishlist() => state = state.copyWith(wishlist: [_entry]);
+  void publishLoved() => state = state.copyWith(loved: [_entry]);
 }
 
 class _Recent extends RecentAccessNotifier {
@@ -62,9 +62,7 @@ Widget _app(ProviderContainer container, Widget child, {bool mornye = false}) =>
     UncontrolledProviderScope(
       container: container,
       child: MaterialApp(
-        theme: mornye
-            ? MornyeTheme.build(Brightness.light)
-            : AppTheme.light(),
+        theme: mornye ? MornyeTheme.build(Brightness.light) : AppTheme.light(),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(body: child),

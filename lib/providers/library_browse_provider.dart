@@ -148,8 +148,6 @@ class LibraryBrowseNotifier extends AsyncNotifier<LibraryBrowseState> {
   bool _includeLocal = true;
   int _generation = 0;
 
-  bool get hasMore => _hasMore;
-
   LibraryBrowsePageRequest _pageRequest(
     int offset,
     QueueLibraryDbCursor? cursor,

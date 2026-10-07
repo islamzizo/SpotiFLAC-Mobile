@@ -118,7 +118,7 @@ void main() {
           container.listen(provider, (_, _) {});
           await container.read(provider.future);
           final notifier = container.read(provider.notifier);
-          while (notifier.hasMore) {
+          while (container.read(provider).requireValue.hasMore) {
             await notifier.loadMore();
             expect(container.read(provider).requireValue.loadMoreError, isNull);
           }
