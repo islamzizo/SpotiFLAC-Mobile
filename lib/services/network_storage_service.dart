@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
+import 'package:dart_smb2/dart_smb2.dart' show Smb2DirEntry;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +16,23 @@ import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:xml/xml.dart';
 
 part 'network_storage_upload.dart';
+
+typedef _SmbListingInput = ({
+  List<({String name, bool directory, int size})> files,
+  String path,
+});
+
+List<NetworkEntry> _prepareSmbListingInBackground(_SmbListingInput input) =>
+    NetworkStorageService._sorted([
+      for (final file in input.files)
+        if (file.name != '.' && file.name != '..')
+          NetworkEntry(
+            '${input.path}${file.name}${file.directory ? '/' : ''}',
+            file.name,
+            directory: file.directory,
+            size: file.size,
+          ),
+    ]);
 
 List<NetworkEntry> _parseNetworkListingInBackground(
   Map<String, dynamic> request,
@@ -447,24 +465,16 @@ class NetworkStorageService {
         ]);
       }
       final smb = await _smb(c, target);
+      final List<Smb2DirEntry> files;
       try {
-        final files = await smb.list().timeout(timeout);
-        return _sorted([
-          for (final file in files)
-            if (file.name != '.' && file.name != '..')
-              NetworkEntry(
-                '$path${file.name}${file.stat.isDirectory ? '/' : ''}',
-                file.name,
-                directory: file.stat.isDirectory,
-                size: file.stat.size,
-              ),
-        ]);
+        files = await smb.list().timeout(timeout);
       } finally {
         // A failed disconnect must not hide the original share/login error.
         try {
           await smb.close();
         } catch (_) {}
       }
+      return prepareSmbEntries(files, path);
     }
     final client = _client();
     try {
@@ -506,12 +516,43 @@ class NetworkStorageService {
     }
   }
 
-  static List<NetworkEntry> _sorted(List<NetworkEntry> entries) =>
-      entries..sort(
-        (a, b) => a.directory != b.directory
-            ? (a.directory ? -1 : 1)
-            : a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-      );
+  /// Large SMB listings arrive from native I/O as plain stat objects. Transfer
+  /// only fields used by the browser, avoiding copies of unused timestamps.
+  static Future<List<NetworkEntry>> prepareSmbEntries(
+    List<Smb2DirEntry> files,
+    String path,
+  ) async {
+    final input = (
+      path: path,
+      files: [
+        for (final file in files)
+          (
+            name: file.name,
+            directory: file.stat.isDirectory,
+            size: file.stat.size,
+          ),
+      ],
+    );
+    // Small lists are cheaper inline; large sorts must leave the UI isolate.
+    if (files.length < 4096) return _prepareSmbListingInBackground(input);
+    return compute(_prepareSmbListingInBackground, input);
+  }
+
+  static List<NetworkEntry> _sorted(List<NetworkEntry> entries) {
+    final keyed =
+        [
+          for (final entry in entries)
+            (entry: entry, key: entry.name.toLowerCase()),
+        ]..sort(
+          (a, b) => a.entry.directory != b.entry.directory
+              ? (a.entry.directory ? -1 : 1)
+              : a.key.compareTo(b.key),
+        );
+    for (var index = 0; index < entries.length; index++) {
+      entries[index] = keyed[index].entry;
+    }
+    return entries;
+  }
 
   static List<NetworkEntry> parseListing(
     NetworkConnection c,
