@@ -515,6 +515,9 @@ mod tests {
                         thread::sleep(Duration::from_millis(2));
                         continue;
                     };
+                    // BSD may inherit the listener's nonblocking flag. The
+                    // fixture reads complete request headers with a timeout.
+                    socket.set_nonblocking(false).unwrap();
                     socket
                         .set_read_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
