@@ -7,6 +7,30 @@ String _tag(String kind, int time, String text) =>
     '[x-$kind:$time:${base64.encode(utf8.encode(text))}]';
 
 void main() {
+  test('zero starts retain genuine line, word and TTML timing', () {
+    for (final raw in [
+      '[00:00.00]First line\n[00:02.00]Second line',
+      '[00:00.00]<00:00.00>First <00:01.00>line<00:02.00>',
+      '<tt><body><p begin="0s" end="2s">First line</p></body></tt>',
+    ]) {
+      final lyrics = LyricsParser.parse(raw);
+      expect(lyrics.synced, isTrue);
+      expect(lyrics.lines.first.time, Duration.zero);
+      expect(lyrics.plainText, contains('First line'));
+    }
+  });
+
+  test('classification uses source timing before clamping a valid offset', () {
+    final lyrics = LyricsParser.parse(
+      '[offset:5000]\n[00:00.00]First line\n[00:02.00]Second line',
+    );
+    expect(lyrics.synced, isTrue);
+    expect(lyrics.lines.map((line) => line.time), [
+      Duration.zero,
+      Duration.zero,
+    ]);
+  });
+
   test('all eLRC voices retain timing and supplements without visible IDs', () {
     final lyrics = LyricsParser.parse('''
 [offset:100]

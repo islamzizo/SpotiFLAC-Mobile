@@ -16,6 +16,8 @@ static INLINE_TIME: LazyLock<Regex> =
 static VOICE_PREFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)^v[1-9][0-9]*:").unwrap());
 static INSTRUMENTAL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\[instrumental:true\]$").unwrap());
+static WRITER_CREDIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^Written\s+by\s*:.+$").unwrap());
 
 pub fn is_instrumental_marker(raw: &str) -> bool {
     INSTRUMENTAL.is_match(raw.trim())
@@ -114,6 +116,27 @@ pub fn plain_from_timed_lines(lines: &[LyricsLine]) -> String {
         .join("\n")
 }
 
+pub fn has_usable_timing(lines: &[LyricsLine]) -> bool {
+    // Ignore synthesized end times: parse_synced adds five seconds to the
+    // final row even when every source timestamp is zero.
+    lines.iter().enumerate().any(|(index, line)| {
+        has_usable_content(&line.words)
+            && !(index + 1 == lines.len() && WRITER_CREDIT.is_match(line.words.trim()))
+            && (line.start_time_ms > 0
+                || INLINE_TIME.find_iter(&line.words).any(|time| {
+                    time.as_str()
+                        .bytes()
+                        .any(|byte| matches!(byte, b'1'..=b'9'))
+                }))
+    })
+}
+
+pub(super) fn untimed_text(lines: &[LyricsLine]) -> String {
+    INLINE_TIME
+        .replace_all(&plain_from_timed_lines(lines), "")
+        .into_owned()
+}
+
 pub fn timestamp_inline(ms: i64) -> String {
     let ms = ms.max(0);
     let seconds = ms / 1000;
@@ -178,7 +201,8 @@ pub fn with_metadata(lyrics: &LyricsResponse, track: &str, artist: &str) -> Stri
         output.push_str(&format!(" (source: {source})"));
     }
     output.push_str("]\n\n");
-    if lyrics.sync_type == "LINE_SYNCED" {
+    let synced = lyrics.is_synced();
+    if synced {
         for line in lyrics.lines() {
             if let Some(words) = &line.romanization_words
                 && !words.is_empty()
@@ -208,10 +232,14 @@ pub fn with_metadata(lyrics: &LyricsResponse, track: &str, artist: &str) -> Stri
         if line.words.is_empty() {
             continue;
         }
-        if lyrics.sync_type == "LINE_SYNCED" {
+        if synced {
             output.push_str(&timestamp(line.start_time_ms));
         }
-        output.push_str(&line.words);
+        if synced {
+            output.push_str(&line.words);
+        } else {
+            output.push_str(&INLINE_TIME.replace_all(&line.words, ""));
+        }
         output.push('\n');
     }
     output
@@ -220,6 +248,93 @@ pub fn with_metadata(lyrics: &LyricsResponse, track: &str, artist: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_placeholders_are_plain_lyrics_without_losing_source_or_text() {
+        let raw = "[ti:Example]\n[by:Example app (source: extension:example)]\n\n[00:00.00]First line\n[00:00.00]Second line\n[01:00.00]";
+        let lyrics = LyricsResponse::from_text(raw, "Example", "extension:example");
+        assert_eq!(lyrics.sync_type, "UNSYNCED");
+        assert_eq!(lyrics.plain_lyrics, "First line\nSecond line");
+        assert_eq!(lyrics.lines().last().unwrap().end_time_ms, 5000);
+        let saved = with_metadata(&lyrics, "Example", "Example artist");
+        assert!(!saved.contains("[00:"));
+        assert!(saved.ends_with("First line\nSecond line\n"));
+        assert_eq!(extract_source(&saved), "extension:example");
+    }
+
+    #[test]
+    fn writer_validates_provider_flags_and_ignores_synthetic_end_times() {
+        let mut lyrics = LyricsResponse::from_text(
+            "[00:00.00]<00:00.00>First <00:00.00>line<00:00.00>",
+            "Example",
+            "extension:example",
+        );
+        assert_eq!(lyrics.plain_lyrics, "First line");
+        lyrics.sync_type = "LINE_SYNCED".into();
+        assert!(!lyrics.is_synced());
+        let saved = with_metadata(&lyrics, "Example", "Example artist");
+        assert!(saved.ends_with("First line\n"));
+        assert!(!saved.contains("00:00"));
+        lyrics.normalize_timing();
+        assert_eq!(lyrics.sync_type, "UNSYNCED");
+    }
+
+    #[test]
+    fn genuine_zero_start_retains_line_and_word_timing() {
+        for raw in [
+            "[00:00.00]First line\n[00:02.00]Second line",
+            "[00:00.00]<00:00.00>First <00:01.00>line<00:02.00>",
+        ] {
+            let lyrics = LyricsResponse::from_text(raw, "Example", "extension:example");
+            assert!(lyrics.is_synced());
+            let saved = with_metadata(&lyrics, "Example", "Example artist");
+            assert!(saved.contains("[00:00.00]"));
+            if raw.contains('<') {
+                assert!(saved.contains("<00:01.00>"));
+            }
+        }
+    }
+
+    #[test]
+    fn timed_writer_credit_is_not_lyric_timing() {
+        let lyrics = LyricsResponse::from_text(
+            "[00:00.00]First line\n[00:03.00]Written by: Example Writer",
+            "Example",
+            "extension:example",
+        );
+        assert_eq!(lyrics.sync_type, "UNSYNCED");
+        assert!(!with_metadata(&lyrics, "Example", "Example artist").contains("[00:"));
+    }
+
+    #[test]
+    fn invalid_sync_flag_preserves_a_plain_text_fallback() {
+        let mut lyrics = LyricsResponse {
+            sync_type: "LINE_SYNCED".into(),
+            plain_lyrics: "First line\nSecond line".into(),
+            ..LyricsResponse::default()
+        };
+        lyrics.normalize_timing();
+        assert_eq!(lyrics.sync_type, "UNSYNCED");
+        assert_eq!(lyrics.plain_lyrics, "First line\nSecond line");
+    }
+
+    #[test]
+    fn optional_timings_cannot_promote_plain_lyrics_to_synced() {
+        let mut lyrics = LyricsResponse::from_text("[00:00.00]First line", "Example", "Example");
+        let line = &mut lyrics.lines.as_mut().unwrap()[0];
+        line.romanization = Some("Reading".into());
+        line.romanization_words = Some(vec![super::super::LyricsWord {
+            start_time_ms: 1000,
+            end_time_ms: 2000,
+            text: "Reading".into(),
+        }]);
+        lyrics.sync_type = "LINE_SYNCED".into();
+        assert!(!lyrics.is_synced());
+        assert!(!with_metadata(&lyrics, "Example", "Example artist").contains("x-romaji"));
+        lyrics.lines.as_mut().unwrap()[0].start_time_ms = 1000;
+        lyrics.sync_type = "UNSYNCED".into();
+        assert!(!lyrics.is_synced());
+    }
 
     #[test]
     fn usability_matches_the_app_and_native_finalizer() {

@@ -1,5 +1,95 @@
 [
   {
+    "name": "untimed provider results retain writer credits",
+    "request": {
+      "operation": "parse_lyrics",
+      "raw": "[by:Example app (source: extension:example)]\nFirst line\nSecond line\nWritten by: Example Writer"
+    },
+    "expected": {
+      "synced": false,
+      "wordSynced": false,
+      "plainText": "First line\nSecond line",
+      "writers": "Example Writer",
+      "provider": "example",
+      "lines": []
+    }
+  },
+  {
+    "name": "all-zero provider placeholders keep plain lyrics and credits",
+    "request": {
+      "operation": "parse_lyrics",
+      "raw": "[ti:Example]\n[by:Example app (source: extension:example)]\n[00:00.00]First line\r\n[00:00.000]Second line\r[00:00:000]Third line\n[00:00.00]Written by: Example Writer"
+    },
+    "expected": {
+      "synced": false,
+      "wordSynced": false,
+      "plainText": "First line\nSecond line\nThird line",
+      "writers": "Example Writer",
+      "provider": "example",
+      "lines": []
+    }
+  },
+  {
+    "name": "offsets cannot manufacture timing from zero word placeholders",
+    "request": {
+      "operation": "parse_lyrics",
+      "raw": "[offset:-500]\n[00:00.00]<00:00.00>First <00:00.00>line<00:00.00>\n[00:00.00]Second line"
+    },
+    "expected": {
+      "synced": false,
+      "wordSynced": false,
+      "plainText": "First line\nSecond line",
+      "writers": null,
+      "provider": null,
+      "lines": []
+    }
+  },
+  {
+    "name": "empty outro timestamps are not evidence of synchronized lyrics",
+    "request": {
+      "operation": "parse_lyrics",
+      "raw": "[00:00.00]First line\n[00:00.00]Second line\n[01:00.00]"
+    },
+    "expected": {
+      "synced": false,
+      "wordSynced": false,
+      "plainText": "First line\nSecond line",
+      "writers": null,
+      "provider": null,
+      "lines": []
+    }
+  },
+  {
+    "name": "writer credits do not synchronize zero-timed lyric rows",
+    "request": {
+      "operation": "parse_lyrics",
+      "raw": "[00:00.00]First line\n[00:00.00]Second line\n[00:03.00]Written by: Example Writer"
+    },
+    "expected": {
+      "synced": false,
+      "wordSynced": false,
+      "plainText": "First line\nSecond line",
+      "writers": "Example Writer",
+      "provider": null,
+      "lines": []
+    }
+  },
+  {
+    "name": "TTML placeholder zero intervals remain plain lyrics",
+    "request": {
+      "operation": "parse_lyrics",
+      "raw": "<tt><body><p begin=\"0s\" end=\"0s\">First line</p><p begin=\"0s\" end=\"0s\">Second line</p></body></tt>"
+    },
+    "expected": {
+      "synced": false,
+      "wordSynced": false,
+      "plainText": "First line\nSecond line",
+      "writers": null,
+      "provider": null,
+      "lines": []
+    }
+  },
+  {
     "name": "empty",
     "request": {
       "operation": "parse_lyrics",

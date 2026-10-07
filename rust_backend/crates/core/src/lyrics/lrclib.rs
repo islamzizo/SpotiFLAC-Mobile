@@ -68,6 +68,7 @@ impl LrcLibResponse {
                 .collect();
             result.lines = (!lines.is_empty()).then_some(lines);
         }
+        result.normalize_timing();
         result
     }
 }

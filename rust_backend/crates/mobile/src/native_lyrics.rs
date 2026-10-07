@@ -29,6 +29,8 @@ static SUPPLEMENT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)^\[x-(romaji-words|romaji|translation):([0-9]+):([^\]]*)\]$").unwrap()
 });
 static NEW_LINE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\r\n|\r|\n").unwrap());
+static WRITER_CREDIT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(&format!(r"(?i)^Written{WS}+by{WS}*:{WS}*(.+)$")).unwrap());
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +69,19 @@ struct Parsed {
     plain_text: String,
     writers: Option<String>,
     provider: Option<String>,
+}
+
+fn has_usable_timing(lines: &[Line]) -> bool {
+    lines.iter().enumerate().any(|(index, line)| {
+        !trim(&line.text).is_empty()
+            && !(index + 1 == lines.len() && WRITER_CREDIT.is_match(trim(&line.text)))
+            && (line.time_ms > 0
+                || line.end_ms.is_some_and(|time| time > 0)
+                || line.words.iter().any(|word| {
+                    !trim(&word.text).is_empty()
+                        && (word.time_ms > 0 || word.end_ms.is_some_and(|time| time > 0))
+                }))
+    })
 }
 impl Line {
     fn new(
@@ -457,6 +472,9 @@ fn parse_lrc(text: &str, check: &dyn Fn() -> Result<(), String>) -> Result<Parse
             ..Parsed::default()
         });
     }
+    // All-zero provider placeholders are plain lyrics. Validate before offsets
+    // so a negative offset cannot turn them into apparently useful timing.
+    let synced = has_usable_timing(&parsed);
     parsed.sort_by_key(|line| line.time_ms);
     let romaji = align(&parsed, romaji);
     let romaji_words = align(&parsed, romaji_words);
@@ -485,8 +503,8 @@ fn parse_lrc(text: &str, check: &dyn Fn() -> Result<(), String>) -> Result<Parse
         }
     }
     Ok(Parsed {
-        synced: true,
-        word_synced: saw_words,
+        synced,
+        word_synced: synced && saw_words,
         lines: parsed,
         plain_text,
         ..Parsed::default()
@@ -801,9 +819,10 @@ fn parse_ttml(
         }
     }
     lines.sort_by_key(|line| line.time_ms);
+    let synced = has_usable_timing(&lines);
     Ok(Some(Parsed {
-        synced: !lines.is_empty(),
-        word_synced: saw_words,
+        synced,
+        word_synced: synced && saw_words,
         lines,
         plain_text: plain.join("\n"),
         ..Parsed::default()
@@ -952,9 +971,7 @@ fn with_credits(raw: &str, lyrics: &mut Parsed) -> Result<(), String> {
         }
     }
     if let Some(line) = lyrics.lines.last()
-        && let Some(c) = Regex::new(&format!(r"(?i)^Written{WS}+by{WS}*:{WS}*(.+)$"))
-            .unwrap()
-            .captures(trim(&line.text))
+        && let Some(c) = WRITER_CREDIT.captures(trim(&line.text))
     {
         if writers.is_none() {
             writers = Some(trim(&c[1]).into());
@@ -966,9 +983,23 @@ fn with_credits(raw: &str, lyrics: &mut Parsed) -> Result<(), String> {
             .map(|line| line.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
+    } else if lyrics.lines.is_empty() {
+        let (text, footer) = lyrics
+            .plain_text
+            .rsplit_once('\n')
+            .unwrap_or(("", &lyrics.plain_text));
+        if let Some(c) = WRITER_CREDIT.captures(trim(footer)) {
+            if writers.is_none() {
+                writers = Some(trim(&c[1]).into());
+            }
+            lyrics.plain_text = text.into();
+        }
     }
     lyrics.writers = writers.filter(|s| !s.is_empty());
     lyrics.provider = provider.filter(|s| !s.is_empty());
+    if !lyrics.synced {
+        lyrics.lines.clear();
+    }
     Ok(())
 }
 

@@ -101,7 +101,7 @@ impl Backend {
         request: &LyricsRequest,
         check: &Check<'_>,
     ) -> Result<LyricsResponse, String> {
-        let response = self
+        let mut response = self
             .lyrics
             .fetch(
                 SearchRequest {
@@ -115,6 +115,7 @@ impl Backend {
             )
             .map_err(|error| error.to_string())?;
         check()?;
+        response.normalize_timing();
         Ok(response)
     }
 
