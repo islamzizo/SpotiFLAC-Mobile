@@ -115,6 +115,14 @@ class _CollectionsDatabase implements LibraryCollectionsDatabase {
       _write('delete:wishlist:$trackKey', () => wishlist.remove(trackKey));
 
   @override
+  Future<void> deleteWishlistTracks(List<String> keys) =>
+      _write('bulk-wishlist:remove', () {
+        for (final key in keys) {
+          wishlist.remove(key);
+        }
+      });
+
+  @override
   Future<void> upsertLovedEntry({
     required String trackKey,
     required String trackJson,
@@ -194,6 +202,19 @@ class _CollectionsDatabase implements LibraryCollectionsDatabase {
       });
 
   @override
+  Future<void> deletePlaylistTracks({
+    required String playlistId,
+    required List<String> trackKeys,
+    required String playlistUpdatedAt,
+  }) => _write('bulk-playlist:remove', () {
+    final keys = trackKeys.toSet();
+    playlistTracks[playlistId]!.removeWhere(
+      (row) => keys.contains(row['track_key']),
+    );
+    playlists[playlistId]!['updated_at'] = playlistUpdatedAt;
+  });
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -219,6 +240,117 @@ ProviderContainer _container(_CollectionsDatabase db) {
 }
 
 void main() {
+  for (final kind in ['wishlist', 'loved', 'playlist']) {
+    for (final failFirst in [false, true]) {
+      test(
+        'bulk $kind removal is atomic and serializes repeated clicks (fail: $failFirst)',
+        () async {
+          final db = _CollectionsDatabase()..failNextWrite = failFirst;
+          final tracks = [
+            for (final id in ['a', 'b', 'keep']) _track(id),
+          ];
+          final rows = [
+            for (final track in tracks)
+              <String, dynamic>{
+                'track_key': trackCollectionKey(track),
+                'track_json': jsonEncode(track.toJson()),
+                'added_at': '2026-01-01T00:00:00Z',
+              },
+          ];
+          for (final row in rows) {
+            db.wishlist[row['track_key'] as String] = {...row};
+            db.loved[row['track_key'] as String] = {...row};
+          }
+          for (final id in ['p', 'other']) {
+            db.playlists[id] = {
+              'id': id,
+              'name': id,
+              'cover_image_path': 'cover',
+              'created_at': '2026-01-01T00:00:00Z',
+              'updated_at': '2026-01-01T00:00:00Z',
+            };
+            db.playlistTracks[id] = [
+              for (final row in rows) {...row},
+            ];
+          }
+          db.releasePlaylistRead.complete();
+          final container = _container(db);
+          final notifier = container.read(libraryCollectionsProvider.notifier);
+          Future<int> remove(Iterable<String> keys) => switch (kind) {
+            'wishlist' => notifier.removeWishlistTracks(keys),
+            'loved' => notifier.removeLovedTracks(keys),
+            _ => notifier.removeTracksFromPlaylist('p', keys),
+          };
+          final selected = ['example:a', 'example:b', 'example:a', 'missing'];
+          final first = remove(selected);
+          selected
+            ..clear()
+            ..add('example:keep');
+          final failure = failFirst
+              ? expectLater(first, throwsStateError)
+              : null;
+          await db.writeStarted.future;
+          final before = container.read(libraryCollectionsProvider);
+          var publications = 0;
+          container.listen(
+            libraryCollectionsProvider,
+            (_, _) => publications++,
+          );
+          final second = remove(['example:a', 'example:b']);
+          expect(db.events, ['bulk-$kind:remove']);
+          expect(container.read(libraryCollectionsProvider), same(before));
+          db.releaseWrite.complete();
+          if (failure != null) {
+            await failure;
+          } else {
+            expect(await first, 2);
+          }
+          expect(await second, failFirst ? 2 : 0);
+          expect(publications, 1);
+          final after = container.read(libraryCollectionsProvider);
+          final remaining = switch (kind) {
+            'wishlist' => after.wishlist,
+            'loved' => after.loved,
+            _ => after.playlistById('p')!.tracks,
+          };
+          expect(remaining.map((entry) => entry.track.id), ['keep']);
+          expect(remaining.single.addedAt, DateTime.utc(2026));
+          expect(
+            after.playlistById('other'),
+            same(before.playlistById('other')),
+          );
+          expect(db.playlistTracks['other'], rows);
+          expect(db.wishlist.length, kind == 'wishlist' ? 1 : 3);
+          expect(db.loved.length, kind == 'loved' ? 1 : 3);
+          expect(db.playlistTracks['p']!.length, kind == 'playlist' ? 1 : 3);
+          expect(db.events.length, failFirst ? 2 : 1);
+          expect(db.playlistReads, kind == 'playlist' ? 1 : 0);
+          if (kind == 'playlist') {
+            final playlist = after.playlistById('p')!;
+            expect(playlist.coverImagePath, 'cover');
+            expect(playlist.createdAt, DateTime.utc(2026));
+            expect(playlist.trackKeys, {'example:keep'});
+            expect(playlist.updatedAt.isAfter(DateTime.utc(2026)), isTrue);
+            expect(
+              db.playlists['p']!['updated_at'],
+              playlist.updatedAt.toIso8601String(),
+            );
+          }
+          expect(await remove(const []), 0);
+          expect(await remove(['missing']), 0);
+          expect(
+            await notifier.removeTracksFromPlaylist('missing', [
+              'example:keep',
+            ]),
+            0,
+          );
+          expect(container.read(libraryCollectionsProvider), same(after));
+          expect(publications, 1);
+        },
+      );
+    }
+  }
+
   for (final failFirst in [false, true]) {
     test(
       'Love All is atomic and serializes repeated clicks (failure: $failFirst)',

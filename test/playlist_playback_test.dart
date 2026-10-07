@@ -97,6 +97,49 @@ class _Collections extends LibraryCollectionsNotifier {
   Future<void> ensurePlaylistLoaded(String playlistId) async {}
 }
 
+class _RemovalCollections extends _Collections {
+  _RemovalCollections(this._record);
+  final void Function(String, List<String>) _record;
+
+  @override
+  LibraryCollectionsState build() {
+    final initial = super.build();
+    final tracks = initial.playlists.single.tracks;
+    return initial.copyWith(wishlist: tracks, loved: tracks);
+  }
+
+  Future<int> _remove(String kind, Iterable<String> keys) async {
+    final selected = keys.toSet();
+    _record(kind, selected.toList());
+    List<CollectionTrackEntry> keep(List<CollectionTrackEntry> entries) =>
+        entries.where((entry) => !selected.contains(entry.key)).toList();
+    state = switch (kind) {
+      'wishlist' => state.copyWith(wishlist: keep(state.wishlist)),
+      'loved' => state.copyWith(loved: keep(state.loved)),
+      _ => state.copyWith(
+        playlists: [
+          state.playlists.single.copyWith(
+            tracks: keep(state.playlists.single.tracks),
+          ),
+        ],
+      ),
+    };
+    return selected.length;
+  }
+
+  @override
+  Future<int> removeWishlistTracks(Iterable<String> keys) =>
+      _remove('wishlist', keys);
+
+  @override
+  Future<int> removeLovedTracks(Iterable<String> keys) =>
+      _remove('loved', keys);
+
+  @override
+  Future<int> removeTracksFromPlaylist(String id, Iterable<String> keys) =>
+      _remove('playlist', keys);
+}
+
 class _Library extends LocalLibraryNotifier {
   @override
   LocalLibraryState build() => LocalLibraryState();
@@ -110,6 +153,75 @@ class _History extends DownloadHistoryNotifier {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  for (final mode in LibraryTracksFolderMode.values) {
+    for (final mornye in [false, true]) {
+      testWidgets(
+        'selection dispatches one ${mode.name} removal (Mornye: $mornye)',
+        (tester) async {
+          final calls = <(String, List<String>)>[];
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [
+                settingsProvider.overrideWith(_Settings.new),
+                musicPlayerControllerProvider.overrideWithValue(_Player()),
+                playbackProvider.overrideWith(_Playback.new),
+                libraryCollectionsProvider.overrideWith(
+                  () => _RemovalCollections(
+                    (kind, keys) => calls.add((kind, keys)),
+                  ),
+                ),
+                localLibraryProvider.overrideWith(_Library.new),
+                downloadHistoryProvider.overrideWith(_History.new),
+                downloadHistoryVisibleBatchExistsProvider.overrideWith(
+                  (ref, request) => const {},
+                ),
+                localLibraryCoverProvider.overrideWith(
+                  (ref, request) async => null,
+                ),
+                localLibraryFirstCoverProvider.overrideWith(
+                  (ref, request) async => null,
+                ),
+              ],
+              child: MaterialApp(
+                theme: mornye
+                    ? MornyeTheme.build(Brightness.dark)
+                    : AppTheme.light(),
+                localizationsDelegates: AppLocalizations.localizationsDelegates,
+                supportedLocales: AppLocalizations.supportedLocales,
+                home: LibraryTracksFolderScreen(
+                  mode: mode,
+                  playlistId: mode == LibraryTracksFolderMode.playlist
+                      ? 'playlist'
+                      : null,
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(find.text('First'));
+          await tester.longPress(find.text('First'));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(find.text('Unavailable'));
+          await tester.tap(find.text('Unavailable'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byIcon(Icons.remove_circle_outline));
+          await tester.pumpAndSettle();
+          expect(calls, hasLength(1));
+          expect(calls.single.$1, mode.name);
+          expect(calls.single.$2, ['First', 'Unavailable']);
+          expect(find.text('First'), findsNothing);
+          expect(find.text('Unavailable'), findsNothing);
+          expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
+          final l10n = AppLocalizations.of(
+            tester.element(find.byType(LibraryTracksFolderScreen)),
+          );
+          expect(find.text(l10n.selectionSelected(2)), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
 
   for (final mornye in [false, true]) {
     testWidgets('playlist row queues its neighbors (Mornye: $mornye)', (

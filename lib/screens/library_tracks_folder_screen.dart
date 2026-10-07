@@ -165,20 +165,21 @@ class _LibraryTracksFolderScreenState
     final count = keysToRemove.length;
     final notifier = ref.read(libraryCollectionsProvider.notifier);
 
-    for (final key in keysToRemove) {
-      switch (widget.mode) {
-        case LibraryTracksFolderMode.wishlist:
-          await notifier.removeFromWishlist(key);
-          break;
-        case LibraryTracksFolderMode.loved:
-          await notifier.removeFromLoved(key);
-          break;
-        case LibraryTracksFolderMode.playlist:
-          if (widget.playlistId != null) {
-            await notifier.removeTrackFromPlaylist(widget.playlistId!, key);
-          }
-          break;
-      }
+    switch (widget.mode) {
+      case LibraryTracksFolderMode.wishlist:
+        await notifier.removeWishlistTracks(keysToRemove);
+        break;
+      case LibraryTracksFolderMode.loved:
+        await notifier.removeLovedTracks(keysToRemove);
+        break;
+      case LibraryTracksFolderMode.playlist:
+        if (widget.playlistId != null) {
+          await notifier.removeTracksFromPlaylist(
+            widget.playlistId!,
+            keysToRemove,
+          );
+        }
+        break;
     }
 
     exitSelectionMode();

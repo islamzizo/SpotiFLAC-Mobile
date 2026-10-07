@@ -616,6 +616,22 @@ class LibraryCollectionsDatabase {
   Future<void> deleteWishlistEntry(String trackKey) =>
       _deleteEntry(_tableWishlist, 'track', trackKey);
 
+  Future<void> deleteWishlistTracks(List<String> keys) async {
+    if (keys.isEmpty) return;
+    await deleteDatabaseWishlistTracks(await database, keys);
+  }
+
+  static Future<void> deleteDatabaseWishlistTracks(
+    Database db,
+    List<String> keys,
+  ) async {
+    if (keys.isEmpty) return;
+    await sqlite.transactionWithBusyRetry(
+      db,
+      (txn) => _deleteTrackKeys(txn, _tableWishlist, keys),
+    );
+  }
+
   Future<void> upsertLovedEntry({
     required String trackKey,
     required String trackJson,
@@ -677,16 +693,28 @@ class LibraryCollectionsDatabase {
     List<String> keys,
   ) async {
     if (keys.isEmpty) return;
-    await sqlite.transactionWithBusyRetry(db, (txn) async {
-      for (var start = 0; start < keys.length; start += 128) {
-        final chunk = keys.skip(start).take(128).toList(growable: false);
-        await txn.delete(
-          _tableLoved,
-          where: 'track_key IN (${List.filled(chunk.length, '?').join(',')})',
-          whereArgs: chunk,
-        );
-      }
-    });
+    await sqlite.transactionWithBusyRetry(
+      db,
+      (txn) => _deleteTrackKeys(txn, _tableLoved, keys),
+    );
+  }
+
+  static Future<void> _deleteTrackKeys(
+    DatabaseExecutor db,
+    String table,
+    List<String> keys, {
+    String? playlistId,
+  }) async {
+    for (var start = 0; start < keys.length; start += 128) {
+      final end = start + 128 < keys.length ? start + 128 : keys.length;
+      final chunk = keys.sublist(start, end);
+      await db.delete(
+        table,
+        where:
+            '${playlistId == null ? '' : 'playlist_id = ? AND '}track_key IN (${List.filled(chunk.length, '?').join(',')})',
+        whereArgs: [?playlistId, ...chunk],
+      );
+    }
   }
 
   Future<void> upsertFavoriteArtistEntry({
@@ -849,6 +877,43 @@ class LibraryCollectionsDatabase {
         _tablePlaylistTracks,
         where: 'playlist_id = ? AND track_key = ?',
         whereArgs: [playlistId, trackKey],
+      );
+      await txn.update(
+        _tablePlaylists,
+        {'updated_at': playlistUpdatedAt},
+        where: 'id = ?',
+        whereArgs: [playlistId],
+      );
+    });
+  }
+
+  Future<void> deletePlaylistTracks({
+    required String playlistId,
+    required List<String> trackKeys,
+    required String playlistUpdatedAt,
+  }) async {
+    if (trackKeys.isEmpty) return;
+    await deleteDatabasePlaylistTracks(
+      await database,
+      playlistId: playlistId,
+      trackKeys: trackKeys,
+      playlistUpdatedAt: playlistUpdatedAt,
+    );
+  }
+
+  static Future<void> deleteDatabasePlaylistTracks(
+    Database db, {
+    required String playlistId,
+    required List<String> trackKeys,
+    required String playlistUpdatedAt,
+  }) async {
+    if (trackKeys.isEmpty) return;
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
+      await _deleteTrackKeys(
+        txn,
+        _tablePlaylistTracks,
+        trackKeys,
+        playlistId: playlistId,
       );
       await txn.update(
         _tablePlaylists,

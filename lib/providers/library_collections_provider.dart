@@ -363,6 +363,48 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     dbDelete: _db.deleteLovedEntry,
   );
 
+  Future<int> _removeTrackEntries(
+    Iterable<String> trackKeys, {
+    required bool Function(String key) contains,
+    required List<CollectionTrackEntry> Function() select,
+    required LibraryCollectionsState Function(List<CollectionTrackEntry>)
+    withList,
+    required Future<void> Function(List<String>) dbDelete,
+  }) {
+    final selected = trackKeys.toSet();
+    return _mutate(() async {
+      final keys = selected.where(contains).toSet();
+      if (keys.isEmpty) return 0;
+      await dbDelete(keys.toList(growable: false));
+      if (ref.mounted) {
+        state = withList(
+          select()
+              .where((entry) => !keys.contains(entry.key))
+              .toList(growable: false),
+        );
+      }
+      return keys.length;
+    });
+  }
+
+  Future<int> removeWishlistTracks(Iterable<String> trackKeys) =>
+      _removeTrackEntries(
+        trackKeys,
+        contains: (key) => state.containsWishlistKey(key),
+        select: () => state.wishlist,
+        withList: (list) => state.copyWith(wishlist: list),
+        dbDelete: _db.deleteWishlistTracks,
+      );
+
+  Future<int> removeLovedTracks(Iterable<String> trackKeys) =>
+      _removeTrackEntries(
+        trackKeys,
+        contains: (key) => state.containsLovedKey(key),
+        select: () => state.loved,
+        withList: (list) => state.copyWith(loved: list),
+        dbDelete: _db.deleteLovedTracks,
+      );
+
   Future<String> createPlaylist(String name) => _mutate(() async {
     final now = DateTime.now();
     final id = 'pl_${now.microsecondsSinceEpoch}';
@@ -543,6 +585,43 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
         });
         _invalidatePlaylistPickerSummaries();
       });
+
+  Future<int> removeTracksFromPlaylist(
+    String playlistId,
+    Iterable<String> trackKeys,
+  ) {
+    final selected = trackKeys.toSet();
+    return _mutate(() async {
+      var playlist = state.playlistById(playlistId);
+      if (playlist == null || !selected.any(playlist.containsTrackKey)) {
+        return 0;
+      }
+      await ensurePlaylistLoaded(playlistId);
+      if (!ref.mounted) return 0;
+      playlist = state.playlistById(playlistId);
+      if (playlist == null) return 0;
+      final keys = selected.where(playlist.containsTrackKey).toSet();
+      if (keys.isEmpty) return 0;
+
+      final now = DateTime.now();
+      await _db.deletePlaylistTracks(
+        playlistId: playlistId,
+        trackKeys: keys.toList(growable: false),
+        playlistUpdatedAt: now.toIso8601String(),
+      );
+      _replacePlaylistById(
+        playlistId,
+        (current) => current.copyWith(
+          tracks: current.tracks
+              .where((entry) => !keys.contains(entry.key))
+              .toList(growable: false),
+          updatedAt: now,
+        ),
+      );
+      _invalidatePlaylistPickerSummaries();
+      return keys.length;
+    });
+  }
 
   Future<Directory> _playlistCoversDir() async {
     final appDir = await getApplicationSupportDirectory();
