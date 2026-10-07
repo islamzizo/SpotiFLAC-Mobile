@@ -103,6 +103,36 @@ String normalizeLookupText(String? value) {
   return (value ?? '').trim().toLowerCase();
 }
 
+/// Retry only lock contention while acquiring BEGIN, before the callback runs.
+/// History download writers can also lock transactions on an attached Library
+/// connection. Never replay a body or COMMIT failure: it may have side effects
+/// or an already durable result. Persistent locks still surface after 3 attempts.
+Future<T> transactionWithBusyRetry<T>(
+  Database db,
+  Future<T> Function(Transaction txn) action, {
+  bool? exclusive,
+}) async {
+  for (var attempt = 0; ; attempt++) {
+    var entered = false;
+    try {
+      return await db.transaction((txn) {
+        entered = true;
+        return action(txn);
+      }, exclusive: exclusive);
+    } on DatabaseException catch (error) {
+      final code = error.getResultCode();
+      final message = error.toString().toLowerCase();
+      final busy = code != null
+          ? (code & 0xff) == 5 || (code & 0xff) == 6
+          : message.contains('database is locked') ||
+                message.contains('database table is locked');
+      if (entered || !busy || attempt >= 2) rethrow;
+      _log.w('Database busy before transaction; retry ${attempt + 1}/2');
+      await Future<void>.delayed(Duration(milliseconds: 100 << attempt));
+    }
+  }
+}
+
 /// Returns a literal phrase suitable for the trigram FTS5 MATCH operator.
 ///
 /// The trigram tokenizer cannot answer one- or two-character searches, so

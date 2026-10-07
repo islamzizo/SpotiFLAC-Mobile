@@ -1,4 +1,5 @@
 import 'package:sqflite/sqflite.dart';
+import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 
 var _attachmentSequence = 0;
 
@@ -47,7 +48,7 @@ Future<void> createNativeSqliteSnapshot(
   final target = _identifier(alias);
   await database.execute('ATTACH DATABASE ? AS $target', [path]);
   try {
-    await database.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(database, (txn) async {
       for (final table in tables) {
         final name = _identifier(table);
         final schema = await txn.rawQuery(
@@ -111,7 +112,7 @@ Future<bool> replaceTablesFromNativeSnapshot(
   var committed = false;
   var detached = true;
   try {
-    await database.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(database, (txn) async {
       for (final table in deleteOrder) {
         await txn.execute('DELETE FROM main.${_identifier(table)}');
       }

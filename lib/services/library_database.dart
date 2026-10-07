@@ -220,7 +220,7 @@ class LibraryDatabase {
 
   Future<void> upsert(Map<String, dynamic> json, {String? sourceId}) async {
     final db = await database;
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       await txn.insert(
         'library',
         LibraryRowMapper.encode(json, sourceId: sourceId),
@@ -242,7 +242,7 @@ class LibraryDatabase {
   }) async {
     if (items.isEmpty) return;
     final db = await database;
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       final batch = txn.batch();
       for (final json in items) {
         batch.insert(
@@ -292,7 +292,7 @@ class LibraryDatabase {
       final count = Sqflite.firstIntValue(countRows) ?? 0;
       if (count == 0) return 0;
 
-      await db.transaction((txn) async {
+      await sqlite.transactionWithBusyRetry(db, (txn) async {
         await txn.rawDelete(
           'DELETE FROM library_path_keys WHERE item_id IN '
           '(SELECT id FROM $_downloadedLibraryIdsStageTable)',
@@ -392,7 +392,7 @@ class LibraryDatabase {
       final columnList = columns.join(', ');
       final selectedColumns = columns.map((column) => 's.$column').join(', ');
 
-      await db.transaction((txn) async {
+      await sqlite.transactionWithBusyRetry(db, (txn) async {
         await txn.rawDelete('''
           DELETE FROM library_path_keys
           WHERE item_id IN (
@@ -421,7 +421,7 @@ class LibraryDatabase {
 
   Future<void> replaceAll(List<Map<String, dynamic>> items) async {
     final db = await database;
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       await txn.delete('library_path_keys');
       await txn.delete('library');
       if (items.isEmpty) {
@@ -545,7 +545,7 @@ class LibraryDatabase {
       final columnList = columns.join(', ');
       final selectedColumns = columns.map((column) => 's.$column').join(', ');
 
-      await db.transaction((txn) async {
+      await sqlite.transactionWithBusyRetry(db, (txn) async {
         await deleteReplacedLibraryScanRows(
           txn,
           sourceId,
@@ -717,7 +717,7 @@ class LibraryDatabase {
 
   Future<void> removeSource(String sourceId) async {
     final db = await database;
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       await txn.rawDelete(
         'DELETE FROM library_path_keys WHERE item_id IN '
         '(SELECT id FROM library WHERE source_id = ?)',
@@ -1086,7 +1086,7 @@ class LibraryDatabase {
       whereArgs: [filePath],
     );
     final ids = rows.map((row) => row['id'] as String).toList(growable: false);
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       for (final id in ids) {
         await txn.delete(
           'library_path_keys',
@@ -1142,7 +1142,7 @@ class LibraryDatabase {
       updated['sampleRate'] = sampleRate ?? item.sampleRate;
     }
 
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       if (!keepOriginal) {
         await txn.delete(
           'library_path_keys',
@@ -1266,7 +1266,7 @@ class LibraryDatabase {
 
   Future<void> clearAll() async {
     final db = await database;
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       await txn.delete('library_path_keys');
       await txn.delete('library');
       await txn.update('library_sources', {
@@ -1393,7 +1393,7 @@ class LibraryDatabase {
     const chunkSize = 500;
     // One commit for the whole removal; a rescan that dropped a folder can
     // otherwise pay several WAL commits per chunk.
-    await db.transaction((txn) async {
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
       for (var i = 0; i < filePaths.length; i += chunkSize) {
         final end = (i + chunkSize < filePaths.length)
             ? i + chunkSize
@@ -1465,7 +1465,7 @@ Future<void> persistLegacyLibrarySource(
     'last_scanned_at': source.lastScannedAt?.toIso8601String(),
     'last_seen_at': source.lastSeenAt?.toIso8601String(),
   };
-  await db.transaction((txn) async {
+  await sqlite.transactionWithBusyRetry(db, (txn) async {
     final updated = await txn.update(
       'library_sources',
       values,

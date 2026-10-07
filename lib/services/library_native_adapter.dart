@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 import 'package:spotiflac_android/services/sqlite_native_snapshot.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -140,7 +141,7 @@ class LibraryNativeAdapter {
     );
     _check(isCancelled);
     await _attached(p.join(directory.path, 'local_library.db'), (alias) async {
-      await database.transaction((txn) async {
+      await sqlite.transactionWithBusyRetry(database, (txn) async {
         await _checkSource(txn, sourceId, sourcePath);
         _check(isCancelled);
         await txn.execute(
@@ -252,7 +253,7 @@ class LibraryNativeAdapter {
     required bool preserveMissing,
     required bool Function() isCancelled,
   }) => _attached(privatePath, (alias) async {
-    return database.transaction((txn) async {
+    return sqlite.transactionWithBusyRetry(database, (txn) async {
       _check(isCancelled);
       await _checkSource(txn, sourceId, sourcePath);
       final columns = (await txn.rawQuery(
@@ -358,7 +359,7 @@ class LibraryNativeAdapter {
     try {
       final privatePath = p.join(directory.path, 'local_library.db');
       await _attached(privatePath, (alias) async {
-        await database.transaction((txn) async {
+        await sqlite.transactionWithBusyRetry(database, (txn) async {
           await _checkSource(txn, sourceId, sourcePath);
           _check(isCancelled);
           await txn.execute(
@@ -404,7 +405,7 @@ class LibraryNativeAdapter {
       }
       _check(isCancelled);
       await _attached(privatePath, (alias) async {
-        await database.transaction((txn) async {
+        await sqlite.transactionWithBusyRetry(database, (txn) async {
           _check(isCancelled);
           await _checkSource(txn, sourceId, sourcePath);
           final timestamp =
