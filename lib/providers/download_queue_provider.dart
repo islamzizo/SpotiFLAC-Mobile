@@ -1406,19 +1406,8 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     }
 
     _log.i('Retrying ${failedIds.length} failed download(s)');
-    final resetResults = await Future.wait(
-      failedIds.map((id) async {
-        try {
-          await PlatformBridge.resetDownloadCancel(id);
-          return id;
-        } catch (e) {
-          _log.w('Failed to reset cancel flag for $id: $e');
-          return null;
-        }
-      }),
-    );
-    final retryableIds = resetResults.whereType<String>().toSet();
-    if (retryableIds.isEmpty) return;
+    final retryableIds = await PlatformBridge.resetDownloadCancels(failedIds);
+    if (!ref.mounted || retryableIds.isEmpty) return;
     _locallyCancelledItemIds.removeAll(retryableIds);
     _pausePendingItemIds.removeAll(retryableIds);
 

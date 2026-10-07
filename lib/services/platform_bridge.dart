@@ -880,6 +880,30 @@ class PlatformBridge {
     await _channel.invokeMethod('resetDownloadCancel', {'item_id': itemId});
   }
 
+  /// Returns only IDs whose native reset succeeded. Bound each request so a
+  /// large retry selection does not flood the channel or hold the native lock.
+  static Future<Set<String>> resetDownloadCancels(
+    Iterable<String> itemIds,
+  ) async {
+    final ids = itemIds.toSet().toList(growable: false);
+    final reset = <String>{};
+    for (var start = 0; start < ids.length; start += 256) {
+      final end = start + 256 < ids.length ? start + 256 : ids.length;
+      final chunk = ids.sublist(start, end);
+      try {
+        await _channel.invokeMethod('resetDownloadCancels', {
+          'item_ids': chunk,
+        });
+        reset.addAll(chunk);
+      } catch (error) {
+        _log.w(
+          'Failed to reset cancel flags for ${chunk.length} downloads: $error',
+        );
+      }
+    }
+    return reset;
+  }
+
   /// iOS only: run a verification/OAuth page inside ASWebAuthenticationSession.
   /// The session intercepts the callback scheme in-process, so the flow
   /// completes even where the app's URL scheme is not registered with the OS

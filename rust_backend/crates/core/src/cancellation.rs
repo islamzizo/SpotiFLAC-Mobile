@@ -176,14 +176,25 @@ impl CancellationRegistry {
     }
 
     pub fn reset_if_idle(&self, id: &str) -> Result<(), CancellationError> {
+        self.reset_many_if_idle(std::iter::once(id))
+    }
+
+    /// Clear only the selected idle sentinels under one registry lock. Leases
+    /// from a still-unwinding attempt keep their cancellation state intact.
+    pub fn reset_many_if_idle<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), CancellationError> {
         let mut state = self.shared.state.lock().expect("cancellation state lock");
         state.check_open()?;
-        if state
-            .entries
-            .get(id)
-            .is_some_and(|entry| entry.references == 0)
-        {
-            state.entries.remove(id);
+        for id in ids {
+            if state
+                .entries
+                .get(id)
+                .is_some_and(|entry| entry.references == 0)
+            {
+                state.entries.remove(id);
+            }
         }
         Ok(())
     }
@@ -334,6 +345,77 @@ mod tests {
     use std::sync::Weak;
     use std::sync::atomic::AtomicUsize;
     use std::task::Wake;
+
+    #[test]
+    fn batch_reset_preserves_active_leases_and_unselected_cancellation() {
+        let registry = CancellationRegistry::new(CancellationDomain::Download);
+        let active = registry.acquire("active").unwrap();
+        let second = registry.acquire("active").unwrap();
+        for id in ["active", "idle", "keep", "音楽"] {
+            registry.cancel(id).unwrap();
+        }
+        registry
+            .reset_many_if_idle(["active", "idle", "idle", "missing", "", "音楽"])
+            .unwrap();
+        assert!(active.is_cancelled().unwrap());
+        assert!(second.is_cancelled().unwrap());
+        assert!(registry.is_cancelled("keep").unwrap());
+        assert!(!registry.is_cancelled("idle").unwrap());
+        assert!(!registry.is_cancelled("音楽").unwrap());
+        active.release();
+        registry.reset_many_if_idle(["active"]).unwrap();
+        assert!(second.is_cancelled().unwrap());
+        second.release();
+        let retry = registry.acquire("active").unwrap();
+        assert!(!retry.is_cancelled().unwrap());
+        drop(active);
+        drop(second);
+        assert!(!retry.is_cancelled().unwrap());
+        registry.cancel("active").unwrap();
+        assert!(retry.is_cancelled().unwrap());
+    }
+
+    #[test]
+    fn batch_reset_matches_individual_resets() {
+        let baseline = CancellationRegistry::new(CancellationDomain::Download);
+        let batch = CancellationRegistry::new(CancellationDomain::Download);
+        let ids: Vec<_> = (0..300).map(|i| format!("item-{i}")).collect();
+        let mut held = Vec::new();
+        for (index, id) in ids.iter().enumerate() {
+            if index % 3 == 0 {
+                held.push((baseline.acquire(id).unwrap(), batch.acquire(id).unwrap()));
+            }
+            baseline.cancel(id).unwrap();
+            batch.cancel(id).unwrap();
+        }
+        let selected: Vec<_> = ids.iter().step_by(2).map(String::as_str).collect();
+        for id in &selected {
+            baseline.reset_if_idle(id).unwrap();
+        }
+        batch.reset_many_if_idle(selected).unwrap();
+        for id in ids {
+            assert_eq!(baseline.is_cancelled(&id), batch.is_cancelled(&id));
+        }
+        for (old, new) in held {
+            assert_eq!(old.is_cancelled(), new.is_cancelled());
+        }
+    }
+
+    #[test]
+    fn closed_registry_rejects_batch_including_empty_input() {
+        let registry = CancellationRegistry::new(CancellationDomain::Download);
+        registry.cancel("keep").unwrap();
+        registry.shutdown();
+        assert_eq!(
+            registry.reset_many_if_idle(["keep"]),
+            Err(CancellationError::RegistryClosed)
+        );
+        assert_eq!(
+            registry.reset_many_if_idle([]),
+            Err(CancellationError::RegistryClosed)
+        );
+        assert!(registry.shared.state.lock().unwrap().entries.is_empty());
+    }
 
     #[test]
     fn external_waker_observes_changes_without_holding_the_registry_lock() {

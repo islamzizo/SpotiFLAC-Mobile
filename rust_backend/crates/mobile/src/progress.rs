@@ -57,6 +57,13 @@ impl DownloadState {
             .map_err(Into::into)
     }
 
+    pub fn reset_download_cancels(&self, item_ids: Vec<String>) -> Result<(), CancellationError> {
+        self.inner
+            .cancellation
+            .reset_many_if_idle(item_ids.iter().map(String::as_str))
+            .map_err(Into::into)
+    }
+
     pub fn is_cancelled(&self, item_id: String) -> Result<bool, CancellationError> {
         self.inner
             .cancellation
@@ -116,6 +123,39 @@ impl DownloadState {
 impl Default for DownloadState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_batch_uses_the_same_download_owner_and_keeps_active_cancelled() {
+        let state = DownloadState::new();
+        let active = state.acquire("active".into()).unwrap();
+        for id in ["active", "idle", "keep"] {
+            state.cancel_download(id.into()).unwrap();
+        }
+        state
+            .reset_download_cancels(vec!["active".into(), "idle".into()])
+            .unwrap();
+        assert!(active.is_cancelled().unwrap());
+        assert!(!state.is_cancelled("idle".into()).unwrap());
+        assert!(state.is_cancelled("keep".into()).unwrap());
+        active.release();
+        assert!(
+            !state
+                .acquire("active".into())
+                .unwrap()
+                .is_cancelled()
+                .unwrap()
+        );
+        state.shutdown();
+        assert!(matches!(
+            state.reset_download_cancels(vec!["keep".into()]),
+            Err(CancellationError::RegistryClosed)
+        ));
     }
 }
 
