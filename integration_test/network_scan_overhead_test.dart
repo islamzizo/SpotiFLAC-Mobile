@@ -9,6 +9,7 @@ import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
 
 import '../test/support/library_collections_benchmark.dart';
 import '../test/support/lyrics_usability_benchmark.dart';
+import '../test/support/network_scan_output.dart';
 
 class _Storage extends NetworkStorageService {
   _Storage(int count)
@@ -121,10 +122,10 @@ void main() {
             'audio_codec': 'flac',
             'sample_rate': 44100,
           };
-          final samples = <Map<String, int>>[];
-          for (var sample = 0; sample < 3; sample++) {
+          Future<Map<String, int>> scan({bool splitWrites = false}) async {
             var metadataMicros = 0;
             var notifications = 0;
+            late InstrumentedScanOutput output;
             final scanner = NetworkLibraryScanner(
               storage: _Storage(400),
               readMetadata: (_) async {
@@ -137,6 +138,10 @@ void main() {
               },
               supportDirectory: () async => root,
               temporaryDirectory: () async => root,
+              openOutput: (file) async => output = InstrumentedScanOutput(
+                await file.open(mode: FileMode.write),
+                splitWrites: splitWrites,
+              ),
             );
             final result = await measureCollectionOperation(
               () => scanner.scan(
@@ -152,13 +157,48 @@ void main() {
             expect(rows.length, 400);
             expect(rows.every((row) => row['hasLyrics'] == true), isTrue);
             expect(rows.map((row) => row['id']).toSet().length, 400);
-            samples.add({
+            expect(
+              rows.map((row) => row['filePath']),
+              List.generate(
+                400,
+                (index) =>
+                    NetworkStorageService.source('fixture', '$index.flac'),
+              ),
+            );
+            expect(output.maximumConcurrentWrites, 1);
+            expect(output.rowCounts.every((count) => count <= 64), isTrue);
+            expect(output.physicalWrites, splitWrites ? 400 : lessThan(40));
+            await result.value.delete();
+            return {
               ...result.timing,
               'metadata_microseconds': metadataMicros,
-            });
-            await result.value.delete();
+              'physical_writes': output.physicalWrites,
+            };
+          }
+
+          final samples = <Map<String, int>>[];
+          for (var sample = 0; sample < 3; sample++) {
+            samples.add(await scan());
           }
           report['scan_${latency.inMilliseconds}ms'] = samples;
+          // Both sides run the same scanner; the comparator splits each batch
+          // into awaited per-row writes. This isolates physical write dispatch,
+          // rather than claiming to replay all scheduling of the old scanner.
+          await scan(splitWrites: true);
+          final perRow = <Map<String, int>>[];
+          final buffered = <Map<String, int>>[];
+          for (var pair = 0; pair < 5; pair++) {
+            for (final splitWrites
+                in pair.isEven ? [true, false] : [false, true]) {
+              (splitWrites ? perRow : buffered).add(
+                await scan(splitWrites: splitWrites),
+              );
+            }
+          }
+          report['paired_writes_${latency.inMilliseconds}ms'] = {
+            'per_row': perRow,
+            'buffered': buffered,
+          };
           completed++;
         } finally {
           await root.delete(recursive: true);
@@ -166,4 +206,52 @@ void main() {
       },
     );
   }
+
+  testWidgets('failed or cancelled final output is never published', (
+    tester,
+  ) async {
+    final root = await Directory.systemTemp.createTemp('scan-faults-');
+    try {
+      for (final fault in ['partial_write', 'close', 'cancel', 'none']) {
+        var cancelled = false;
+        final failure = StateError(fault);
+        final scanner = NetworkLibraryScanner(
+          storage: _Storage(3),
+          readMetadata: (_) async => {'title': 'Example'},
+          supportDirectory: () async => root,
+          temporaryDirectory: () async => root,
+          openOutput: (file) async => InstrumentedScanOutput(
+            await file.open(mode: FileMode.write),
+            writeError: fault == 'partial_write' ? failure : null,
+            closeError: fault == 'close' ? failure : null,
+            afterWrite: () {
+              if (fault == 'cancel') cancelled = true;
+            },
+          ),
+        );
+        final scan = scanner.scan(
+          NetworkStorageService.source('fixture', ''),
+          checkpoint: () async {
+            if (cancelled) throw failure;
+          },
+          onProgress: (_, _, _) {},
+        );
+        if (fault == 'none') {
+          final result = await scan;
+          expect(result.expectedCount, 3);
+          expect(await result.rows().length, 3);
+          await result.delete();
+        } else {
+          await expectLater(scan, throwsA(same(failure)));
+        }
+        expect(
+          await Directory('${root.path}/network_scans').list().toList(),
+          isEmpty,
+        );
+      }
+      completed++;
+    } finally {
+      await root.delete(recursive: true);
+    }
+  });
 }

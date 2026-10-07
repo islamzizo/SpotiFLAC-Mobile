@@ -22,6 +22,7 @@ class NetworkLibraryScanner {
     Future<Map<String, dynamic>> Function(String)? readMetadata,
     Future<Directory> Function()? supportDirectory,
     Future<Directory> Function()? temporaryDirectory,
+    Future<RandomAccessFile> Function(File)? openOutput,
   }) : _storage = storage ?? NetworkStorageService.instance,
        _readMetadata =
            readMetadata ??
@@ -30,11 +31,13 @@ class NetworkLibraryScanner {
              forceRefresh: true,
            )),
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
-       _temporaryDirectory = temporaryDirectory ?? getTemporaryDirectory;
+       _temporaryDirectory = temporaryDirectory ?? getTemporaryDirectory,
+       _openOutput = openOutput ?? ((file) => file.open(mode: FileMode.write));
 
   final NetworkStorageService _storage;
   final Future<Map<String, dynamic>> Function(String) _readMetadata;
   final Future<Directory> Function() _supportDirectory, _temporaryDirectory;
+  final Future<RandomAccessFile> Function(File) _openOutput;
 
   Future<LibraryScanNDJSONFile> scan(
     String source, {
@@ -66,7 +69,7 @@ class NetworkLibraryScanner {
       '${(await _supportDirectory()).path}/library_covers',
     ).create(recursive: true);
     final file = File('${temp.path}/${NetworkStorageService.newId()}.ndjson');
-    final output = await file.open(mode: FileMode.write);
+    RandomAccessFile? output;
     var written = 0;
     var processed = 0;
     var errors = 0;
@@ -74,6 +77,21 @@ class NetworkLibraryScanner {
     final visited = <String>{};
     final seenFiles = <String>{};
     try {
+      final writer = await _openOutput(file);
+      output = writer;
+      // Bound both memory and uninterrupted work when metadata is cached.
+      // Count UTF-16 characters, not bytes; oversized rows are written alone.
+      const maxBufferedCharacters = 64 * 1024;
+      const maxBufferedRows = 64;
+      final buffer = StringBuffer();
+      var bufferedRows = 0;
+      Future<void> flush() async {
+        if (buffer.isEmpty) return;
+        await writer.writeString(buffer.toString());
+        buffer.clear();
+        bufferedRows = 0;
+      }
+
       while (pending.isNotEmpty) {
         await checkpoint();
         final folder = pending.removeLast();
@@ -106,6 +124,7 @@ class NetworkLibraryScanner {
           }
           if (!entry.audio || !seenFiles.add(path)) continue;
           final trackSource = NetworkStorageService.source(connection.id, path);
+          String? encodedRow;
           try {
             final tags = await _readMetadata(trackSource);
             if (tags['error'] != null || tags['metadataFromFilename'] == true) {
@@ -124,9 +143,9 @@ class NetworkLibraryScanner {
               try {
                 try {
                   if (!PlatformBridge.supportsCoreBackend) {
-                    final directory = covers.path;
-                    coverPath = await Isolate.run(
-                      () => _promoteCover(cover, directory),
+                    coverPath = await _promoteCoverInBackground(
+                      cover,
+                      covers.path,
                     );
                   } else {
                     final promoted = await PlatformBridge.runNativeDataJob({
@@ -137,9 +156,9 @@ class NetworkLibraryScanner {
                     coverPath = promoted['cover_path'] as String;
                   }
                 } on MissingPluginException {
-                  final directory = covers.path;
-                  coverPath = await Isolate.run(
-                    () => _promoteCover(cover, directory),
+                  coverPath = await _promoteCoverInBackground(
+                    cover,
+                    covers.path,
                   );
                 }
               } catch (_) {}
@@ -148,32 +167,63 @@ class NetworkLibraryScanner {
             final row = networkLibraryRow(trackSource, entry, tags)
               ..['id'] = id
               ..['coverPath'] = coverPath;
-            await output.writeString('${jsonEncode(row)}\n');
-            written++;
+            encodedRow = '${jsonEncode(row)}\n';
           } catch (error) {
             // Cancellation must abort the whole staging operation.
             await checkpoint();
             errors++;
             _log.e('Network track scan failed [$trackSource]', error);
           }
+          if (encodedRow != null) {
+            // A failed output write invalidates the entire staging file; it
+            // must not be swallowed as an individual metadata read failure.
+            if (buffer.length + encodedRow.length > maxBufferedCharacters) {
+              await flush();
+            }
+            if (encodedRow.length > maxBufferedCharacters) {
+              await writer.writeString(encodedRow);
+            } else {
+              buffer.write(encodedRow);
+              bufferedRows++;
+              if (bufferedRows >= maxBufferedRows) await flush();
+            }
+            written++;
+          }
           processed++;
           onProgress(processed, errors, entry.name);
         }
       }
       await checkpoint();
-      await output.close();
+      await flush();
+      await writer.close();
+      output = null;
+      // Cancellation can arrive during the final write or close too.
+      await checkpoint();
       return LibraryScanNDJSONFile(
         file: file,
         expectedCount: written,
         errorCount: errors,
       );
     } catch (_) {
-      await output.close();
-      if (await file.exists()) await file.delete();
+      try {
+        await output?.close();
+      } catch (error) {
+        _log.e('Failed to close incomplete network scan output', error);
+      }
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (error) {
+        _log.e('Failed to delete incomplete network scan output', error);
+      }
       rethrow;
     }
   }
 }
+
+// Keep the isolate closure outside scan's scope so it cannot capture an open
+// output handle or the buffering closures, which are not isolate-sendable.
+Future<String?> _promoteCoverInBackground(String cover, String directory) =>
+    Isolate.run(() => _promoteCover(cover, directory));
 
 Future<String?> _promoteCover(String cover, String directory) async {
   final digest = await sha256.bind(File(cover).openRead()).first;
