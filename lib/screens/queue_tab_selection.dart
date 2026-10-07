@@ -328,9 +328,7 @@ extension _QueueTabSelectionActions on _QueueTabState {
     if (confirmed != true || !context.mounted) return;
 
     final notifier = ref.read(libraryCollectionsProvider.notifier);
-    for (final id in _selectedPlaylistIds.toList()) {
-      await notifier.deletePlaylist(id);
-    }
+    await notifier.deletePlaylists(_selectedPlaylistIds);
 
     if (!context.mounted) return;
     _exitPlaylistSelectionMode();

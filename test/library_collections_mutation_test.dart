@@ -172,6 +172,15 @@ class _CollectionsDatabase implements LibraryCollectionsDatabase {
       _write('delete:playlist:$playlistId', () => playlists.remove(playlistId));
 
   @override
+  Future<void> deletePlaylists(List<String> ids) =>
+      _write('bulk-playlists:remove', () {
+        for (final id in ids) {
+          playlists.remove(id);
+          playlistTracks.remove(id);
+        }
+      });
+
+  @override
   Future<void> upsertPlaylistTracksBatch({
     required String playlistId,
     required String playlistUpdatedAt,
@@ -240,6 +249,96 @@ ProviderContainer _container(_CollectionsDatabase db) {
 }
 
 void main() {
+  for (final failFirst in [false, true]) {
+    test(
+      'playlist bulk deletion snapshots IDs and serializes retries (fail: $failFirst)',
+      () async {
+        final db = _CollectionsDatabase()..failNextWrite = failFirst;
+        for (final id in ['a', 'b', 'keep']) {
+          db.playlists[id] = {
+            'id': id,
+            'name': 'Playlist $id',
+            'cover_image_path': 'cover-$id',
+            'created_at': '2026-01-01T00:00:00Z',
+            'updated_at': '2026-01-02T00:00:00Z',
+          };
+          db.playlistTracks[id] = [
+            {
+              'track_key': 'example:shared',
+              'track_json': jsonEncode(_track('shared').toJson()),
+              'added_at': '2026-01-01T00:00:00Z',
+            },
+          ];
+        }
+        final container = _container(db);
+        final notifier = container.read(libraryCollectionsProvider.notifier);
+        final ids = ['a', 'b', 'missing', 'a'];
+        final first = notifier.deletePlaylists(ids);
+        ids
+          ..clear()
+          ..add('keep');
+        final failure = failFirst ? expectLater(first, throwsStateError) : null;
+        await db.writeStarted.future;
+        final before = container.read(libraryCollectionsProvider);
+        expect(before.playlists.every((p) => !p.tracksLoaded), true);
+        var publications = 0;
+        container.listen(libraryCollectionsProvider, (_, _) => publications++);
+        final second = notifier.deletePlaylists(['a', 'b']);
+        expect(db.events, ['bulk-playlists:remove']);
+        expect(container.read(libraryCollectionsProvider), same(before));
+        db.releaseWrite.complete();
+        if (failure != null) {
+          await failure;
+        } else {
+          expect(await first, 2);
+        }
+        expect(await second, failFirst ? 2 : 0);
+        final after = container.read(libraryCollectionsProvider);
+        expect(after.playlists.single, same(before.playlistById('keep')));
+        expect(after.playlists.single.coverImagePath, 'cover-keep');
+        expect(after.playlists.single.trackKeys, {'example:shared'});
+        expect(db.playlists.keys, ['keep']);
+        expect(db.playlistTracks.keys, ['keep']);
+        expect(db.playlistReads, 0);
+        expect(publications, 1);
+        expect(await notifier.deletePlaylists([]), 0);
+        expect(await notifier.deletePlaylists(['missing', 'a']), 0);
+        expect(db.events.length, failFirst ? 2 : 1);
+        expect(publications, 1);
+      },
+    );
+  }
+
+  test('late hydration cannot resurrect a bulk-deleted playlist', () async {
+    final db = _CollectionsDatabase();
+    db.playlists['p'] = {
+      'id': 'p',
+      'name': 'Playlist',
+      'created_at': '2026-01-01T00:00:00Z',
+      'updated_at': '2026-01-01T00:00:00Z',
+    };
+    final rows = [
+      {
+        'track_key': 'example:shared',
+        'track_json': jsonEncode(_track('shared').toJson()),
+        'added_at': '2026-01-01T00:00:00Z',
+      },
+    ];
+    db.playlistTracks['p'] = rows;
+    db.stagedPlaylistRows = LibraryPlaylistTracksSnapshot(rows: rows);
+    final container = _container(db);
+    final notifier = container.read(libraryCollectionsProvider.notifier);
+    final load = notifier.ensurePlaylistLoaded('p');
+    await db.playlistReadStarted.future;
+    db.releaseWrite.complete();
+    expect(await notifier.deletePlaylists(['p']), 1);
+    expect(container.read(libraryCollectionsProvider).playlists, isEmpty);
+    db.releasePlaylistRead.complete();
+    await load;
+    expect(container.read(libraryCollectionsProvider).playlists, isEmpty);
+    expect(db.playlistReads, 1);
+  });
+
   for (final kind in ['wishlist', 'loved', 'playlist']) {
     for (final failFirst in [false, true]) {
       test(
@@ -671,11 +770,11 @@ void main() {
       final container = _container(db);
       final notifier = container.read(libraryCollectionsProvider.notifier);
       await notifier.ensurePlaylistsLoaded(const []);
-      final deletion = notifier.deletePlaylist('target');
+      final deletion = notifier.deletePlaylists(['target']);
       await db.writeStarted.future;
       final creation = notifier.createPlaylist('New');
       await Future<void>.delayed(Duration.zero);
-      expect(db.events, ['delete:playlist:target']);
+      expect(db.events, ['bulk-playlists:remove']);
       expect(
         container.read(libraryCollectionsProvider).playlists.map((p) => p.id),
         ['target', 'keep'],
@@ -684,7 +783,7 @@ void main() {
       await deletion;
       final createdId = await creation;
       expect(db.events, [
-        'delete:playlist:target',
+        'bulk-playlists:remove',
         'insert:playlist:$createdId',
       ]);
       expect(db.playlists.keys.toSet(), {'keep', createdId});

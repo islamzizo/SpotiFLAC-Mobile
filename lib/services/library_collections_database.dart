@@ -782,6 +782,33 @@ class LibraryCollectionsDatabase {
     await db.delete(_tablePlaylists, where: 'id = ?', whereArgs: [playlistId]);
   }
 
+  Future<void> deletePlaylists(List<String> playlistIds) async {
+    if (playlistIds.isEmpty) return;
+    await deleteDatabasePlaylists(await database, playlistIds);
+  }
+
+  /// Delete selected parents together; the owner's foreign-key cascade removes
+  /// their track memberships without loading track metadata into Dart.
+  static Future<void> deleteDatabasePlaylists(
+    Database db,
+    List<String> playlistIds,
+  ) async {
+    if (playlistIds.isEmpty) return;
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
+      for (var start = 0; start < playlistIds.length; start += 128) {
+        final end = start + 128 < playlistIds.length
+            ? start + 128
+            : playlistIds.length;
+        final ids = playlistIds.sublist(start, end);
+        await txn.delete(
+          _tablePlaylists,
+          where: 'id IN (${List.filled(ids.length, '?').join(',')})',
+          whereArgs: ids,
+        );
+      }
+    });
+  }
+
   Future<void> upsertPlaylistTrack({
     required String playlistId,
     required String trackKey,

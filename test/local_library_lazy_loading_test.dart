@@ -19,6 +19,7 @@ import 'package:spotiflac_android/services/history_database.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/library_search.dart';
 import 'package:spotiflac_android/theme/app_theme.dart';
+import 'package:spotiflac_android/theme/mornye_theme.dart';
 
 class _Settings extends SettingsNotifier {
   @override
@@ -72,6 +73,38 @@ class _Queue extends DownloadQueueNotifier {
   DownloadQueueState build() => DownloadQueueState();
 }
 
+class _SelectionCollections extends LibraryCollectionsNotifier {
+  _SelectionCollections(this._record);
+  final void Function(List<String>) _record;
+
+  @override
+  LibraryCollectionsState build() => LibraryCollectionsState(
+    isLoaded: true,
+    playlists: [
+      for (final id in ['First', 'Second', 'Keep'])
+        UserPlaylistCollection(
+          id: id,
+          name: id,
+          createdAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+          tracks: const [],
+        ),
+    ],
+  );
+
+  @override
+  Future<int> deletePlaylists(Iterable<String> ids) async {
+    final selected = ids.toSet();
+    _record(selected.toList());
+    state = state.copyWith(
+      playlists: state.playlists
+          .where((p) => !selected.contains(p.id))
+          .toList(),
+    );
+    return selected.length;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late _Local local;
@@ -120,6 +153,69 @@ void main() {
     });
     addTearDown(() => messenger.setMockMethodCallHandler(sqlite, null));
   });
+
+  for (final mornye in [false, true]) {
+    testWidgets('playlist selection confirms one deletion (Mornye: $mornye)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <List<String>>[];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsProvider.overrideWith(_Settings.new),
+            downloadHistoryProvider.overrideWith(() => history),
+            localLibraryProvider.overrideWith(() => local),
+            libraryCollectionsProvider.overrideWith(
+              () => _SelectionCollections(calls.add),
+            ),
+            downloadQueueProvider.overrideWith(_Queue.new),
+          ],
+          child: MaterialApp(
+            theme: mornye
+                ? MornyeTheme.build(Brightness.dark)
+                : AppTheme.light(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const Scaffold(body: QueueTab(librarySection: 'playlists')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final l10n = AppLocalizations.of(tester.element(find.byType(QueueTab)));
+      await tester.ensureVisible(find.text('First'));
+      await tester.longPress(find.text('First'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Second'));
+      await tester.tap(find.text('Second'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(l10n.selectionDeletePlaylistsCount(2)));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(l10n.collectionDeletePlaylistsMessage(2)),
+        findsOneWidget,
+      );
+      await tester.tap(find.text(l10n.dialogCancel));
+      await tester.pumpAndSettle();
+      expect(calls, isEmpty);
+      expect(find.text('First'), findsOneWidget);
+      await tester.tap(find.text(l10n.selectionDeletePlaylistsCount(2)));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(l10n.dialogDelete));
+      await tester.pumpAndSettle();
+      expect(calls, [
+        ['First', 'Second'],
+      ]);
+      expect(find.text('First'), findsNothing);
+      expect(find.text('Second'), findsNothing);
+      expect(find.text('Keep'), findsOneWidget);
+      expect(find.text(l10n.selectionDeletePlaylistsCount(2)), findsNothing);
+      expect(find.text(l10n.collectionPlaylistsDeleted(2)), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   test(
     'search and browse stop observing the local index when disabled',

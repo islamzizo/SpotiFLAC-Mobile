@@ -463,6 +463,26 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     _invalidatePlaylistPickerSummaries();
   });
 
+  Future<int> deletePlaylists(Iterable<String> playlistIds) {
+    final selected = playlistIds.toSet();
+    return _mutate(() async {
+      final ids = selected
+          .where((id) => state.playlistById(id) != null)
+          .toSet();
+      if (ids.isEmpty) return 0;
+      await _db.deletePlaylists(ids.toList(growable: false));
+      if (ref.mounted) {
+        state = state.copyWith(
+          playlists: state.playlists
+              .where((playlist) => !ids.contains(playlist.id))
+              .toList(growable: false),
+        );
+        _invalidatePlaylistPickerSummaries();
+      }
+      return ids.length;
+    });
+  }
+
   Future<bool> addTrackToPlaylist(String playlistId, Track track) => _mutate(
     () async {
       var playlist = state.playlistById(playlistId);
