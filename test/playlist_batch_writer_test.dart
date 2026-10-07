@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/models/track.dart';
-import 'package:spotiflac_android/services/playlist_batch_writer.dart';
+import 'package:spotiflac_android/services/collection_track_batch.dart';
 
 import 'support/playlist_batch_benchmark.dart';
 
@@ -37,7 +37,7 @@ void main() {
         final tracks = [...fixture, fixture[1], fixture[3]];
         final keys = {'example:0', 'example:1'};
         final baseline = inlinePlaylistBatch(tracks, keys, now);
-        final prepared = await preparePlaylistBatch(
+        final prepared = await prepareCollectionTrackBatch(
           tracks: tracks,
           existingKeys: keys,
           addedAt: now,
@@ -85,7 +85,7 @@ void main() {
       albumName: 'Album',
       duration: 1,
     );
-    final prepared = await preparePlaylistBatch(
+    final prepared = await prepareCollectionTrackBatch(
       tracks: [
         track('first', 'one', ' xx001 '),
         track('second', 'two', 'XX001'),
@@ -101,7 +101,7 @@ void main() {
 
   test('mostly duplicate batches retain the small persistence route', () async {
     final fixture = await playlistBatchFixture(12);
-    final prepared = await preparePlaylistBatch(
+    final prepared = await prepareCollectionTrackBatch(
       tracks: [for (var index = 0; index < 256; index++) ...fixture],
       existingKeys: const {},
       addedAt: now,
@@ -118,7 +118,7 @@ void main() {
   test('failed encoding removes its partial row file', () async {
     final fixture = await playlistBatchFixture(2500);
     await expectLater(
-      preparePlaylistBatch(
+      prepareCollectionTrackBatch(
         tracks: [...fixture, _InvalidTrack()],
         existingKeys: const {},
         addedAt: now,

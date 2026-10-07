@@ -8,7 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/services/collection_restore_codec.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
-import 'package:spotiflac_android/services/playlist_batch_writer.dart';
+import 'package:spotiflac_android/services/collection_track_batch.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 import 'package:spotiflac_android/services/sqlite_native_snapshot.dart';
 import 'package:spotiflac_android/utils/logger.dart';
@@ -630,6 +630,64 @@ class LibraryCollectionsDatabase {
 
   Future<void> deleteLovedEntry(String trackKey) =>
       _deleteEntry(_tableLoved, 'track', trackKey);
+
+  Future<void> upsertLovedTracksBatch(List<Map<String, String>> tracks) async {
+    if (tracks.isEmpty) return;
+    await writeDatabaseLovedTracks(await database, tracks);
+  }
+
+  static Future<void> writeDatabaseLovedTracks(
+    Database db,
+    List<Map<String, String>> tracks,
+  ) async {
+    if (tracks.isEmpty) return;
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
+      for (var start = 0; start < tracks.length; start += 128) {
+        final batch = txn.batch();
+        for (final row in tracks.skip(start).take(128)) {
+          batch.insert(
+            _tableLoved,
+            row,
+            conflictAlgorithm: ConflictAlgorithm.replace,
+          );
+        }
+        await batch.commit(noResult: true);
+      }
+    });
+  }
+
+  Future<void> upsertLovedTracksFile({
+    required String addedAt,
+    required String rowsPath,
+    required int expectedCount,
+  }) async => publishLovedBatch(
+    database: await database,
+    addedAt: addedAt,
+    rowsPath: rowsPath,
+    expectedCount: expectedCount,
+  );
+
+  Future<void> deleteLovedTracks(List<String> keys) async {
+    if (keys.isEmpty) return;
+    await deleteDatabaseLovedTracks(await database, keys);
+  }
+
+  static Future<void> deleteDatabaseLovedTracks(
+    Database db,
+    List<String> keys,
+  ) async {
+    if (keys.isEmpty) return;
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
+      for (var start = 0; start < keys.length; start += 128) {
+        final chunk = keys.skip(start).take(128).toList(growable: false);
+        await txn.delete(
+          _tableLoved,
+          where: 'track_key IN (${List.filled(chunk.length, '?').join(',')})',
+          whereArgs: chunk,
+        );
+      }
+    });
+  }
 
   Future<void> upsertFavoriteArtistEntry({
     required String artistKey,

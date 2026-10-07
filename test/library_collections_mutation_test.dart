@@ -178,6 +178,22 @@ class _CollectionsDatabase implements LibraryCollectionsDatabase {
   });
 
   @override
+  Future<void> upsertLovedTracksBatch(List<Map<String, String>> tracks) =>
+      _write('bulk-loved:add', () {
+        for (final row in tracks) {
+          loved[row['track_key']!] = Map<String, dynamic>.from(row);
+        }
+      });
+
+  @override
+  Future<void> deleteLovedTracks(List<String> keys) =>
+      _write('bulk-loved:remove', () {
+        for (final key in keys) {
+          loved.remove(key);
+        }
+      });
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -203,6 +219,93 @@ ProviderContainer _container(_CollectionsDatabase db) {
 }
 
 void main() {
+  for (final failFirst in [false, true]) {
+    test(
+      'Love All is atomic and serializes repeated clicks (failure: $failFirst)',
+      () async {
+        final db = _CollectionsDatabase()..failNextWrite = failFirst;
+        final container = _container(db);
+        final notifier = container.read(libraryCollectionsProvider.notifier);
+        var publications = 0;
+        container.listen(libraryCollectionsProvider, (_, _) => publications++);
+        final selected = [_track('1'), _track('1'), _track('2')];
+        final first = notifier.toggleLovedTracks(selected);
+        final failure = failFirst ? expectLater(first, throwsStateError) : null;
+        await db.writeStarted.future;
+        publications = 0;
+        expect(container.read(libraryCollectionsProvider).loved, isEmpty);
+        final second = notifier.toggleLovedTracks(selected);
+        expect(db.events, ['bulk-loved:add']);
+        db.releaseWrite.complete();
+        if (failure != null) {
+          await failure;
+        } else {
+          expect(await first, (removed: false, count: 2));
+        }
+        expect(await second, (removed: !failFirst, count: 2));
+        expect(publications, failFirst ? 1 : 2);
+        expect(
+          container
+              .read(libraryCollectionsProvider)
+              .loved
+              .map((entry) => entry.track.id),
+          failFirst ? ['2', '1'] : isEmpty,
+        );
+        expect(db.loved.length, failFirst ? 2 : 0);
+        expect(db.events, [
+          'bulk-loved:add',
+          failFirst ? 'bulk-loved:add' : 'bulk-loved:remove',
+        ]);
+      },
+    );
+  }
+
+  test(
+    'mixed Love All preserves existing metadata and unrelated loved tracks',
+    () async {
+      final db = _CollectionsDatabase();
+      for (final id in ['existing', 'unrelated']) {
+        db.loved[trackCollectionKey(_track(id))] = {
+          'track_key': trackCollectionKey(_track(id)),
+          'track_json': jsonEncode(_track(id).toJson()),
+          'added_at': '2026-01-01T00:00:00Z',
+        };
+      }
+      final container = _container(db);
+      final notifier = container.read(libraryCollectionsProvider.notifier);
+      final selected = [_track('existing'), _track('new'), _track('new')];
+      final add = notifier.toggleLovedTracks(selected);
+      await db.writeStarted.future;
+      db.releaseWrite.complete();
+      expect(await add, (removed: false, count: 1));
+      expect(
+        container
+            .read(libraryCollectionsProvider)
+            .loved
+            .map((entry) => entry.track.id),
+        ['new', 'existing', 'unrelated'],
+      );
+      expect(
+        db.loved[trackCollectionKey(_track('existing'))]!['added_at'],
+        '2026-01-01T00:00:00Z',
+      );
+      expect(await notifier.toggleLovedTracks(selected), (
+        removed: true,
+        count: 2,
+      ));
+      expect(
+        container.read(libraryCollectionsProvider).loved.single.track.id,
+        'unrelated',
+      );
+      final before = db.events.length;
+      expect(await notifier.toggleLovedTracks(const []), (
+        removed: false,
+        count: 0,
+      ));
+      expect(db.events.length, before);
+    },
+  );
+
   for (final failFirst in [false, true]) {
     test(
       'bulk additions publish after persistence and serialize duplicates (failure: $failFirst)',

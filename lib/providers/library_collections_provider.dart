@@ -9,7 +9,7 @@ import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/library_collections_database.dart';
 import 'package:spotiflac_android/services/library_collections_hydration.dart';
-import 'package:spotiflac_android/services/playlist_batch_writer.dart';
+import 'package:spotiflac_android/services/collection_track_batch.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 export 'package:spotiflac_android/models/library_collections.dart';
@@ -218,6 +218,59 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     dbUpsert: _db.upsertLovedEntry,
   );
 
+  /// One selection is one mutation: mixed selections add only missing tracks,
+  /// fully loved selections remove them, and observers see one committed state.
+  Future<({bool removed, int count})> toggleLovedTracks(
+    Iterable<Track> tracks,
+  ) => _mutate(() async {
+    final selected = tracks.toList(growable: false);
+    if (selected.isEmpty) return (removed: false, count: 0);
+    if (selected.every(state.isLoved)) {
+      final keys = selected.map(trackCollectionKey).toSet();
+      await _db.deleteLovedTracks(keys.toList(growable: false));
+      if (ref.mounted) {
+        state = state.copyWith(
+          loved: state.loved
+              .where((entry) => !keys.contains(entry.key))
+              .toList(growable: false),
+        );
+      }
+      return (removed: true, count: keys.length);
+    }
+
+    final now = DateTime.now();
+    final prepared = await prepareCollectionTrackBatch(
+      tracks: selected,
+      existingKeys: state.loved.map((entry) => entry.key).toSet(),
+      addedAt: now,
+    );
+    try {
+      if (!ref.mounted || prepared.entries.isEmpty) {
+        return (removed: false, count: 0);
+      }
+      final rowsPath = prepared.rowsPath;
+      if (rowsPath != null) {
+        await _db.upsertLovedTracksFile(
+          addedAt: now.toIso8601String(),
+          rowsPath: rowsPath,
+          expectedCount: prepared.entries.length,
+        );
+      } else {
+        await _db.upsertLovedTracksBatch(prepared.rows);
+      }
+      if (ref.mounted) {
+        // The latest added track appears first, matching the original
+        // per-track inserts and the database's DESC rowid tie-breaker.
+        state = state.copyWith(
+          loved: [...prepared.entries.reversed, ...state.loved],
+        );
+      }
+      return (removed: false, count: prepared.entries.length);
+    } finally {
+      await prepared.dispose();
+    }
+  });
+
   Future<bool> toggleFavoriteArtist({
     required String artistId,
     required String? providerId,
@@ -422,7 +475,7 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     }
 
     final now = DateTime.now();
-    final prepared = await preparePlaylistBatch(
+    final prepared = await prepareCollectionTrackBatch(
       tracks: tracks,
       existingKeys: playlist.trackKeys,
       addedAt: now,

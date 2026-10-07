@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:spotiflac_android/services/playlist_batch_writer.dart';
+import 'package:spotiflac_android/services/collection_track_batch.dart';
 
 import 'support/library_collections_benchmark.dart';
 import 'support/playlist_batch_benchmark.dart';
@@ -20,7 +20,7 @@ void main() {
         for (final worker in index.isEven ? [false, true] : [true, false]) {
           if (worker) {
             final result = await measureCollectionOperation(
-              () => preparePlaylistBatch(
+              () => prepareCollectionTrackBatch(
                 tracks: tracks,
                 existingKeys: const {},
                 addedAt: DateTime.utc(2026, 10, 8),

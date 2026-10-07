@@ -3,7 +3,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:spotiflac_android/services/playlist_batch_writer.dart';
+import 'package:spotiflac_android/services/collection_track_batch.dart';
+import 'package:spotiflac_android/services/library_collections_database.dart';
 
 import 'support/sqlite_process_database.dart';
 
@@ -45,6 +46,9 @@ void main() {
       'CREATE TABLE playlist_tracks(playlist_id TEXT NOT NULL, track_key TEXT NOT NULL, track_json TEXT NOT NULL, added_at TEXT NOT NULL, PRIMARY KEY(playlist_id,track_key), FOREIGN KEY(playlist_id) REFERENCES playlists(id))',
     );
     await live.execute('CREATE TABLE published(track_key TEXT)');
+    await live.execute(
+      'CREATE TABLE loved_tracks(track_key TEXT PRIMARY KEY,track_json TEXT NOT NULL,added_at TEXT NOT NULL)',
+    );
     await live.execute(
       'CREATE TRIGGER audit AFTER INSERT ON playlist_tracks BEGIN INSERT INTO published VALUES(new.track_key); END',
     );
@@ -133,6 +137,83 @@ void main() {
       expect(await File(retainedStage!).exists(), false);
     },
   );
+
+  for (final fail in [false, true]) {
+    test('shared staging publishes Loved atomically (failure: $fail)', () async {
+      if (fail) {
+        await live.execute(
+          "CREATE TRIGGER fail_loved BEFORE INSERT ON loved_tracks WHEN new.track_key='new-b' BEGIN SELECT RAISE(ABORT,'denied'); END",
+        );
+      }
+      final operation = publishLovedBatch(
+        database: live,
+        addedAt: 'new',
+        rowsPath: input,
+        expectedCount: 2,
+        nativeJobRunner: stage,
+        temporaryDirectory: root,
+      );
+      if (fail) {
+        await expectLater(operation, throwsA(isA<StateError>()));
+        expect(await live.rawQuery('SELECT * FROM loved_tracks'), isEmpty);
+      } else {
+        await operation;
+        expect(
+          (await live.rawQuery(
+            'SELECT track_key FROM loved_tracks ORDER BY added_at DESC,rowid DESC',
+          )).map((row) => row['track_key']),
+          ['new-b', 'new-a'],
+        );
+      }
+      expect(await File(retainedStage!).exists(), isFalse);
+      expect((await live.rawQuery('PRAGMA database_list')).length, 1);
+      expect(
+        (await live.rawQuery(
+          'SELECT track_key FROM playlist_tracks',
+        )).single['track_key'],
+        'existing',
+      );
+      expect(
+        (await live.rawQuery(
+          "SELECT updated_at FROM playlists WHERE id='p'",
+        )).single['updated_at'],
+        'old',
+      );
+    });
+  }
+
+  test('bounded Loved inserts and deletes roll back earlier chunks', () async {
+    final rows = List.generate(
+      400,
+      (index) => <String, String>{
+        'track_key': 'key-$index',
+        'track_json': '{}',
+        'added_at': 'new',
+      },
+    );
+    await live.execute(
+      "CREATE TRIGGER fail_loved BEFORE INSERT ON loved_tracks WHEN new.track_key='key-300' BEGIN SELECT RAISE(ABORT,'denied'); END",
+    );
+    await expectLater(
+      LibraryCollectionsDatabase.writeDatabaseLovedTracks(live, rows),
+      throwsA(isA<StateError>()),
+    );
+    expect(await live.rawQuery('SELECT * FROM loved_tracks'), isEmpty);
+    await live.execute('DROP TRIGGER fail_loved');
+    await LibraryCollectionsDatabase.writeDatabaseLovedTracks(live, rows);
+    await live.execute(
+      "CREATE TRIGGER fail_delete BEFORE DELETE ON loved_tracks WHEN old.track_key='key-300' BEGIN SELECT RAISE(ABORT,'denied'); END",
+    );
+    final keys = rows.map((row) => row['track_key']!).toList();
+    await expectLater(
+      LibraryCollectionsDatabase.deleteDatabaseLovedTracks(live, keys),
+      throwsA(isA<StateError>()),
+    );
+    expect((await live.rawQuery('SELECT * FROM loved_tracks')).length, 400);
+    await live.execute('DROP TRIGGER fail_delete');
+    await LibraryCollectionsDatabase.deleteDatabaseLovedTracks(live, keys);
+    expect(await live.rawQuery('SELECT * FROM loved_tracks'), isEmpty);
+  });
 
   test(
     'timestamp failure rolls back all inserted tracks and trigger effects',

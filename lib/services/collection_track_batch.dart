@@ -15,10 +15,10 @@ import 'package:spotiflac_android/utils/logger.dart';
 const _workerThreshold = 1024;
 const _nativeThreshold = 2048;
 var _attachmentSequence = 0;
-final _log = AppLogger('PlaylistBatch');
+final _log = AppLogger('CollectionTrackBatch');
 
-class PreparedPlaylistBatch {
-  const PreparedPlaylistBatch({
+class PreparedCollectionTrackBatch {
+  const PreparedCollectionTrackBatch({
     required this.entries,
     required this.duplicates,
     required this.rows,
@@ -40,7 +40,7 @@ class PreparedPlaylistBatch {
 
 /// Deduplication and encoding share one worker. Large native batches return a
 /// file path instead of transferring thousands of JSON maps back through UI.
-Future<PreparedPlaylistBatch> preparePlaylistBatch({
+Future<PreparedCollectionTrackBatch> prepareCollectionTrackBatch({
   required Iterable<Track> tracks,
   required Set<String> existingKeys,
   required DateTime addedAt,
@@ -69,7 +69,7 @@ Future<PreparedPlaylistBatch> preparePlaylistBatch({
   }
 }
 
-PreparedPlaylistBatch _prepare(
+PreparedCollectionTrackBatch _prepare(
   List<Track> tracks,
   Set<String> existingKeys,
   DateTime addedAt,
@@ -118,7 +118,7 @@ PreparedPlaylistBatch _prepare(
       });
     }
   }
-  return PreparedPlaylistBatch(
+  return PreparedCollectionTrackBatch(
     entries: entries,
     duplicates: duplicates,
     rows: rows,
@@ -137,7 +137,45 @@ Future<void> publishPlaylistBatch({
   required int expectedCount,
   Future<Map<String, dynamic>> Function(Map<String, dynamic>)? nativeJobRunner,
   Directory? temporaryDirectory,
+}) => _publishTrackBatch(
+  database: database,
+  playlistId: playlistId,
+  updatedAt: updatedAt,
+  rowsPath: rowsPath,
+  expectedCount: expectedCount,
+  nativeJobRunner: nativeJobRunner,
+  temporaryDirectory: temporaryDirectory,
+);
+
+Future<void> publishLovedBatch({
+  required Database database,
+  required String addedAt,
+  required String rowsPath,
+  required int expectedCount,
+  Future<Map<String, dynamic>> Function(Map<String, dynamic>)? nativeJobRunner,
+  Directory? temporaryDirectory,
+}) => _publishTrackBatch(
+  database: database,
+  playlistId: null,
+  updatedAt: addedAt,
+  rowsPath: rowsPath,
+  expectedCount: expectedCount,
+  nativeJobRunner: nativeJobRunner,
+  temporaryDirectory: temporaryDirectory,
+);
+
+Future<void> _publishTrackBatch({
+  required Database database,
+  required String? playlistId,
+  required String updatedAt,
+  required String rowsPath,
+  required int expectedCount,
+  required Future<Map<String, dynamic>> Function(Map<String, dynamic>)?
+  nativeJobRunner,
+  required Directory? temporaryDirectory,
 }) async {
+  // The native staging format contains only ordered keys and track JSON.
+  // Both destinations share it; only this owner chooses the live table.
   final directory = await (temporaryDirectory ?? await getTemporaryDirectory())
       .createTemp('playlist-stage-');
   final stagedPath = '${directory.path}/playlist_additions.db';
@@ -153,7 +191,7 @@ Future<void> publishPlaylistBatch({
         result['published'] != true ||
         result['count'] != expectedCount ||
         result['path'] != stagedPath) {
-      throw const FormatException('Incomplete playlist staging');
+      throw const FormatException('Incomplete collection track staging');
     }
     final alias = 'playlist_additions_${_attachmentSequence++}';
     await database.execute('ATTACH DATABASE ? AS $alias', [stagedPath]);
@@ -161,6 +199,16 @@ Future<void> publishPlaylistBatch({
     var committed = false;
     try {
       await sqlite.transactionWithBusyRetry(database, (txn) async {
+        if (playlistId == null) {
+          await txn.execute(
+            'INSERT OR REPLACE INTO main.loved_tracks '
+            '(track_key,track_json,added_at) '
+            'SELECT track_key,track_json,? FROM $alias.playlist_additions '
+            'ORDER BY position',
+            [updatedAt],
+          );
+          return;
+        }
         await txn.execute(
           'INSERT OR REPLACE INTO main.playlist_tracks '
           '(playlist_id,track_key,track_json,added_at) '
@@ -182,7 +230,7 @@ Future<void> publishPlaylistBatch({
         detached = true;
       } on NativeSqliteSnapshotDetachException {
         if (!committed) rethrow;
-        _log.w('Playlist saved; retaining staging after failed DETACH');
+        _log.w('Collection saved; retaining staging after failed DETACH');
       }
     }
   } finally {

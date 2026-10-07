@@ -16,6 +16,7 @@ import 'package:spotiflac_android/theme/app_theme.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/album_detail_header.dart';
 import 'package:spotiflac_android/widgets/track_list_tile.dart';
+import 'package:spotiflac_android/widgets/track_detail_actions.dart';
 
 const _track = Track(
   id: 'example-track',
@@ -31,6 +32,7 @@ class _Settings extends SettingsNotifier {
 }
 
 class _Collections extends LibraryCollectionsNotifier {
+  var _batchCalls = 0;
   @override
   LibraryCollectionsState build() => LibraryCollectionsState(isLoaded: true);
 
@@ -42,6 +44,16 @@ class _Collections extends LibraryCollectionsNotifier {
 
   void publishWishlist() => state = state.copyWith(wishlist: [_entry]);
   void publishLoved() => state = state.copyWith(loved: [_entry]);
+
+  @override
+  Future<({bool removed, int count})> toggleLovedTracks(
+    Iterable<Track> tracks,
+  ) async {
+    _batchCalls++;
+    final removed = state.loved.isNotEmpty;
+    state = state.copyWith(loved: removed ? [] : [_entry]);
+    return (removed: removed, count: 1);
+  }
 }
 
 class _Recent extends RecentAccessNotifier {
@@ -140,6 +152,48 @@ void main() {
   );
 
   for (final mornye in [false, true]) {
+    testWidgets(
+      'Love All action keeps its add/remove feedback in Mornye=$mornye',
+      (tester) async {
+        final collections = _Collections();
+        final container = ProviderContainer(
+          overrides: [
+            libraryCollectionsProvider.overrideWith(() => collections),
+          ],
+        );
+        addTearDown(container.dispose);
+        await tester.pumpWidget(
+          _app(
+            container,
+            Consumer(
+              builder: (context, ref, _) => TextButton(
+                onPressed: () => loveAllTracks(context, ref, [_track]),
+                child: const Text('Apply'),
+              ),
+            ),
+            mornye: mornye,
+          ),
+        );
+        await tester.tap(find.text('Apply'));
+        await tester.pumpAndSettle();
+        final context = tester.element(find.text('Apply'));
+        expect(
+          find.text(context.l10n.snackbarAddedTracksToLoved(1)),
+          findsOneWidget,
+        );
+        ScaffoldMessenger.of(context).removeCurrentSnackBar();
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Apply'));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(context.l10n.snackbarRemovedTracksFromLoved(1)),
+          findsOneWidget,
+        );
+        expect(collections._batchCalls, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     for (final album in [false, true]) {
       testWidgets('Love All isolates the $album page in Mornye=$mornye', (
         tester,

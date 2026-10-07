@@ -339,38 +339,19 @@ Future<void> loveAllTracks(
   WidgetRef ref,
   List<Track> tracks,
 ) async {
-  final notifier = ref.read(libraryCollectionsProvider.notifier);
-  final state = ref.read(libraryCollectionsProvider);
-  final allLoved = tracks.every((t) => state.isLoved(t));
-
-  if (allLoved) {
-    for (final track in tracks) {
-      final key = trackCollectionKey(track);
-      await notifier.removeFromLoved(key);
-    }
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.snackbarRemovedTracksFromLoved(tracks.length),
-          ),
+  if (tracks.isEmpty) return;
+  final result = await ref
+      .read(libraryCollectionsProvider.notifier)
+      .toggleLovedTracks(tracks);
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.removed
+              ? context.l10n.snackbarRemovedTracksFromLoved(result.count)
+              : context.l10n.snackbarAddedTracksToLoved(result.count),
         ),
-      );
-    }
-  } else {
-    int addedCount = 0;
-    for (final track in tracks) {
-      if (!state.isLoved(track)) {
-        await notifier.toggleLoved(track);
-        addedCount++;
-      }
-    }
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.snackbarAddedTracksToLoved(addedCount)),
-        ),
-      );
-    }
+      ),
+    );
   }
 }

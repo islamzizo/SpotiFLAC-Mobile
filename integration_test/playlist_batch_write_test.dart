@@ -9,7 +9,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/services/library_collections_database.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
-import 'package:spotiflac_android/services/playlist_batch_writer.dart';
+import 'package:spotiflac_android/services/collection_track_batch.dart';
 
 import '../test/support/library_collections_benchmark.dart';
 import '../test/support/playlist_batch_benchmark.dart';
@@ -86,10 +86,14 @@ void main() {
 
   tearDownAll(() {
     report['completed_cases'] = completed;
-    binding.reportData = {'playlist_batch_write': report};
+    binding.reportData ??= {};
+    binding.reportData!['playlist_batch_write'] = report;
   });
 
-  Future<void> publish(PreparedPlaylistBatch batch, {String id = 'p'}) async {
+  Future<void> publish(
+    PreparedCollectionTrackBatch batch, {
+    String id = 'p',
+  }) async {
     if (batch.rowsPath == null) {
       await LibraryCollectionsDatabase.writeDatabasePlaylistTracks(
         db,
@@ -152,7 +156,7 @@ void main() {
           final result = await measureCollectionOperation(() async {
             late List<CollectionTrackEntry> additions;
             if (candidate) {
-              final batch = await preparePlaylistBatch(
+              final batch = await prepareCollectionTrackBatch(
                 tracks: input,
                 existingKeys: playlist.trackKeys,
                 addedAt: now,
@@ -213,7 +217,8 @@ void main() {
       }
       report['$count'] = {'baseline': baseline, 'optimized': optimized};
       completed++;
-      binding.reportData = {'playlist_batch_write': report};
+      binding.reportData ??= {};
+      binding.reportData!['playlist_batch_write'] = report;
     });
   }
 
@@ -221,7 +226,7 @@ void main() {
     testWidgets('rollback and recovery through actual SQLite ($count)', (
       tester,
     ) async {
-      final batch = await preparePlaylistBatch(
+      final batch = await prepareCollectionTrackBatch(
         tracks: await playlistBatchFixture(count),
         existingKeys: const {},
         addedAt: now,
