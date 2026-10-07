@@ -1,9 +1,68 @@
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
 
+import 'support/lyrics_usability_benchmark.dart';
+
 void main() {
+  test(
+    'lazy usability and display retain the original normalization contract',
+    () {
+      final random = Random(8127);
+      const fragments = [
+        '',
+        ' ',
+        '\t',
+        '\r',
+        '\u00a0',
+        '\ufeff',
+        '\u200b',
+        '[ti:Title]',
+        '[AR:Artist]',
+        '[x-translation:0:YQ==]',
+        '[comment:] ',
+        '[00:00.00]',
+        '[100:2:004]',
+        '[00:00.00][00:01.00]',
+        '<00:01.00>',
+        'v1:',
+        'V23: ',
+        'v0: ',
+        '[bg:]',
+        '[bg:  ]',
+        '[BG:<00:00.1> v1: ]',
+        '[bg:Backing]',
+        '[00:00.00]v2:  Words',
+        '[broken',
+        'Words — 音楽 🎵',
+        '[Instrumental:TRUE]',
+        '[instrumental:false]',
+      ];
+      final inputs = <String>[
+        lyricsUsabilityFixture(10000),
+        lyricsUsabilityFixture(5000, metadataOnly: true),
+        '${lyricsUsabilityFixture(5000, metadataOnly: true)}\nLast line',
+        for (var sample = 0; sample < 2000; sample++)
+          List.generate(
+            1 + random.nextInt(12),
+            (_) => fragments[random.nextInt(fragments.length)],
+          ).join(['\n', '\r\n', '\r', ' '][random.nextInt(4)]),
+      ];
+      for (final input in inputs) {
+        expect(
+          cleanLyricsForDisplay(input),
+          legacyCleanLyricsForDisplay(input),
+        );
+        expect(
+          hasUsableLyricsContent(input),
+          fullDisplayLyricsUsability(input),
+        );
+      }
+    },
+  );
+
   group('shared lyric usability cases', () {
     final cases = File(
       'android/app/src/test/resources/lyrics_usability_cases.tsv',

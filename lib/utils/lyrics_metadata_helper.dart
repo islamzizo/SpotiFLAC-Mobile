@@ -21,9 +21,32 @@ final RegExp _lrcDisplayBackgroundLinePattern = RegExp(
   r'^\[bg:(.*)\]$',
   caseSensitive: false,
 );
+final RegExp _lrcDisplayWhitespacePattern = RegExp(r'\s+');
+const _instrumentalMarker = '[instrumental:true]';
 
-bool isInstrumentalLyricsMarker(String lyrics) =>
-    lyrics.trim().toLowerCase() == '[instrumental:true]';
+bool isInstrumentalLyricsMarker(String lyrics) {
+  final trimmed = lyrics.trim();
+  return trimmed.length == _instrumentalMarker.length &&
+      trimmed.toLowerCase() == _instrumentalMarker;
+}
+
+String _cleanLyricsDisplayLine(String line) {
+  var cleaned = line.trim();
+  if (_lrcDisplayMetadataPattern.hasMatch(cleaned) &&
+      !_lrcDisplayBackgroundLinePattern.hasMatch(cleaned)) {
+    return '';
+  }
+  final backgroundMatch = _lrcDisplayBackgroundLinePattern.firstMatch(cleaned);
+  if (backgroundMatch != null) {
+    cleaned = backgroundMatch.group(1)?.trim() ?? '';
+  }
+  while (_lrcDisplayTimestampPattern.hasMatch(cleaned)) {
+    cleaned = cleaned.replaceFirst(_lrcDisplayTimestampPattern, '').trim();
+  }
+  cleaned = cleaned.replaceAll(_lrcDisplayInlineTimestampPattern, '').trim();
+  cleaned = cleaned.replaceFirst(_lrcDisplaySpeakerPrefixPattern, '');
+  return cleaned.replaceAll(_lrcDisplayWhitespacePattern, ' ').trim();
+}
 
 /// Converts embedded or fetched LRC into text suitable for the metadata UI.
 /// Header-only payloads intentionally produce an empty string.
@@ -31,27 +54,7 @@ String cleanLyricsForDisplay(String lyrics) {
   final cleanLines = <String>[];
 
   for (final line in lyrics.split('\n')) {
-    var cleaned = line.trim();
-
-    if (_lrcDisplayMetadataPattern.hasMatch(cleaned) &&
-        !_lrcDisplayBackgroundLinePattern.hasMatch(cleaned)) {
-      continue;
-    }
-
-    final backgroundMatch = _lrcDisplayBackgroundLinePattern.firstMatch(
-      cleaned,
-    );
-    if (backgroundMatch != null) {
-      cleaned = backgroundMatch.group(1)?.trim() ?? '';
-    }
-
-    while (_lrcDisplayTimestampPattern.hasMatch(cleaned)) {
-      cleaned = cleaned.replaceFirst(_lrcDisplayTimestampPattern, '').trim();
-    }
-    cleaned = cleaned.replaceAll(_lrcDisplayInlineTimestampPattern, '').trim();
-    cleaned = cleaned.replaceFirst(_lrcDisplaySpeakerPrefixPattern, '');
-    cleaned = cleaned.replaceAll(RegExp(r'\s+'), ' ').trim();
-
+    final cleaned = _cleanLyricsDisplayLine(line);
     if (cleaned.isNotEmpty) {
       cleanLines.add(cleaned);
     }
@@ -60,9 +63,22 @@ String cleanLyricsForDisplay(String lyrics) {
   return cleanLines.join('\n');
 }
 
-bool hasUsableLyricsContent(String lyrics) =>
-    isInstrumentalLyricsMarker(lyrics) ||
-    cleanLyricsForDisplay(lyrics).trim().isNotEmpty;
+bool hasUsableLyricsContent(String lyrics) {
+  if (isInstrumentalLyricsMarker(lyrics)) return true;
+  // Scan lazily: checking existence does not need a line list or the full
+  // display text. Share normalization so metadata and rendered lyrics agree.
+  var start = 0;
+  while (start < lyrics.length) {
+    final newline = lyrics.indexOf('\n', start);
+    final end = newline < 0 ? lyrics.length : newline;
+    if (_cleanLyricsDisplayLine(lyrics.substring(start, end)).isNotEmpty) {
+      return true;
+    }
+    if (newline < 0) break;
+    start = newline + 1;
+  }
+  return false;
+}
 
 bool hasEmbeddedLyricsMetadata(Map<String, String> metadata) {
   final lyrics = (metadata['LYRICS'] ?? '').trim();
