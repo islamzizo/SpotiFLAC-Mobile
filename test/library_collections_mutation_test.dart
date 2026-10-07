@@ -164,6 +164,20 @@ class _CollectionsDatabase implements LibraryCollectionsDatabase {
       _write('delete:playlist:$playlistId', () => playlists.remove(playlistId));
 
   @override
+  Future<void> upsertPlaylistTracksBatch({
+    required String playlistId,
+    required String playlistUpdatedAt,
+    required List<Map<String, String>> tracks,
+  }) => _write('batch:$playlistId', () {
+    final rows = playlistTracks.putIfAbsent(playlistId, () => []);
+    for (final track in tracks) {
+      rows.removeWhere((row) => row['track_key'] == track['track_key']);
+      rows.add({...track, 'playlist_id': playlistId});
+    }
+    playlists[playlistId]!['updated_at'] = playlistUpdatedAt;
+  });
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -189,6 +203,64 @@ ProviderContainer _container(_CollectionsDatabase db) {
 }
 
 void main() {
+  for (final failFirst in [false, true]) {
+    test(
+      'bulk additions publish after persistence and serialize duplicates (failure: $failFirst)',
+      () async {
+        final db = _CollectionsDatabase();
+        db.playlists['playlist'] = {
+          'id': 'playlist',
+          'name': 'Playlist',
+          'created_at': '2026-01-01T00:00:00Z',
+          'updated_at': '2026-01-01T00:00:00Z',
+        };
+        db.releasePlaylistRead.complete();
+        db.failNextWrite = failFirst;
+        final container = _container(db);
+        final notifier = container.read(libraryCollectionsProvider.notifier);
+        final first = notifier.addTracksToPlaylist('playlist', [
+          _track('1'),
+          _track('1'),
+          _track('2'),
+        ]);
+        final failure = failFirst ? expectLater(first, throwsStateError) : null;
+        await db.writeStarted.future;
+        expect(
+          container
+              .read(libraryCollectionsProvider)
+              .playlistById('playlist')!
+              .trackCount,
+          0,
+        );
+        final second = notifier.addTracksToPlaylist('playlist', [
+          _track('2'),
+          _track('3'),
+        ]);
+        expect(db.events, ['batch:playlist']);
+        db.releaseWrite.complete();
+        if (failure != null) {
+          await failure;
+        } else {
+          final result = await first;
+          expect(result.addedCount, 2);
+          expect(result.alreadyInPlaylistCount, 1);
+        }
+        final result = await second;
+        expect(result.addedCount, failFirst ? 2 : 1);
+        expect(result.alreadyInPlaylistCount, failFirst ? 0 : 1);
+        final playlist = container
+            .read(libraryCollectionsProvider)
+            .playlistById('playlist')!;
+        expect(
+          playlist.tracks.map((entry) => entry.track.id),
+          failFirst ? ['2', '3'] : ['1', '2', '3'],
+        );
+        expect(playlist.trackCount, failFirst ? 2 : 3);
+        expect(db.events, ['batch:playlist', 'batch:playlist']);
+      },
+    );
+  }
+
   test('disposed snapshot read removes native rows before returning', () async {
     final directory = await Directory.systemTemp.createTemp(
       'collection-read-disposed-',

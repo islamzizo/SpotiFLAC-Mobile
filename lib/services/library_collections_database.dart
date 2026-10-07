@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/models/library_collections.dart';
 import 'package:spotiflac_android/services/collection_restore_codec.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/playlist_batch_writer.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 import 'package:spotiflac_android/services/sqlite_native_snapshot.dart';
 import 'package:spotiflac_android/utils/logger.dart';
@@ -725,9 +726,24 @@ class LibraryCollectionsDatabase {
     required List<Map<String, String>> tracks,
   }) async {
     if (tracks.isEmpty) return;
-    final db = await database;
-    await db.transaction((txn) async {
-      final batch = txn.batch();
+    await writeDatabasePlaylistTracks(
+      await database,
+      playlistId: playlistId,
+      playlistUpdatedAt: playlistUpdatedAt,
+      tracks: tracks,
+    );
+  }
+
+  static Future<void> writeDatabasePlaylistTracks(
+    Database db, {
+    required String playlistId,
+    required String playlistUpdatedAt,
+    required List<Map<String, String>> tracks,
+  }) async {
+    if (tracks.isEmpty) return;
+    await sqlite.transactionWithBusyRetry(db, (txn) async {
+      var batch = txn.batch();
+      var pending = 0;
       for (final track in tracks) {
         batch.insert(_tablePlaylistTracks, {
           'playlist_id': playlistId,
@@ -735,6 +751,11 @@ class LibraryCollectionsDatabase {
           'track_json': track['track_json'],
           'added_at': track['added_at'],
         }, conflictAlgorithm: ConflictAlgorithm.replace);
+        if (++pending == 128) {
+          await batch.commit(noResult: true);
+          batch = txn.batch();
+          pending = 0;
+        }
       }
       batch.update(
         _tablePlaylists,
@@ -745,6 +766,19 @@ class LibraryCollectionsDatabase {
       await batch.commit(noResult: true);
     });
   }
+
+  Future<void> upsertPlaylistTracksFile({
+    required String playlistId,
+    required String playlistUpdatedAt,
+    required String rowsPath,
+    required int expectedCount,
+  }) async => publishPlaylistBatch(
+    database: await database,
+    playlistId: playlistId,
+    updatedAt: playlistUpdatedAt,
+    rowsPath: rowsPath,
+    expectedCount: expectedCount,
+  );
 
   Future<void> deletePlaylistTrack({
     required String playlistId,

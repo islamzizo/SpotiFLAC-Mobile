@@ -126,6 +126,9 @@ fn execute(
             check,
         ),
         "collections_snapshot" => crate::native_collections::execute(request, check),
+        "collections_stage_playlist_additions" => {
+            crate::native_playlist_write::execute(request, check)
+        }
         operation if operation.starts_with("library_") => {
             crate::native_library::execute(request, check)
         }

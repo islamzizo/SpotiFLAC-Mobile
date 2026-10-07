@@ -9,6 +9,7 @@ import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/library_collections_database.dart';
 import 'package:spotiflac_android/services/library_collections_hydration.dart';
+import 'package:spotiflac_android/services/playlist_batch_writer.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 export 'package:spotiflac_android/models/library_collections.dart';
@@ -421,60 +422,48 @@ class LibraryCollectionsNotifier extends Notifier<LibraryCollectionsState> {
     }
 
     final now = DateTime.now();
-    final knownKeys = <String>{...playlist.trackKeys};
-    final entriesToAdd = <CollectionTrackEntry>[];
-    var alreadyInPlaylistCount = 0;
-
-    for (final track in tracks) {
-      final key = trackCollectionKey(track);
-      if (!knownKeys.add(key)) {
-        alreadyInPlaylistCount++;
-        continue;
+    final prepared = await preparePlaylistBatch(
+      tracks: tracks,
+      existingKeys: playlist.trackKeys,
+      addedAt: now,
+    );
+    try {
+      if (!ref.mounted || prepared.entries.isEmpty) {
+        return PlaylistAddBatchResult(
+          addedCount: 0,
+          alreadyInPlaylistCount: prepared.duplicates,
+        );
       }
-
-      entriesToAdd.add(
-        CollectionTrackEntry(key: key, track: track, addedAt: now),
-      );
-    }
-
-    if (entriesToAdd.isEmpty) {
+      final rowsPath = prepared.rowsPath;
+      if (rowsPath != null) {
+        await _db.upsertPlaylistTracksFile(
+          playlistId: playlistId,
+          playlistUpdatedAt: now.toIso8601String(),
+          rowsPath: rowsPath,
+          expectedCount: prepared.entries.length,
+        );
+      } else {
+        await _db.upsertPlaylistTracksBatch(
+          playlistId: playlistId,
+          playlistUpdatedAt: now.toIso8601String(),
+          tracks: prepared.rows,
+        );
+      }
+      final changed = _replacePlaylistById(playlistId, (current) {
+        return current.copyWith(
+          // Append in playlist order, matching the ASC snapshot ordering.
+          tracks: [...current.tracks, ...prepared.entries],
+          updatedAt: now,
+        );
+      });
+      if (changed) _invalidatePlaylistPickerSummaries();
       return PlaylistAddBatchResult(
-        addedCount: 0,
-        alreadyInPlaylistCount: alreadyInPlaylistCount,
+        addedCount: changed ? prepared.entries.length : 0,
+        alreadyInPlaylistCount: prepared.duplicates,
       );
+    } finally {
+      await prepared.dispose();
     }
-
-    await _db.upsertPlaylistTracksBatch(
-      playlistId: playlistId,
-      playlistUpdatedAt: now.toIso8601String(),
-      tracks: entriesToAdd
-          .map(
-            (entry) => <String, String>{
-              'track_key': entry.key,
-              'track_json': jsonEncode(entry.track.toJson()),
-              'added_at': entry.addedAt.toIso8601String(),
-            },
-          )
-          .toList(growable: false),
-    );
-    final changed = _replacePlaylistById(playlistId, (current) {
-      return current.copyWith(
-        // Append in playlist order, matching the ASC snapshot ordering.
-        tracks: [...current.tracks, ...entriesToAdd],
-        updatedAt: now,
-      );
-    });
-    if (!changed) {
-      return PlaylistAddBatchResult(
-        addedCount: 0,
-        alreadyInPlaylistCount: alreadyInPlaylistCount,
-      );
-    }
-    _invalidatePlaylistPickerSummaries();
-    return PlaylistAddBatchResult(
-      addedCount: entriesToAdd.length,
-      alreadyInPlaylistCount: alreadyInPlaylistCount,
-    );
   });
 
   Future<void> removeTrackFromPlaylist(String playlistId, String trackKey) =>
