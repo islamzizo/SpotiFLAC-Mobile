@@ -220,13 +220,12 @@ class _LibraryTracksFolderScreenState
       return;
     }
     final queueNotifier = ref.read(downloadQueueProvider.notifier);
-    var count = 0;
-
-    for (final entry in entries) {
-      if (!selectedIds.contains(entry.key)) continue;
-      queueNotifier.addToQueue(entry.track, service);
-      count++;
-    }
+    final tracks = entries
+        .where((entry) => selectedIds.contains(entry.key))
+        .map((entry) => entry.track)
+        .toList(growable: false);
+    queueNotifier.addIndividualTracksToQueue(tracks, service);
+    final count = tracks.length;
 
     exitSelectionMode();
 

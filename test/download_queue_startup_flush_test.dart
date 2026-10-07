@@ -192,7 +192,7 @@ void main() {
       release.complete();
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      // Both public add paths publish immediately, but neither processing nor
+      // All public add paths publish immediately, but neither processing nor
       // the 350 ms debounce may act on this incomplete startup snapshot.
       started = Completer();
       release = Completer();
@@ -211,13 +211,17 @@ void main() {
         playlistName: 'Immediate playlist',
         playlistPositions: [7, 9],
       );
+      additionsQueue.addIndividualTracksToQueue([_earlyTrack, _earlyTrack], '');
       final earlyItems = additions.read(downloadQueueProvider).items.toList();
-      expect(earlyItems.length, 3);
+      expect(earlyItems.length, 5);
+      expect(earlyItems.map((item) => item.id).toSet(), hasLength(5));
       expect(earlyItems.first.id, singleId);
       expect(earlyItems.map((item) => item.qualityOverride), [
         'lossless',
         'high',
         'high',
+        null,
+        null,
       ]);
       final additionsFlush = additionsQueue.flushQueuePersistence();
       await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -237,11 +241,13 @@ void main() {
       for (var index = 0; index < earlyItems.length; index++) {
         expect(merged.items[items.length + index], same(earlyItems[index]));
       }
-      expect(merged.items.last.playlistPosition, 9);
-      expect(merged.items.last.fromBatch, true);
+      expect(merged.items[items.length + 2].playlistPosition, 9);
+      expect(merged.items[items.length + 2].fromBatch, true);
+      expect(merged.items.last.playlistPosition, isNull);
+      expect(merged.items.last.fromBatch, false);
       expect(merged.isPaused, true);
       expect(rows.keys, merged.items.map((item) => item.id));
-      expect([writes, deletes], [3, 0]);
+      expect([writes, deletes], [5, 0]);
       additions.dispose();
 
       // Even disposal cannot flush an early add over the restored disk rows.
@@ -253,7 +259,7 @@ void main() {
         downloadQueueProvider.notifier,
       );
       await started.future;
-      earlyDisposedQueue.addToQueue(_earlyTrack, '');
+      earlyDisposedQueue.addIndividualTracksToQueue([_earlyTrack], '');
       final disposeFlush = earlyDisposedQueue.flushQueuePersistence();
       await Future<void>.delayed(const Duration(milliseconds: 400));
       earlyDisposed.dispose();
@@ -261,7 +267,7 @@ void main() {
       release.complete();
       await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(rows.keys, savedIds);
-      expect([writes, deletes], [3, 0]);
+      expect([writes, deletes], [5, 0]);
 
       // A failed restore retains the new UI item and existing disk contents.
       // A subsequent add starts one fresh attempt shared by concurrent flushes.
@@ -281,7 +287,7 @@ void main() {
       await failedFlush;
       await Future<void>.delayed(const Duration(milliseconds: 400));
       expect(rows.keys, savedIds);
-      expect([writes, deletes], [3, 0]);
+      expect([writes, deletes], [5, 0]);
       expect(
         recovery.read(downloadQueueProvider).items.single.id,
         firstRecoveryId,
@@ -292,7 +298,12 @@ void main() {
       release = Completer();
       failRead = false;
       final readsBeforeRetry = queueReads;
-      final secondRecoveryId = recoveryQueue.addToQueue(_earlyTrack, '');
+      recoveryQueue.addIndividualTracksToQueue([_earlyTrack], '');
+      final secondRecoveryId = recovery
+          .read(downloadQueueProvider)
+          .items
+          .last
+          .id;
       await started.future;
       recoveryQueue.resumeQueue();
       expect(recovery.read(downloadQueueProvider).isPaused, false);
@@ -331,7 +342,7 @@ void main() {
       );
       expect(rows.keys, recovered.items.map((item) => item.id));
       expect(queueReads, readsBeforeRetry + 1);
-      expect([writes, deletes], [5, 0]);
+      expect([writes, deletes], [7, 0]);
       recovery.dispose();
 
       // Explicit flush and resume also retry a failed startup without needing
@@ -351,7 +362,7 @@ void main() {
       release.complete();
       await firstFailure;
       expect(rows.keys, recoveredIds);
-      expect([writes, deletes], [5, 0]);
+      expect([writes, deletes], [7, 0]);
 
       started = Completer();
       release = Completer();
@@ -365,7 +376,7 @@ void main() {
       await secondFailure;
       expect(queueReads, flushRetryReads + 1);
       expect(rows.keys, recoveredIds);
-      expect([writes, deletes], [5, 0]);
+      expect([writes, deletes], [7, 0]);
 
       started = Completer();
       release = Completer();
@@ -391,7 +402,7 @@ void main() {
       expect(explicitResumePublication, false);
       expect(queueReads, resumeRetryReads + 1);
       expect(rows.keys, recoveredIds);
-      expect([writes, deletes], [5, 0]);
+      expect([writes, deletes], [7, 0]);
       explicitRetry.dispose();
       await (await AppStateDatabase.instance.database).close();
     },

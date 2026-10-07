@@ -7,6 +7,7 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
+import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
@@ -150,9 +151,109 @@ class _History extends DownloadHistoryNotifier {
   DownloadHistoryState build() => DownloadHistoryState();
 }
 
+class _DownloadSelection extends DownloadQueueNotifier {
+  _DownloadSelection(this._record);
+  final void Function(List<Track>, String) _record;
+
+  @override
+  DownloadQueueState build() => const DownloadQueueState();
+
+  @override
+  void addIndividualTracksToQueue(List<Track> tracks, String service) =>
+      _record(tracks, service);
+}
+
+class _DownloadExtensions extends ExtensionNotifier {
+  @override
+  ExtensionState build() => const ExtensionState(
+    extensions: [
+      Extension(
+        id: 'example',
+        name: 'example',
+        displayName: 'Example',
+        version: '1',
+        description: '',
+        enabled: true,
+        status: 'loaded',
+        hasDownloadProvider: true,
+      ),
+    ],
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  for (final mornye in [false, true]) {
+    testWidgets('Wishlist enqueues one selection (Mornye: $mornye)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <(List<Track>, String)>[];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsProvider.overrideWith(_Settings.new),
+            musicPlayerControllerProvider.overrideWithValue(_Player()),
+            playbackProvider.overrideWith(_Playback.new),
+            libraryCollectionsProvider.overrideWith(
+              () => _RemovalCollections((_, _) {}),
+            ),
+            extensionProvider.overrideWith(_DownloadExtensions.new),
+            downloadQueueProvider.overrideWith(
+              () => _DownloadSelection(
+                (tracks, service) => calls.add((tracks, service)),
+              ),
+            ),
+            localLibraryProvider.overrideWith(_Library.new),
+            downloadHistoryProvider.overrideWith(_History.new),
+            downloadHistoryVisibleBatchExistsProvider.overrideWith(
+              (ref, request) => const {},
+            ),
+            localLibraryCoverProvider.overrideWith(
+              (ref, request) async => null,
+            ),
+            localLibraryFirstCoverProvider.overrideWith(
+              (ref, request) async => null,
+            ),
+          ],
+          child: MaterialApp(
+            theme: mornye
+                ? MornyeTheme.build(Brightness.dark)
+                : AppTheme.light(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const LibraryTracksFolderScreen(
+              mode: LibraryTracksFolderMode.wishlist,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Unavailable'));
+      await tester.longPress(find.text('Unavailable'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('First'));
+      await tester.tap(find.text('First'));
+      await tester.pumpAndSettle();
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(LibraryTracksFolderScreen)),
+      );
+      await tester.tap(find.text('${l10n.settingsDownload} (2)'));
+      await tester.pumpAndSettle();
+      expect(calls, hasLength(1));
+      expect(calls.single.$1, [_tracks[0], _tracks[1]]);
+      expect(calls.single.$2, 'example');
+      expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
+      expect(find.text(l10n.selectionSelected(2)), findsOneWidget);
+      expect(find.text('First'), findsOneWidget);
+      expect(find.text('Unavailable'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   for (final mode in LibraryTracksFolderMode.values) {
     for (final mornye in [false, true]) {

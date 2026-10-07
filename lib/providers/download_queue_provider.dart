@@ -886,7 +886,15 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   void updateSettings(AppSettings settings) {
-    state = state.copyWith(
+    state = _withSettings(settings);
+  }
+
+  DownloadQueueState _withSettings(
+    AppSettings settings, {
+    List<DownloadItem>? items,
+  }) {
+    return state.copyWith(
+      items: items,
       outputDir: settings.downloadDirectory.isNotEmpty
           ? settings.downloadDirectory
           : state.outputDir,
@@ -929,6 +937,35 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     }
 
     return id;
+  }
+
+  /// Enqueues a selection without album-batch normalization or naming rules.
+  /// Equivalent to separate [addToQueue] calls, with one queue publication.
+  void addIndividualTracksToQueue(List<Track> tracks, String service) {
+    if (tracks.isEmpty) return;
+    final settings = ref.read(settingsProvider);
+    final normalizedService = _normalizeQueuedService(service);
+    final takenIds = state.items.map((item) => item.id).toSet();
+    final newItems = <DownloadItem>[];
+    for (final track in tracks) {
+      final id = _newQueueItemId(track, takenIds: takenIds);
+      takenIds.add(id);
+      newItems.add(
+        DownloadItem(
+          id: id,
+          track: track,
+          service: normalizedService,
+          createdAt: DateTime.now(),
+          preserveQualityVariant: settings.allowQualityVariants,
+          networkDownloadFolder: settings.networkDownloadFolder,
+        ),
+      );
+    }
+    state = _withSettings(settings, items: [...state.items, ...newItems]);
+    _saveQueueToStorage();
+    if (!state.isProcessing) {
+      Future.microtask(() => _processQueue());
+    }
   }
 
   void addMultipleToQueue(
