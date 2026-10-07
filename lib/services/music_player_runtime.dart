@@ -113,6 +113,7 @@ class MusicPlayerRuntime {
   Future<MusicPlayerHandler>? _initFuture;
   Future<void>? _restoreFuture;
   final _handlers = StreamController<MusicPlayerHandler?>.broadcast(sync: true);
+  final _mutedPlaybackEvents = StreamController<void>.broadcast();
   bool _initializing = false;
   bool _disposed = false;
   Future<void>? _disposeFuture;
@@ -126,6 +127,13 @@ class MusicPlayerRuntime {
   String get unknownTitle => _unknownTitle;
   String get unknownArtist => _unknownArtist;
   PlaybackNotification get notification => _notification;
+
+  // Transient feedback is never replayed when a screen or app shell reopens.
+  Stream<void> get mutedPlaybackEvents => _mutedPlaybackEvents.stream;
+
+  void notifyMutedPlayback() {
+    if (!_disposed) _mutedPlaybackEvents.add(null);
+  }
 
   void configure(AppSettings settings) {
     final previous = _settings;
@@ -266,6 +274,7 @@ class MusicPlayerRuntime {
       // Initialization may have failed because its pending handler was closed.
     }
     await _handlers.close();
+    await _mutedPlaybackEvents.close();
   }
 
   Stream<T> _events<T>(

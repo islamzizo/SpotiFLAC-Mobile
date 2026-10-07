@@ -13,27 +13,32 @@ class PlaybackAutomation {
     required Future<void> Function() pause,
     required Future<void> Function() play,
     required void Function(Object) onError,
+    void Function()? onMutedPause,
   }) : _isPlaying = isPlaying,
        _canResume = canResume,
        _pause = pause,
        _play = play,
-       _onError = onError;
+       _onError = onError,
+       _onMutedPause = onMutedPause;
 
   final bool Function() _isPlaying;
   final bool Function() _canResume;
   final Future<void> Function() _pause;
   final Future<void> Function() _play;
   final void Function(Object) _onError;
+  final void Function()? _onMutedPause;
   bool _pauseOnMute = false;
   bool _playOnHeadphonesConnected = false;
   bool? _muted;
   bool _pausedByMute = false;
+  bool _allowMutedPlayback = false;
   bool _disposed = false;
   int _intentRevision = 0;
   Set<String>? _headphones;
   Future<void> _tail = Future<void>.value();
 
-  bool get blocksPlayback => _pauseOnMute && _muted != false;
+  bool get blocksPlayback =>
+      _pauseOnMute && _muted != false && !_allowMutedPlayback;
 
   Future<void> configure({
     required bool pauseOnMute,
@@ -44,7 +49,10 @@ class PlaybackAutomation {
       return _tail;
     }
     cancelPendingActions();
-    if (_pauseOnMute != pauseOnMute) _muted = null;
+    if (_pauseOnMute != pauseOnMute) {
+      _muted = null;
+      _allowMutedPlayback = false;
+    }
     if (_playOnHeadphonesConnected != playOnHeadphonesConnected) {
       _headphones = null;
     }
@@ -58,9 +66,17 @@ class PlaybackAutomation {
     _pausedByMute = false;
   }
 
+  /// A second, explicit Play accepts silent playback until volume is raised.
+  /// Keep this choice across source reloads and duplicate zero-volume events.
+  void manualPlaybackRequested() {
+    if (_pausedByMute && _muted == true) _allowMutedPlayback = true;
+    cancelPendingActions();
+  }
+
   Future<void> volumeChanged(double volume) {
     if (!volume.isFinite) return _tail;
     _muted = volume <= 0;
+    if (!_muted!) _allowMutedPlayback = false;
     return _enqueue(_applyVolume);
   }
 
@@ -68,10 +84,13 @@ class PlaybackAutomation {
 
   Future<void> _applyVolume() async {
     if (!_pauseOnMute) return;
-    if (_muted == true) {
+    if (_muted == true && !_allowMutedPlayback) {
       if (_isPlaying() && _canResume()) {
         _pausedByMute = true;
         await _pause();
+        if (_pausedByMute && _muted == true && !_allowMutedPlayback) {
+          _onMutedPause?.call();
+        }
       }
     } else if (_muted == false && _pausedByMute) {
       _pausedByMute = false;

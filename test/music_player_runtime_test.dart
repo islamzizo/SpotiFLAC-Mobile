@@ -214,6 +214,64 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
+    'muted start pauses and warns; explicit resume survives source reload',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'muted-playback-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final file = await File(
+        '${directory.path}/song.flac',
+      ).writeAsString('audio');
+      final volume = StreamController<double>.broadcast();
+      addTearDown(volume.close);
+      final runtime = _runtime(
+        settings: const AppSettings(playerMode: 'internal', pauseOnMute: true),
+        volumeChanges: volume.stream,
+      );
+      var warnings = 0;
+      final notices = runtime.mutedPlaybackEvents.listen((_) => warnings++);
+      addTearDown(notices.cancel);
+      final handler = await runtime.initialize();
+      volume.add(0);
+      await _settle();
+      await handler.setQueueAndPlay([
+        PlayableMedia(
+          id: 'muted',
+          source: file.path,
+          title: 'Muted',
+          artist: '',
+        ),
+      ]);
+      await _settle();
+      await _settle();
+      expect(handler.mediaItem.value?.id, 'muted');
+      expect(handler.playbackState.value.playing, isFalse);
+      expect(warnings, 1);
+
+      await handler.play();
+      await _settle();
+      expect(handler.playbackState.value.playing, isTrue);
+      volume.add(0);
+      await _settle();
+      expect(handler.playbackState.value.playing, isTrue);
+      expect(warnings, 1);
+
+      volume.add(0.5);
+      await _settle();
+      volume.add(0);
+      await _settle();
+      await _settle();
+      expect(handler.playbackState.value.playing, isFalse);
+      expect(warnings, 2);
+      await handler.pause();
+      volume.add(0.5);
+      await _settle();
+      expect(handler.playbackState.value.playing, isFalse);
+    },
+  );
+
+  test(
     'position ticks skip listening updates while flushes retain time',
     () async {
       var elapsed = Duration.zero;

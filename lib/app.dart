@@ -16,6 +16,7 @@ import 'package:spotiflac_android/l10n/supported_locales.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/mornye_glass_preparation.dart';
+import 'package:spotiflac_android/widgets/playback_feedback.dart';
 
 String initialLocationForAppState({
   required bool isFirstLaunch,
@@ -206,7 +207,9 @@ class SpotiFLACApp extends ConsumerWidget {
             final mediaQuery = MediaQuery.of(context);
             final appContent = _OrientationFade(
               child: AppScaffoldMessenger(
-                child: child ?? const SizedBox.shrink(),
+                child: PlaybackFeedback(
+                  child: child ?? const SizedBox.shrink(),
+                ),
               ),
             );
             return MediaQuery(

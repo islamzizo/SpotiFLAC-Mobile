@@ -7139,6 +7139,10 @@
   "autoMixCrossfading": "Crossfade",
   "playbackAutomation": "Automatic playback",
   "playbackPauseOnMute": "Pause when muted",
+  "snackbarPlaybackMuted": "Media volume is zero. Playback paused. Press play again to continue.",
+  "@snackbarPlaybackMuted": {
+    "description": "Shown after mute automation pauses playback; another explicit play request can override the pause."
+  },
   "playbackPauseOnMuteDescription": "Pause at zero media volume and resume when raised. Manual pauses stay paused. Standard audio output only.",
   "playbackOnHeadphonesConnected": "Play when headphones connect",
   "playbackOnHeadphonesConnectedDescription": "Resume the current song when wired or Bluetooth headphones connect. Disconnecting pauses playback. Built-in player only.",

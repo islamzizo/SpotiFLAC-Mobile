@@ -430,6 +430,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       pause: _pausePlayback,
       play: play,
       onError: (error) => _log.w('Automatic playback failed: $error'),
+      onMutedPause: _runtime.notifyMutedPlayback,
     );
     _autoMix = _MusicAutoMix(
       this,
@@ -1744,7 +1745,7 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   @override
   Future<void> play() async {
-    _playbackAutomation.cancelPendingActions();
+    _playbackAutomation.manualPlaybackRequested();
     final activeOperation = _activePlayOperation;
     if (activeOperation != null) {
       await activeOperation;

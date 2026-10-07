@@ -22,6 +22,7 @@ class _Transport {
   bool available = true;
   int pauses = 0;
   int plays = 0;
+  int mutedWarnings = 0;
   Completer<void>? pauseGate;
   bool failPause = false;
   final List<Object> errors = [];
@@ -40,6 +41,7 @@ class _Transport {
       playing = true;
     },
     onError: errors.add,
+    onMutedPause: () => mutedWarnings++,
   );
 
   Future<void> enable({bool mute = true, bool headphones = false}) => automation
@@ -84,6 +86,64 @@ void main() {
     await transport.automation.volumeChanged(0.5);
     expect(transport.pauses, 0);
     expect(transport.plays, 0);
+    await transport.automation.dispose();
+  });
+
+  test('manual play accepts mute until volume is raised again', () async {
+    final transport = _Transport();
+    await transport.enable();
+    await transport.automation.volumeChanged(0);
+    expect(transport.playing, isFalse);
+    expect(transport.mutedWarnings, 1);
+    expect(transport.automation.blocksPlayback, isTrue);
+
+    transport.automation.manualPlaybackRequested();
+    transport.playing = true;
+    await transport.automation.playbackStarted();
+    await transport.automation.volumeChanged(0);
+    await transport.automation.volumeChanged(0);
+    expect(transport.playing, isTrue);
+    expect(transport.pauses, 1);
+    expect(transport.mutedWarnings, 1);
+    expect(transport.automation.blocksPlayback, isFalse);
+
+    // Source reloads/queue changes must preserve the explicit choice.
+    transport.automation.cancelPendingActions();
+    await transport.automation.playbackStarted();
+    expect(transport.pauses, 1);
+
+    await transport.automation.volumeChanged(0.5);
+    await transport.automation.volumeChanged(0);
+    expect(transport.playing, isFalse);
+    expect(transport.pauses, 2);
+    expect(transport.mutedWarnings, 2);
+    await transport.automation.dispose();
+  });
+
+  test('first manual play of a paused muted song still warns', () async {
+    final transport = _Transport()..playing = false;
+    await transport.enable();
+    await transport.automation.volumeChanged(0);
+    transport.automation.manualPlaybackRequested();
+    transport.playing = true;
+    await transport.automation.playbackStarted();
+    expect(transport.playing, isFalse);
+    expect(transport.mutedWarnings, 1);
+    await transport.automation.dispose();
+  });
+
+  test('a superseded automatic pause does not issue a stale warning', () async {
+    final transport = _Transport()..pauseGate = Completer<void>();
+    await transport.enable();
+    final muted = transport.automation.volumeChanged(0);
+    await Future<void>.delayed(Duration.zero);
+    transport.automation.manualPlaybackRequested();
+    transport.pauseGate!.complete();
+    await muted;
+    transport.playing = true;
+    await transport.automation.playbackStarted();
+    expect(transport.mutedWarnings, 0);
+    expect(transport.playing, isTrue);
     await transport.automation.dispose();
   });
 
@@ -164,6 +224,7 @@ void main() {
     await transport.automation.volumeChanged(0);
     await transport.automation.volumeChanged(0.5);
     expect(transport.errors, hasLength(1));
+    expect(transport.mutedWarnings, 0);
     expect(transport.plays, 0);
     await transport.automation.dispose();
   });
