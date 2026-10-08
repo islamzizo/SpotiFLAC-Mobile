@@ -8,6 +8,7 @@ import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/secure_storage_options.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 import 'package:spotiflac_android/utils/audio_format_utils.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
@@ -124,7 +125,9 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   final Future<SharedPreferences> Function() _loadPreferences;
   Future<SharedPreferences> get _prefs => _loadPreferences();
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    aOptions: secureStorageAndroidOptions,
+  );
   Future<void>? _saveSettingsFuture;
   bool _saveQueued = false;
   String? _pendingSettingsJson;

@@ -123,13 +123,18 @@ class ExtensionNotifier extends Notifier<ExtensionState> {
     if (pending != null) {
       await pending;
     } else {
-      await ref.read(settingsProvider.notifier).ensureLoaded();
-      final storage = await ExtensionStorageService.prepare();
-      await initialize(
-        storage.extensionsDir,
-        storage.dataDir,
-        masterKey: storage.masterKey,
-      );
+      try {
+        await ref.read(settingsProvider.notifier).ensureLoaded();
+        final storage = await ExtensionStorageService.prepare();
+        await initialize(
+          storage.extensionsDir,
+          storage.dataDir,
+          masterKey: storage.masterKey,
+        );
+      } catch (error) {
+        state = state.copyWith(isLoading: false, error: error.toString());
+        rethrow;
+      }
     }
     if (!state.isInitialized) {
       throw StateError(state.error ?? 'Extension system initialization failed');

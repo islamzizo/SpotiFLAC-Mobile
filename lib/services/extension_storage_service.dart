@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:spotiflac_android/services/secure_storage_options.dart';
 
 const _extensionMasterKeyName = 'extension_storage_master_key_v2';
 
@@ -23,8 +25,13 @@ class ExtensionStoragePaths {
 class ExtensionStorageService {
   ExtensionStorageService._();
 
-  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage(
+    aOptions: secureStorageAndroidOptions,
+  );
   static Future<ExtensionStoragePaths>? _preparing;
+
+  @visibleForTesting
+  static void resetForTesting() => _preparing = null;
 
   static Future<ExtensionStoragePaths> prepare() {
     return _preparing ??= _prepare().catchError((
@@ -58,17 +65,38 @@ class ExtensionStorageService {
     return ExtensionStoragePaths(
       extensionsDir: extensionsDir.path,
       dataDir: dataDir.path,
-      masterKey: await _loadOrCreateMasterKey(),
+      masterKey: await _loadOrCreateMasterKey(dataDir),
     );
   }
 
-  static Future<String> _loadOrCreateMasterKey() async {
+  static Future<String> _loadOrCreateMasterKey(Directory dataDir) async {
     final existing = await _secureStorage.read(key: _extensionMasterKeyName);
     if (existing != null) {
       try {
         if (base64Decode(existing).length == 32) return existing;
       } on FormatException {
-        // Replace malformed legacy data with a fresh keystore-backed key.
+        // Preserve the stored value for recovery instead of silently rotating it.
+      }
+      throw StateError(
+        'The extension storage key is invalid. Existing extension data has '
+        'been preserved.',
+      );
+    }
+
+    // Plaintext settings and salt-based legacy credentials can be migrated with
+    // a new key. Encrypted settings require the original key; generating another
+    // one would leave every installed extension permanently unreadable.
+    await for (final entry in dataDir.list(followLinks: false)) {
+      if (entry is Directory &&
+          await FileSystemEntity.type(
+                p.join(entry.path, 'settings.enc'),
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.notFound) {
+        throw StateError(
+          'The extension storage key is missing. Existing encrypted extension '
+          'data has been preserved.',
+        );
       }
     }
 

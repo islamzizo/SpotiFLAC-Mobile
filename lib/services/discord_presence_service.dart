@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:spotiflac_android/services/discord_artwork_resolver.dart';
+import 'package:spotiflac_android/services/secure_storage_options.dart';
 
 enum DiscordPresenceStatus {
   disabled,
@@ -77,6 +78,7 @@ class DiscordPresenceService {
   static final instance = DiscordPresenceService();
   static const _tokenKey = 'discord_presence_refresh_token';
   static const _storage = FlutterSecureStorage(
+    aOptions: secureStorageAndroidOptions,
     iOptions: IOSOptions(
       accessibility: KeychainAccessibility.first_unlock_this_device,
     ),

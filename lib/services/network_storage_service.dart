@@ -13,6 +13,7 @@ import 'package:html/parser.dart' as html;
 import 'package:spotiflac_android/services/network_certificate.dart';
 import 'package:spotiflac_android/services/network_smb_client.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/secure_storage_options.dart';
 import 'package:xml/xml.dart';
 
 part 'network_storage_upload.dart';
@@ -193,7 +194,9 @@ class NetworkStorageService {
   }) : _read = read ?? (() => _storage.read(key: _key)),
        _write = write ?? ((value) => _storage.write(key: _key, value: value));
   static final instance = NetworkStorageService();
-  static const _storage = FlutterSecureStorage();
+  static const _storage = FlutterSecureStorage(
+    aOptions: secureStorageAndroidOptions,
+  );
   static const _key = 'network_storage_connections_v1';
   final Future<String?> Function() _read;
   final Future<void> Function(String) _write;
