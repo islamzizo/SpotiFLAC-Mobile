@@ -3,6 +3,7 @@ import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/library_database_models.dart';
 import 'package:spotiflac_android/services/library_schema.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
+import 'package:spotiflac_android/utils/library_format_filters.dart';
 
 // SQL builders for the queue tab's history+local union queries.
 
@@ -867,15 +868,20 @@ class LibraryQueueStore {
 
     final format = request.format?.trim().toLowerCase();
     if (format != null && format.isNotEmpty) {
-      if (formatExpr == null) {
-        where.add('LOWER($filePathExpr) LIKE ?');
-        args.add('%.$format');
-      } else {
-        where.add(
-          '(LOWER(COALESCE($formatExpr, \'\')) = ? OR LOWER($filePathExpr) LIKE ?)',
+      final aliases = libraryFormatFilterAliases[format] ?? [format];
+      final matches = <String>[];
+      if (formatExpr != null) {
+        matches.add(
+          'LOWER(REPLACE(TRIM(COALESCE($formatExpr, \'\')), \'-\', \'_\')) '
+          'IN (${List.filled(aliases.length, '?').join(', ')})',
         );
-        args.addAll([format, '%.$format']);
+        args.addAll(aliases);
       }
+      for (final alias in aliases) {
+        matches.add("LOWER($filePathExpr) LIKE ? ESCAPE '\\'");
+        args.add('%.${_escapeLikePattern(alias)}');
+      }
+      where.add('(${matches.join(' OR ')})');
     }
 
     final metadata = request.metadata?.trim();
@@ -938,6 +944,9 @@ class LibraryQueueStore {
             lyricsKnownExpr: lyricsKnownExpr,
           ),
         );
+        break;
+      case 'has-replaygain':
+        where.add('COALESCE($hasReplayGainExpr, 0) != 0');
         break;
       case 'missing-replaygain':
         // Include legacy rows without indexed ReplayGain as candidates until

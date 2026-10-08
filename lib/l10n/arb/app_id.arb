@@ -7096,6 +7096,10 @@
   "@libraryFilterMetadataMissingReplayGain": {
     "description": "Filter option for scanned tracks without ReplayGain gain tags"
   },
+  "libraryFilterMetadataHasReplayGain": "Memiliki ReplayGain",
+  "@libraryFilterMetadataHasReplayGain": {
+    "description": "Filter option for tracks with indexed ReplayGain track or album gain tags"
+  },
   "trackOptionCopyTrackName": "Salin nama lagu",
   "@trackOptionCopyTrackName": {
     "description": "Track menu action that copies the track title"

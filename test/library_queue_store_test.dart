@@ -415,6 +415,98 @@ void main() {
   });
 
   test(
+    'format aliases find indexed and filename-only tracks in both sources',
+    () async {
+      for (final sample in [
+        (filter: 'm4a', format: 'MP4', extension: 'MP4'),
+        (filter: 'aac', format: 'mp4a', extension: 'AAC'),
+        (filter: 'alac', format: 'alac', extension: 'ALAC'),
+        (filter: 'opus', format: 'opus', extension: 'OPUS'),
+        (filter: 'ogg', format: 'vorbis', extension: 'OGG'),
+        (filter: 'wav', format: 'wave', extension: 'WAVE'),
+        (filter: 'aiff', format: 'aifc', extension: 'AIF'),
+        (filter: 'ape', format: 'ape', extension: 'APE'),
+        (filter: 'wv', format: 'wavpack', extension: 'WV'),
+        (filter: 'dsf', format: 'dsf', extension: 'DSF'),
+        (filter: 'dff', format: 'dff', extension: 'DFF'),
+        (filter: 'mpc', format: 'musepack', extension: 'MPC'),
+        (filter: 'eac3', format: 'ec-3', extension: 'EAC3'),
+        (filter: 'ac3', format: 'ac_3', extension: 'AC3'),
+        (filter: 'ac4', format: 'ac-4', extension: 'AC4'),
+      ]) {
+        // SAF may expose an opaque URI, so the indexed format must also work.
+        for (final table in ['history_db.history', 'library']) {
+          await db.update(table, {
+            'format': ' ${sample.format} ',
+            'file_path': 'content://example/document/123',
+          }, where: table == 'library' ? "id = 'l1'" : "id = 'h1'");
+          await db.update(table, {
+            'format': null,
+            'file_path': '/track.${sample.extension}',
+          }, where: table == 'library' ? "id = 'l2'" : "id = 'h2'");
+        }
+        final request = QueueLibraryDbQuery(format: sample.filter);
+        expect(_tracks(await store.trackPage(request)).toSet(), {
+          'downloaded:h1',
+          'downloaded:h2',
+          'local:l1',
+          'local:l2',
+        }, reason: sample.filter);
+        expect((await store.counts(request)).allTrackCount, 4);
+        expect((await store.albumPage(request)).rows, hasLength(2));
+        final tagged = QueueLibraryDbQuery(
+          format: sample.filter,
+          metadata: 'has-replaygain',
+          source: 'local',
+          quality: 'cd',
+          searchQuery: 'Artist',
+        );
+        expect(_tracks(await store.trackPage(tagged)), ['local:l1']);
+        expect((await store.counts(tagged)).allTrackCount, 1);
+      }
+    },
+  );
+
+  test(
+    'ReplayGain presence follows tag updates, paging and source deduplication',
+    () async {
+      const request = QueueLibraryDbQuery(metadata: 'has-replaygain', limit: 1);
+      final first = await store.trackPage(request);
+      final second = await store.trackPage(
+        QueueLibraryDbQuery(
+          metadata: 'has-replaygain',
+          limit: 1,
+          cursor: first.nextCursor,
+        ),
+      );
+      expect(
+        {..._tracks(first), ..._tracks(second)},
+        {'downloaded:h1', 'local:l1'},
+      );
+      expect((await store.counts(request)).allTrackCount, 2);
+      expect((await store.albumPage(request)).rows.single['track_count'], 1);
+
+      await db.update('history_db.history', {
+        'has_replaygain': 0,
+      }, where: "id = 'h1'");
+      await db.update('library', {'has_replaygain': 1}, where: "id = 'l2'");
+      final updated = await store.trackPage(
+        const QueueLibraryDbQuery(metadata: 'has-replaygain'),
+      );
+      expect(_tracks(updated).toSet(), {'local:l1', 'local:l2'});
+      expect((await store.counts(request)).allTrackCount, 2);
+      final missing = await store.trackPage(
+        const QueueLibraryDbQuery(metadata: 'missing-replaygain'),
+      );
+      expect(_tracks(missing).toSet(), {
+        'downloaded:h1',
+        'downloaded:h2',
+        'downloaded:single',
+      });
+    },
+  );
+
+  test(
     'independent FTS inputs match LIKE fallback and escape literal search',
     () async {
       await db.execute(

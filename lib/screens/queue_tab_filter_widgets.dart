@@ -307,8 +307,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               context,
               context.l10n.queueTrackCount(totalTrackCount),
               [
-                if (!_isSelectionMode)
-                  _buildFilterButton(context, unifiedItems),
+                if (!_isSelectionMode) _buildFilterButton(context),
                 if (!_isSelectionMode && filteredUnifiedItems.isNotEmpty)
                   TextButton.icon(
                     onPressed: () => _showCreatePlaylistDialog(context),
@@ -329,7 +328,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
             child: _countHeaderRow(
               context,
               context.l10n.queueAlbumCount(totalAlbumCount),
-              [_buildFilterButton(context, unifiedItems)],
+              [_buildFilterButton(context)],
             ),
           ),
 
@@ -344,10 +343,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Row(
-                children: [
-                  const Spacer(),
-                  _buildFilterButton(context, unifiedItems),
-                ],
+                children: [const Spacer(), _buildFilterButton(context)],
               ),
             ),
           ),
@@ -362,8 +358,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               child: Row(
                 children: [
                   const Spacer(),
-                  if (!_isSelectionMode)
-                    _buildFilterButton(context, unifiedItems),
+                  if (!_isSelectionMode) _buildFilterButton(context),
                 ],
               ),
             ),
@@ -379,8 +374,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               child: Row(
                 children: [
                   const Spacer(),
-                  if (!_isSelectionMode)
-                    _buildFilterButton(context, unifiedItems),
+                  if (!_isSelectionMode) _buildFilterButton(context),
                 ],
               ),
             ),
@@ -621,8 +615,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               context,
               context.l10n.queueTrackCount(totalTrackCount),
               [
-                if (!_isSelectionMode)
-                  _buildFilterButton(context, unifiedItems),
+                if (!_isSelectionMode) _buildFilterButton(context),
                 if (!_isSelectionMode && filteredUnifiedItems.isNotEmpty)
                   TextButton.icon(
                     onPressed: () => _showCreatePlaylistDialog(context),

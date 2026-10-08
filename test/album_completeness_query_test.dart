@@ -322,6 +322,41 @@ void main() {
       await _waitFor(tester, find.text('Song 1').hitTestable());
       await tester.tap(find.text('Filters').hitTestable());
       await tester.pump(const Duration(milliseconds: 400));
+      // Every fixture file is FLAC. Other formats must still be selectable,
+      // rather than disappearing when they are absent from the loaded page.
+      for (final label in [
+        'M4A / MP4',
+        'AAC',
+        'ALAC',
+        'OPUS',
+        'OGG',
+        'WAV',
+        'AIFF',
+        'WavPack',
+        'DSF',
+        'DFF',
+      ]) {
+        expect(find.text(label), findsOneWidget);
+      }
+      expect(find.text('Has ReplayGain'), findsOneWidget);
+      await tester.ensureVisible(find.text('M4A / MP4'));
+      await _waitFor(tester, find.text('M4A / MP4').hitTestable());
+      await tester.tap(find.text('M4A / MP4'));
+      await tester.ensureVisible(find.text('Has ReplayGain'));
+      await _waitFor(tester, find.text('Has ReplayGain').hitTestable());
+      await tester.tap(find.text('Has ReplayGain'));
+      await tester.ensureVisible(find.text('Apply'));
+      await _waitFor(tester, find.text('Apply').hitTestable());
+      await tester.tap(find.text('Apply'));
+      await tester.pump(const Duration(milliseconds: 400));
+      await _waitFor(tester, find.text('No download history'));
+      expect(find.text('Song 1'), findsNothing);
+      await tester.tap(find.text('Filters').hitTestable());
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('M4A / MP4'), findsOneWidget);
+      expect(find.text('Has ReplayGain'), findsOneWidget);
+      await _waitFor(tester, find.text('Reset').hitTestable());
+      await tester.tap(find.text('Reset'));
       await tester.ensureVisible(find.text('Incomplete albums'));
       await _waitFor(tester, find.text('Incomplete albums').hitTestable());
       await tester.tap(find.text('Incomplete albums'));

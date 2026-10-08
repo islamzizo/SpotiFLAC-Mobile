@@ -27,6 +27,7 @@ import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/utils/audio_quality_badge_policy.dart';
 import 'package:spotiflac_android/utils/nav_bar_inset.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
+import 'package:spotiflac_android/utils/library_format_filters.dart';
 import 'package:spotiflac_android/utils/ordered_range_selection.dart';
 import 'package:spotiflac_android/models/download_item.dart';
 import 'package:spotiflac_android/models/settings.dart';
@@ -729,56 +730,8 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     });
   }
 
-  String _fileExtLower(String filePath) {
-    final dotIndex = filePath.lastIndexOf('.');
-    if (dotIndex < 0 || dotIndex == filePath.length - 1) {
-      return '';
-    }
-    return filePath.substring(dotIndex + 1).toLowerCase();
-  }
-
-  String _itemFormatLower(UnifiedLibraryItem item) {
-    final localFormat = normalizeOptionalString(item.localItem?.format);
-    if (localFormat != null) {
-      return localFormat.toLowerCase().replaceAll('-', '_');
-    }
-    final historyFormat = normalizeOptionalString(item.historyItem?.format);
-    if (historyFormat != null) {
-      return historyFormat.toLowerCase().replaceAll('-', '_');
-    }
-    return _fileExtLower(item.filePath);
-  }
-
-  Set<String> _getAvailableFormats(List<UnifiedLibraryItem> items) {
-    final formats = <String>{};
-    for (final item in items) {
-      final ext = _itemFormatLower(item);
-      if ([
-        'flac',
-        'alac',
-        'mp3',
-        'm4a',
-        'aac',
-        'eac3',
-        'ac3',
-        'ac4',
-        'opus',
-        'ogg',
-        'wav',
-        'aiff',
-      ].contains(ext)) {
-        formats.add(ext);
-      }
-    }
-    return formats;
-  }
-
-  void _showFilterSheet(
-    BuildContext context,
-    List<UnifiedLibraryItem> allItems,
-  ) {
+  void _showFilterSheet(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final availableFormats = _getAvailableFormats(allItems);
 
     String? tempSource = _filterSource;
     String? tempQuality = _filterQuality;
@@ -918,6 +871,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                           const SizedBox(height: 8),
                           Wrap(
                             spacing: 8,
+                            runSpacing: 8,
                             children: [
                               AppChoiceChip(
                                 label: Text(context.l10n.libraryFilterAll),
@@ -926,9 +880,13 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                     setSheetState(() => tempFormat = null),
                               ),
                               for (final format
-                                  in availableFormats.toList()..sort())
+                                  in libraryFormatFilterAliases.keys)
                                 AppChoiceChip(
-                                  label: Text(format.toUpperCase()),
+                                  label: Text(switch (format) {
+                                    'm4a' => 'M4A / MP4',
+                                    'wv' => 'WavPack',
+                                    _ => format.toUpperCase(),
+                                  }),
                                   selected: tempFormat == format,
                                   onSelected: (_) =>
                                       setSheetState(() => tempFormat = format),
@@ -1078,6 +1036,17 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                 selected: tempMetadata == 'missing-lyrics',
                                 onSelected: (_) => setSheetState(
                                   () => tempMetadata = 'missing-lyrics',
+                                ),
+                              ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context
+                                      .l10n
+                                      .libraryFilterMetadataHasReplayGain,
+                                ),
+                                selected: tempMetadata == 'has-replaygain',
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata = 'has-replaygain',
                                 ),
                               ),
                               AppChoiceChip(

@@ -6995,6 +6995,10 @@
   "@libraryFilterMetadataMissingReplayGain": {
     "description": "Filter option for scanned tracks without ReplayGain gain tags"
   },
+  "libraryFilterMetadataHasReplayGain": "Has ReplayGain",
+  "@libraryFilterMetadataHasReplayGain": {
+    "description": "Filter option for tracks with indexed ReplayGain track or album gain tags"
+  },
   "libraryFilterIncompleteAlbums": "Incomplete albums",
   "@libraryFilterIncompleteAlbums": {
     "description": "Library filter for albums with confirmed missing track positions"

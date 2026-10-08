@@ -578,14 +578,11 @@ extension _QueueTabItemWidgets on _QueueTabState {
     }
   }
 
-  Widget _buildFilterButton(
-    BuildContext context,
-    List<UnifiedLibraryItem> unifiedItems,
-  ) {
+  Widget _buildFilterButton(BuildContext context) {
     return GestureDetector(
       onLongPress: _activeFilterCount > 0 ? _resetFilters : null,
       child: TextButton.icon(
-        onPressed: () => _showFilterSheet(context, unifiedItems),
+        onPressed: () => _showFilterSheet(context),
         icon: Badge(
           isLabelVisible: _activeFilterCount > 0,
           label: Text('$_activeFilterCount'),
