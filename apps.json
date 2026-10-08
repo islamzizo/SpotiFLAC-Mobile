@@ -12,7 +12,7 @@
       "downloadURL": "https://github.com/spotiflacapp/SpotiFLAC-Mobile/releases/download/v5.0.7/SpotiFLAC-v5.0.7-ios-unsigned.ipa",
       "localizedDescription": "SpotiFLAC Mobile is written in Flutter and uses installable extensions for metadata and audio downloads.",
       "iconURL": "https://raw.githubusercontent.com/spotiflacapp/SpotiFLAC-Mobile/main/assets/images/logo.png",
-      "size": 35411565
+      "size": 35416213
     }
   ]
 }
