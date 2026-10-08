@@ -1555,8 +1555,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   void removeItem(String id) {
     final removedItem = state.items.where((item) => item.id == id).firstOrNull;
     _locallyCancelledItemIds.remove(id);
-    final items = state.items.where((item) => item.id != id).toList();
-    state = state.copyWith(items: items);
+    state = state.withoutItem(id);
     _saveQueueToStorage();
 
     // Clean stale album RG entries when a track is removed from the queue.

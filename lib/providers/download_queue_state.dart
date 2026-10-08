@@ -37,6 +37,97 @@ class _IndexedQueueMap extends MapBase<String, DownloadItem> {
       throw UnsupportedError('Immutable queue lookup');
 }
 
+/// Positions in one stable index snapshot, with at most 64 deleted positions.
+/// Rebase periodically instead of retaining a chain of previous queue states.
+class _QueueRemovals {
+  _QueueRemovals(this.positions);
+  final List<int> positions;
+
+  _QueueRemovals removing(int currentIndex) {
+    var original = currentIndex;
+    var insertion = 0;
+    while (insertion < positions.length && positions[insertion] <= original) {
+      original++;
+      insertion++;
+    }
+    return _QueueRemovals([...positions]..insert(insertion, original));
+  }
+
+  int? currentIndex(int original) {
+    var start = 0;
+    var end = positions.length;
+    while (start < end) {
+      final middle = (start + end) ~/ 2;
+      if (positions[middle] < original) {
+        start = middle + 1;
+      } else {
+        end = middle;
+      }
+    }
+    if (start < positions.length && positions[start] == original) return null;
+    return original - start;
+  }
+}
+
+class _RemovedQueueIndex extends MapBase<String, int> {
+  _RemovedQueueIndex({
+    required this.base,
+    required this.removals,
+    required this.items,
+    required this.length,
+    this.firstTrackPositions = const {},
+    this.byTrack = false,
+  });
+  final Map<String, int> base;
+  final _QueueRemovals removals;
+  final List<DownloadItem> items;
+  final Map<String, int> firstTrackPositions;
+  final bool byTrack;
+  @override
+  final int length;
+
+  @override
+  int? operator [](Object? key) {
+    final original = firstTrackPositions[key] ?? base[key];
+    return original == null ? null : removals.currentIndex(original);
+  }
+
+  @override
+  Iterable<String> get keys sync* {
+    // Track order follows its first surviving occurrence, including duplicates
+    // whose first request was removed. No sorting or index rebuilding on write.
+    final seen = byTrack ? <String>{} : null;
+    for (final item in items) {
+      final key = byTrack ? item.track.id : item.id;
+      if (seen == null || seen.add(key)) yield key;
+    }
+  }
+
+  @override
+  bool containsKey(Object? key) => this[key] != null;
+  @override
+  void operator []=(String key, int value) =>
+      throw UnsupportedError('Immutable queue index');
+  @override
+  void clear() => throw UnsupportedError('Immutable queue index');
+  @override
+  int? remove(Object? key) => throw UnsupportedError('Immutable queue index');
+}
+
+class _QueueItemIds extends ListBase<String> {
+  _QueueItemIds(this.items);
+  final List<DownloadItem> items;
+  @override
+  int get length => items.length;
+  @override
+  String operator [](int index) => items[index].id;
+  @override
+  set length(int value) => throw UnsupportedError('Immutable queue IDs');
+  @override
+  void operator []=(int index, String value) =>
+      throw UnsupportedError('Immutable queue IDs');
+}
+
 /// Immutable queue state shared by the notifier and read-only UI consumers.
 ///
 /// Keeping this model outside the notifier implementation makes queue state
@@ -114,6 +205,24 @@ class DownloadQueueState {
   int get failedCount => items.isEmpty ? 0 : lookup.failedCount;
   int get activeDownloadsCount =>
       items.isEmpty ? 0 : lookup.activeDownloadsCount;
+
+  DownloadQueueState withoutItem(String id) {
+    final index = lookup.indexByItemId[id];
+    if (lookup.indexByItemId.length != items.length ||
+        (index != null && items[index].id != id)) {
+      // Raw states and duplicate request IDs retain the original remove-all
+      // behavior. Normally the notifier always supplies unique indexed items.
+      return copyWith(items: items.where((item) => item.id != id).toList());
+    }
+    if (index == null) return this;
+    final nextItems = ChunkedList<DownloadItem>.from(
+      List<DownloadItem>.of(items)..removeAt(index),
+    );
+    return copyWith(
+      items: nextItems,
+      lookup: lookup.withoutIndex(items, nextItems, index),
+    );
+  }
 }
 
 /// A transient queue effect. Consumers listen for new instances so progress
@@ -139,6 +248,7 @@ class DownloadQueueLookup {
   final int failedCount;
   final int activeDownloadsCount;
   final int finalizingCount;
+  final Map<String, List<int>>? _duplicateTrackPositions;
 
   const DownloadQueueLookup.empty()
     : byTrackId = const {},
@@ -150,7 +260,8 @@ class DownloadQueueLookup {
       completedCount = 0,
       failedCount = 0,
       activeDownloadsCount = 0,
-      finalizingCount = 0;
+      finalizingCount = 0,
+      _duplicateTrackPositions = null;
 
   DownloadQueueLookup._({
     required this.byTrackId,
@@ -163,7 +274,91 @@ class DownloadQueueLookup {
     required this.failedCount,
     required this.activeDownloadsCount,
     required this.finalizingCount,
-  });
+    Map<String, List<int>>? duplicateTrackPositions,
+  }) : _duplicateTrackPositions = duplicateTrackPositions;
+
+  DownloadQueueLookup withoutIndex(
+    List<DownloadItem> previousItems,
+    List<DownloadItem> nextItems,
+    int index,
+  ) {
+    final previousIndex = indexByItemId;
+    final previousRemovals = previousIndex is _RemovedQueueIndex
+        ? previousIndex.removals
+        : _QueueRemovals(const []);
+    if (previousRemovals.positions.length >= 64 ||
+        byTrackId is! _IndexedQueueMap ||
+        nextItems.isEmpty) {
+      return DownloadQueueLookup.fromItems(nextItems);
+    }
+    final removals = previousRemovals.removing(index);
+    final removed = previousItems[index];
+    final trackIndex = (byTrackId as _IndexedQueueMap).index;
+    final replacements = trackIndex is _RemovedQueueIndex
+        ? Map<String, int>.of(trackIndex.firstTrackPositions)
+        : <String, int>{};
+    final duplicates = _duplicateTrackPositions ?? <String, List<int>>{};
+    if (_duplicateTrackPositions == null &&
+        byTrackId.length < previousItems.length) {
+      for (var i = 0; i < previousItems.length; i++) {
+        final key = previousItems[i].track.id;
+        final first = trackIndex[key]!;
+        if (i != first) duplicates.putIfAbsent(key, () => [first]).add(i);
+      }
+    }
+    var trackCount = byTrackId.length;
+    if (trackIndex[removed.track.id] == index) {
+      final next = duplicates[removed.track.id]
+          ?.where((position) => removals.currentIndex(position) != null)
+          .firstOrNull;
+      if (next == null) {
+        trackCount--;
+      } else {
+        replacements[removed.track.id] = next;
+      }
+    }
+    final itemIndex = _RemovedQueueIndex(
+      base: previousIndex is _RemovedQueueIndex
+          ? previousIndex.base
+          : previousIndex,
+      removals: removals,
+      items: nextItems,
+      length: nextItems.length,
+    );
+    return DownloadQueueLookup._(
+      byTrackId: _IndexedQueueMap(
+        _RemovedQueueIndex(
+          base: trackIndex is _RemovedQueueIndex ? trackIndex.base : trackIndex,
+          removals: removals,
+          items: nextItems,
+          length: trackCount,
+          firstTrackPositions: replacements,
+          byTrack: true,
+        ),
+        nextItems,
+      ),
+      byItemId: _IndexedQueueMap(itemIndex, nextItems),
+      indexByItemId: itemIndex,
+      itemIds: _QueueItemIds(nextItems),
+      notCompletedItemIds: removed.status == DownloadStatus.completed
+          ? notCompletedItemIds
+          : List.unmodifiable(
+              notCompletedItemIds.where((id) => id != removed.id),
+            ),
+      queuedCount: queuedCount - (_countsAsQueued(removed.status) ? 1 : 0),
+      completedCount:
+          completedCount - (removed.status == DownloadStatus.completed ? 1 : 0),
+      failedCount:
+          failedCount - (removed.status == DownloadStatus.failed ? 1 : 0),
+      activeDownloadsCount:
+          activeDownloadsCount -
+          (removed.status == DownloadStatus.downloading ? 1 : 0),
+      finalizingCount:
+          finalizingCount -
+          (removed.status == DownloadStatus.finalizing ? 1 : 0),
+      duplicateTrackPositions: duplicates,
+    );
+  }
 
   factory DownloadQueueLookup.fromItems(List<DownloadItem> items) {
     final byTrackIndex = <String, int>{};
@@ -310,6 +505,7 @@ class DownloadQueueLookup {
       failedCount: nextFailedCount,
       activeDownloadsCount: nextActiveDownloadsCount,
       finalizingCount: nextFinalizingCount,
+      duplicateTrackPositions: _duplicateTrackPositions,
     );
   }
 }
