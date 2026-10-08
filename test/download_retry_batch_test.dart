@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -68,10 +69,17 @@ void main() {
   const backend = MethodChannel('com.zarz.spotiflac/backend');
   const sqlite = MethodChannel('com.tekartik.sqflite');
   const paths = MethodChannel('plugins.flutter.io/path_provider');
+  const notifications = MethodChannel(
+    'dexterous.com/flutter/local_notifications',
+  );
   final previousFactory = databaseFactoryOrNull;
-  setUpAll(() => databaseFactory = databaseFactorySqflitePlugin);
+  setUpAll(() {
+    databaseFactory = databaseFactorySqflitePlugin;
+    AndroidFlutterLocalNotificationsPlugin.registerWith();
+  });
   tearDownAll(() => databaseFactory = previousFactory);
   setUp(() {
+    messenger.setMockMethodCallHandler(notifications, (_) async => null);
     SharedPreferences.setMockInitialValues({
       'app_state_migrated_queue_to_sqlite_v1': true,
     });
@@ -94,7 +102,7 @@ void main() {
     });
   });
   tearDown(() {
-    for (final channel in [backend, sqlite, paths]) {
+    for (final channel in [backend, sqlite, paths, notifications]) {
       messenger.setMockMethodCallHandler(channel, null);
     }
   });
@@ -285,5 +293,115 @@ void main() {
       await queue.flushQueuePersistence();
       container.dispose();
     });
+  }
+
+  test(
+    'bulk cancel snapshots IDs, bounds dispatch and continues after failure',
+    () async {
+      final ids = [for (var i = 0; i < 600; i++) 'cancel-$i', 'cancel-0'];
+      final expected = ids.take(600).toList();
+      final calls = <List<String>>[];
+      var concurrent = 0;
+      var peak = 0;
+      messenger.setMockMethodCallHandler(backend, (call) async {
+        expect(call.method, 'cancelDownloads');
+        final chunk = List<String>.from(
+          (call.arguments as Map)['item_ids'] as List,
+        );
+        calls.add(chunk);
+        concurrent++;
+        if (concurrent > peak) peak = concurrent;
+        await Future<void>.delayed(Duration.zero);
+        concurrent--;
+        if (chunk.first == 'cancel-256') {
+          throw PlatformException(code: 'fixture');
+        }
+        return null;
+      });
+      final cancelled = PlatformBridge.cancelDownloads(ids);
+      ids.clear();
+      await cancelled;
+      expect(calls.expand((chunk) => chunk), expected);
+      expect(calls.map((chunk) => chunk.length), [256, 256, 88]);
+      expect(peak, 1);
+      await PlatformBridge.cancelDownloads([]);
+      expect(calls, hasLength(3));
+    },
+  );
+
+  for (final dispose in [false, true]) {
+    test(
+      'clearAll publishes immediately and bounds native work (dispose: $dispose)',
+      () async {
+        final initial = [
+          for (var i = 0; i < 600; i++)
+            _item('$i', switch (i % 3) {
+              0 => DownloadStatus.queued,
+              1 => DownloadStatus.downloading,
+              _ => DownloadStatus.finalizing,
+            }, null).copyWith(networkDownloadFolder: ''),
+          for (final status in [
+            DownloadStatus.completed,
+            DownloadStatus.failed,
+            DownloadStatus.skipped,
+          ])
+            _item(
+              status.name,
+              status,
+              null,
+            ).copyWith(networkDownloadFolder: ''),
+        ];
+        final container = ProviderContainer(
+          overrides: [
+            settingsProvider.overrideWith(_Settings.new),
+            downloadQueueProvider.overrideWith(() => _Queue(initial)),
+          ],
+        );
+        final queue = container.read(downloadQueueProvider.notifier);
+        queue.pauseQueue(persistAcrossRestarts: false);
+        await queue.flushQueuePersistence();
+        final started = Completer<void>();
+        final release = Completer<void>();
+        final done = Completer<void>();
+        final calls = <List<String>>[];
+        messenger.setMockMethodCallHandler(backend, (call) async {
+          expect(call.method, 'cancelDownloads');
+          final ids = List<String>.from(
+            (call.arguments as Map)['item_ids'] as List,
+          );
+          calls.add(ids);
+          if (calls.length == 1) {
+            started.complete();
+            await release.future;
+            throw PlatformException(code: 'fixture');
+          }
+          if (ids.last == '599') done.complete();
+          return null;
+        });
+        queue.clearAll();
+        expect(container.read(downloadQueueProvider).items, isEmpty);
+        expect(container.read(downloadQueueProvider).isPaused, false);
+        expect(container.read(downloadQueueProvider).currentDownload, isNull);
+        await started.future;
+        if (dispose) container.dispose();
+        release.complete();
+        await done.future;
+        expect(
+          calls.expand((ids) => ids),
+          initial.take(600).map((item) => item.id),
+        );
+        expect(calls.map((ids) => ids.length), [256, 256, 88]);
+        if (!dispose) {
+          // Late progress for removed work and a repeated Clear all must not
+          // recreate rows or issue cancellation for completed/failed/skipped IDs.
+          queue.updateProgress('0', 0.9);
+          queue.clearAll();
+          expect(container.read(downloadQueueProvider).items, isEmpty);
+          expect(calls, hasLength(3));
+          await queue.flushQueuePersistence();
+          container.dispose();
+        }
+      },
+    );
   }
 }

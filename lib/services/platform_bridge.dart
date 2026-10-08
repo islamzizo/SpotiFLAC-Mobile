@@ -874,6 +874,23 @@ class PlatformBridge {
     await _channel.invokeMethod('cancelDownload', {'item_id': itemId});
   }
 
+  /// Cancels the selected attempts and clears their native progress. Failures
+  /// are best effort, as for individual queue cancellation; later chunks still
+  /// run, without issuing thousands of concurrent channel requests.
+  static Future<void> cancelDownloads(Iterable<String> itemIds) async {
+    final ids = itemIds.toSet().toList(growable: false);
+    for (var start = 0; start < ids.length; start += 256) {
+      final end = start + 256 < ids.length ? start + 256 : ids.length;
+      try {
+        await _channel.invokeMethod('cancelDownloads', {
+          'item_ids': ids.sublist(start, end),
+        });
+      } catch (error) {
+        _log.w('Failed to cancel ${end - start} downloads: $error');
+      }
+    }
+  }
+
   /// Drops a stale pre-registered cancel flag for an item with no active
   /// download, so a user-initiated retry does not abort instantly.
   static Future<void> resetDownloadCancel(String itemId) async {

@@ -134,16 +134,27 @@ impl CancellationRegistry {
     }
 
     pub fn cancel(&self, id: &str) -> Result<(), CancellationError> {
+        self.cancel_many(std::iter::once(id))
+    }
+
+    pub fn cancel_many<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), CancellationError> {
         let mut state = self.shared.state.lock().expect("cancellation state lock");
         state.check_open()?;
-        if !id.is_empty() {
+        let mut changed = false;
+        for id in ids.into_iter().filter(|id| !id.is_empty()) {
             state
                 .entries
                 .entry(id.to_owned())
                 .or_default()
                 .cancelled
                 .store(true, Ordering::Release);
-            drop(state);
+            changed = true;
+        }
+        drop(state);
+        if changed {
             self.shared.notify();
         }
         Ok(())
@@ -448,20 +459,34 @@ mod tests {
         assert_eq!(observer.calls.load(Ordering::Relaxed), 1);
         registry.cancel("").unwrap();
         assert_eq!(observer.calls.load(Ordering::Relaxed), 1);
+        registry
+            .cancel_many(["first", "idle", "idle", "", "音楽"])
+            .unwrap();
+        assert_eq!(observer.calls.load(Ordering::Relaxed), 2);
+        assert!(registry.acquire("idle").unwrap().is_cancelled().unwrap());
+        assert!(registry.is_cancelled("音楽").unwrap());
+        assert!(!second.is_cancelled().unwrap());
+        assert!(!anonymous.is_cancelled().unwrap());
+        // Dropping the temporary idle lease also notifies its release.
+        let before = observer.calls.load(Ordering::Relaxed);
         assert_eq!(registry.cancel_active().unwrap(), ["first", "second"]);
         assert!(second.is_cancelled().unwrap());
         assert!(!anonymous.is_cancelled().unwrap());
-        assert_eq!(observer.calls.load(Ordering::Relaxed), 2);
+        assert_eq!(observer.calls.load(Ordering::Relaxed), before + 1);
         second.release();
         second.release();
         assert_eq!(second.check_active(), Err(CancellationError::LeaseReleased));
-        assert_eq!(observer.calls.load(Ordering::Relaxed), 3);
+        assert_eq!(observer.calls.load(Ordering::Relaxed), before + 2);
         registry.shutdown();
         assert_eq!(
             anonymous.check_active(),
             Err(CancellationError::RegistryClosed)
         );
-        assert_eq!(observer.calls.load(Ordering::Relaxed), 4);
+        assert_eq!(observer.calls.load(Ordering::Relaxed), before + 3);
+        assert_eq!(
+            registry.cancel_many(["later"]),
+            Err(CancellationError::RegistryClosed)
+        );
     }
 
     #[test]

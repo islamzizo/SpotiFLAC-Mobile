@@ -880,11 +880,14 @@ internal object RustCoreBackend : CoreBackend {
                 environment.downloadState().use { state -> state.allProgress() }
             }
             "cleanupConnections" -> current.environment().use { it.cleanupConnections(); null }
-            "resetDownloadCancels" -> {
+            "resetDownloadCancels", "cancelDownloads" -> {
                 val values = args["item_ids"] as? List<*> ?: error("Expected item_ids list")
                 val itemIds = values.map { it as? String ?: error("Expected string item ID") }
                 current.environment().use { environment ->
-                    environment.downloadState().use { it.resetDownloadCancels(itemIds) }
+                    environment.downloadState().use { state ->
+                        if (method == "cancelDownloads") state.cancelDownloads(itemIds)
+                        else state.resetDownloadCancels(itemIds)
+                    }
                 }
                 null
             }

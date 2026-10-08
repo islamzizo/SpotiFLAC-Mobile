@@ -824,11 +824,15 @@ final class RustCoreBackend: CoreBackend {
         case "clearItemProgress": try current.environment().downloadState().clearItemProgress(itemId: string("item_id")); return nil
         case "cancelDownload": try current.environment().downloadState().cancelDownload(itemId: string("item_id")); return nil
         case "resetDownloadCancel": try current.environment().downloadState().resetDownloadCancel(itemId: string("item_id")); return nil
-        case "resetDownloadCancels":
+        case "resetDownloadCancels", "cancelDownloads":
             guard let itemIds = args["item_ids"] as? [String] else {
                 throw failure("Expected item_ids string list")
             }
-            try current.environment().downloadState().resetDownloadCancels(itemIds: itemIds)
+            if method == "cancelDownloads" {
+                try current.environment().downloadState().cancelDownloads(itemIds: itemIds)
+            } else {
+                try current.environment().downloadState().resetDownloadCancels(itemIds: itemIds)
+            }
             return nil
         case "getExtensionPendingAuth": return try current.getExtensionPendingAuthJson(extensionId: string("extension_id"))
         case "completeExtensionSessionGrant":

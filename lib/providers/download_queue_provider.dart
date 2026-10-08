@@ -1235,8 +1235,9 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       _pausePendingItemIds.addAll(activeIds);
       _locallyCancelledItemIds.addAll(activeIds);
       for (final id in activeIds) {
-        _requestNativeCancel(id);
+        _verificationWaitCoordinator.cancelItem(id);
       }
+      unawaited(PlatformBridge.cancelDownloads(activeIds));
     }
 
     state = state.copyWith(items: [], isPaused: false, currentDownload: null);
