@@ -1117,6 +1117,38 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     }
   }
 
+  /// Fails requests that have not started when shared queue setup cannot
+  /// continue. Active and terminal items keep their current state.
+  void failQueuedDownloads({
+    required String error,
+    DownloadErrorType? errorType,
+  }) {
+    final items = state.items;
+    final changes = <int, DownloadItem>{};
+    for (var index = 0; index < items.length; index++) {
+      final item = items[index];
+      if (item.status != DownloadStatus.queued) continue;
+      changes[index] = item.copyWith(
+        status: DownloadStatus.failed,
+        filePath: null,
+        error: error,
+        errorType: errorType,
+      );
+    }
+    if (changes.isEmpty) return;
+
+    final updatedItems = ChunkedList<DownloadItem>.from(items).updated(changes);
+    state = state.copyWith(
+      items: updatedItems,
+      lookup: state.lookup.updatedForIndices(
+        previousItems: items,
+        nextItems: updatedItems,
+        changedIndices: changes.keys,
+      ),
+    );
+    _saveQueueToStorage();
+  }
+
   void updateProgress(String id, double progress, {double? speedMBps}) {
     final item = state.lookup.byItemId[id];
     if (item == null) return;
@@ -1722,16 +1754,10 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         _log.w(
           'SAF grant is missing or no longer writable; download location must be reselected',
         );
-        for (final item in state.items) {
-          if (item.status == DownloadStatus.queued) {
-            updateItemStatus(
-              item.id,
-              DownloadStatus.failed,
-              error: safPermissionLostErrorMessage,
-              errorType: DownloadErrorType.permission,
-            );
-          }
-        }
+        failQueuedDownloads(
+          error: safPermissionLostErrorMessage,
+          errorType: DownloadErrorType.permission,
+        );
         return;
       }
     }
@@ -1892,15 +1918,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         _log.w(
           'The saved download folder may have been moved, deleted, or its access grant lost',
         );
-        for (final item in state.items) {
-          if (item.status == DownloadStatus.queued) {
-            updateItemStatus(
-              item.id,
-              DownloadStatus.failed,
-              error: downloadFolderAccessLostErrorMessage,
-            );
-          }
-        }
+        failQueuedDownloads(error: downloadFolderAccessLostErrorMessage);
         state = state.copyWith(isProcessing: false);
         await PlatformBridge.endBackgroundDownloadTask();
         return;
