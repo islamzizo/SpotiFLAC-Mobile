@@ -397,6 +397,38 @@ impl Drop for ProgressRegistry {
     }
 }
 
+fn mark_downloading(item: &mut ItemProgress) {
+    item.is_downloading = true;
+    item.status = "downloading".into();
+    item.stage.clear();
+}
+
+fn set_received(item: &mut ItemProgress, received: i64) {
+    item.bytes_received = received;
+    if item.bytes_total > 0 {
+        item.progress = received as f64 / item.bytes_total as f64;
+    }
+    if received > 0 {
+        mark_downloading(item);
+    }
+}
+
+fn rounded_speed(value: f64) -> i64 {
+    let value = value.round();
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    if value >= 9_223_372_036_854_775_808.0 {
+        return i64::MIN;
+    }
+    #[cfg(target_arch = "arm")]
+    if value >= 18_446_744_073_709_551_616.0 || !value.is_finite() {
+        // Go ARM32's int64 conversion delegates out-of-range values to _d2v.
+        return (u64::from(value as u32) << 32) as i64;
+    } else if value >= 9_223_372_036_854_775_808.0 {
+        return value as u64 as i64;
+    }
+    value as i64
+}
+
 #[cfg(test)]
 mod batch_tests {
     use super::*;
@@ -468,36 +500,4 @@ mod batch_tests {
         registry.shutdown();
         assert_eq!(registry.remove_many([]), Err(ProgressError::Closed));
     }
-}
-
-fn mark_downloading(item: &mut ItemProgress) {
-    item.is_downloading = true;
-    item.status = "downloading".into();
-    item.stage.clear();
-}
-
-fn set_received(item: &mut ItemProgress, received: i64) {
-    item.bytes_received = received;
-    if item.bytes_total > 0 {
-        item.progress = received as f64 / item.bytes_total as f64;
-    }
-    if received > 0 {
-        mark_downloading(item);
-    }
-}
-
-fn rounded_speed(value: f64) -> i64 {
-    let value = value.round();
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-    if value >= 9_223_372_036_854_775_808.0 {
-        return i64::MIN;
-    }
-    #[cfg(target_arch = "arm")]
-    if value >= 18_446_744_073_709_551_616.0 || !value.is_finite() {
-        // Go ARM32's int64 conversion delegates out-of-range values to _d2v.
-        return (u64::from(value as u32) << 32) as i64;
-    } else if value >= 9_223_372_036_854_775_808.0 {
-        return value as u64 as i64;
-    }
-    value as i64
 }
