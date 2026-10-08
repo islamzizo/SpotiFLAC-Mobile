@@ -34,6 +34,7 @@ import 'package:spotiflac_android/services/download_motion_artwork_source.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/hires_check_service.dart';
 import 'package:spotiflac_android/services/replaygain_service.dart';
+import 'package:spotiflac_android/services/album_replaygain_readiness.dart';
 import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/verification_notification.dart';
 import 'package:spotiflac_android/utils/logger.dart' hide log;

@@ -22,12 +22,7 @@ class _AlbumRgAccumulator {
 }
 
 extension _DownloadQueueReplayGain on DownloadQueueNotifier {
-  String _albumRgKey(Track track) {
-    if (track.albumId != null && track.albumId!.isNotEmpty) {
-      return 'id:${track.albumId}';
-    }
-    return 'name:${track.albumName}|${track.albumArtist ?? ''}';
-  }
+  String _albumRgKey(Track track) => albumReplayGainKey(track);
 
   /// Purge a track's stale ReplayGain accumulator entry, dropping the whole
   /// album accumulator once it becomes empty.
@@ -93,31 +88,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final accumulator = _albumRgData[key];
     if (accumulator == null || accumulator.entries.isEmpty) return;
 
-    // Find queue items for this album that are STILL in the queue.
-    // Completed tracks may have already been removed by removeItem(), so
-    // their absence means they finished successfully (not that they're
-    // still pending).
-    final albumItemsInQueue = state.items
-        .where((item) => _albumRgKey(item.track) == key)
-        .toList();
-
-    final pending = albumItemsInQueue.where(
-      (item) =>
-          item.status == DownloadStatus.queued ||
-          item.status == DownloadStatus.downloading ||
-          item.status == DownloadStatus.finalizing,
-    );
-    if (pending.isNotEmpty) return;
-
-    // If any item is failed/skipped, the user might retry it later.
-    // Don't finalize album RG with partial data — wait until all album
-    // tracks are either completed (and possibly removed) or retried.
-    final retryable = albumItemsInQueue.where(
-      (item) =>
-          item.status == DownloadStatus.failed ||
-          item.status == DownloadStatus.skipped,
-    );
-    if (retryable.isNotEmpty) return;
+    if (albumReplayGainBlocked(state.items, key)) return;
 
     // The accumulator entries represent successfully scanned tracks.  Entries
     // are only added after a successful ReplayGain scan, removed on retry or
@@ -151,30 +122,16 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final settings = ref.read(settingsProvider);
     if (!settings.embedReplayGain) return;
 
-    // Snapshot the keys — _checkAndWriteAlbumReplayGain may mutate the map.
-    final keys = _albumRgData.keys.toList();
+    // Decide readiness once before starting writes, which may remove completed
+    // accumulators. Avoid scanning the entire queue again for every album.
+    final keys = readyReplayGainAlbums(state.items, {
+      for (final entry in _albumRgData.entries)
+        entry.key: entry.value.entries.length,
+    });
     for (final key in keys) {
       final acc = _albumRgData[key];
       if (acc == null || acc.entries.isEmpty) continue;
-      // Use the first entry's trackId to find a representative track.
-      // _checkAndWriteAlbumReplayGain only needs it for _albumRgKey(), so any
-      // track from the album works.
-      final albumItems = state.items
-          .where((item) => _albumRgKey(item.track) == key)
-          .toList();
-      // If there are no items left in queue for this album but we have
-      // accumulator data, all items were completed and removed.  Use a
-      // synthetic call — we need a Track to call the check, but the items
-      // are gone.  For this case, directly check conditions inline.
-      if (albumItems.isEmpty) {
-        // All items removed → no pending/retryable.  Trigger computation.
-        if (acc.entries.length > 1) {
-          _computeAndWriteAlbumRg(key, acc);
-        }
-        continue;
-      }
-      final representative = albumItems.first;
-      _checkAndWriteAlbumReplayGain(representative.track);
+      _computeAndWriteAlbumRg(key, acc);
     }
   }
 
