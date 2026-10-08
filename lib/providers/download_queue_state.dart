@@ -248,7 +248,15 @@ class DownloadQueueLookup {
   final int failedCount;
   final int activeDownloadsCount;
   final int finalizingCount;
+  final List<DownloadItem> _items;
+  final int? _firstDownloadingIndex;
+  final int? _firstFinalizingIndex;
   final Map<String, List<int>>? _duplicateTrackPositions;
+
+  DownloadItem? get firstDownloading =>
+      _firstDownloadingIndex == null ? null : _items[_firstDownloadingIndex];
+  DownloadItem? get firstFinalizing =>
+      _firstFinalizingIndex == null ? null : _items[_firstFinalizingIndex];
 
   const DownloadQueueLookup.empty()
     : byTrackId = const {},
@@ -261,6 +269,9 @@ class DownloadQueueLookup {
       failedCount = 0,
       activeDownloadsCount = 0,
       finalizingCount = 0,
+      _items = const [],
+      _firstDownloadingIndex = null,
+      _firstFinalizingIndex = null,
       _duplicateTrackPositions = null;
 
   DownloadQueueLookup._({
@@ -274,8 +285,55 @@ class DownloadQueueLookup {
     required this.failedCount,
     required this.activeDownloadsCount,
     required this.finalizingCount,
+    required List<DownloadItem> items,
+    required int? firstDownloadingIndex,
+    required int? firstFinalizingIndex,
     Map<String, List<int>>? duplicateTrackPositions,
-  }) : _duplicateTrackPositions = duplicateTrackPositions;
+  }) : _items = items,
+       _firstDownloadingIndex = firstDownloadingIndex,
+       _firstFinalizingIndex = firstFinalizingIndex,
+       _duplicateTrackPositions = duplicateTrackPositions;
+
+  static int? _firstAfterRemoval(
+    int? first,
+    int removedIndex,
+    DownloadStatus status,
+    int count,
+    List<DownloadItem> nextItems,
+  ) {
+    if (first == null) return null;
+    if (first < removedIndex) return first;
+    if (first > removedIndex) return first - 1;
+    if (count > 1) {
+      for (var index = removedIndex; index < nextItems.length; index++) {
+        if (nextItems[index].status == status) return index;
+      }
+    }
+    return null;
+  }
+
+  // Progress-only snapshots retain the first positions. Search beyond an old
+  // first item only when it leaves the status, not on every native sample.
+  static int? _firstAfterUpdates(
+    int? first,
+    DownloadStatus status,
+    int count,
+    List<DownloadItem> nextItems,
+    Set<int> changedIndices,
+  ) {
+    if (count == 0) return null;
+    for (final index in changedIndices) {
+      if ((first == null || index < first) &&
+          nextItems[index].status == status) {
+        first = index;
+      }
+    }
+    if (first == null || nextItems[first].status == status) return first;
+    for (var index = first + 1; index < nextItems.length; index++) {
+      if (nextItems[index].status == status) return index;
+    }
+    return null;
+  }
 
   DownloadQueueLookup withoutIndex(
     List<DownloadItem> previousItems,
@@ -356,6 +414,21 @@ class DownloadQueueLookup {
       finalizingCount:
           finalizingCount -
           (removed.status == DownloadStatus.finalizing ? 1 : 0),
+      items: nextItems,
+      firstDownloadingIndex: _firstAfterRemoval(
+        _firstDownloadingIndex,
+        index,
+        DownloadStatus.downloading,
+        activeDownloadsCount,
+        nextItems,
+      ),
+      firstFinalizingIndex: _firstAfterRemoval(
+        _firstFinalizingIndex,
+        index,
+        DownloadStatus.finalizing,
+        finalizingCount,
+        nextItems,
+      ),
       duplicateTrackPositions: duplicates,
     );
   }
@@ -370,6 +443,8 @@ class DownloadQueueLookup {
     var failedCount = 0;
     var activeDownloadsCount = 0;
     var finalizingCount = 0;
+    int? firstDownloadingIndex;
+    int? firstFinalizingIndex;
     for (var index = 0; index < items.length; index++) {
       final item = items[index];
       byTrackIndex.putIfAbsent(item.track.id, () => index);
@@ -381,8 +456,14 @@ class DownloadQueueLookup {
       if (_countsAsQueued(item.status)) queuedCount++;
       if (item.status == DownloadStatus.completed) completedCount++;
       if (item.status == DownloadStatus.failed) failedCount++;
-      if (item.status == DownloadStatus.downloading) activeDownloadsCount++;
-      if (item.status == DownloadStatus.finalizing) finalizingCount++;
+      if (item.status == DownloadStatus.downloading) {
+        activeDownloadsCount++;
+        firstDownloadingIndex ??= index;
+      }
+      if (item.status == DownloadStatus.finalizing) {
+        finalizingCount++;
+        firstFinalizingIndex ??= index;
+      }
     }
     final snapshot = ChunkedList<DownloadItem>.from(items);
     final itemIndex = Map<String, int>.unmodifiable(indexByItemId);
@@ -397,6 +478,9 @@ class DownloadQueueLookup {
       failedCount: failedCount,
       activeDownloadsCount: activeDownloadsCount,
       finalizingCount: finalizingCount,
+      items: snapshot,
+      firstDownloadingIndex: firstDownloadingIndex,
+      firstFinalizingIndex: firstFinalizingIndex,
     );
   }
 
@@ -505,6 +589,21 @@ class DownloadQueueLookup {
       failedCount: nextFailedCount,
       activeDownloadsCount: nextActiveDownloadsCount,
       finalizingCount: nextFinalizingCount,
+      items: snapshot,
+      firstDownloadingIndex: _firstAfterUpdates(
+        _firstDownloadingIndex,
+        DownloadStatus.downloading,
+        nextActiveDownloadsCount,
+        snapshot,
+        normalizedChanged,
+      ),
+      firstFinalizingIndex: _firstAfterUpdates(
+        _firstFinalizingIndex,
+        DownloadStatus.finalizing,
+        nextFinalizingCount,
+        snapshot,
+        normalizedChanged,
+      ),
       duplicateTrackPositions: _duplicateTrackPositions,
     );
   }

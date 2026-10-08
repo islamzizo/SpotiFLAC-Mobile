@@ -98,6 +98,8 @@ void main() {
         expect(state.lookup.failedCount, rebuilt.failedCount);
         expect(state.lookup.activeDownloadsCount, rebuilt.activeDownloadsCount);
         expect(state.lookup.finalizingCount, rebuilt.finalizingCount);
+        expect(state.lookup.firstDownloading, same(rebuilt.firstDownloading));
+        expect(state.lookup.firstFinalizing, same(rebuilt.firstFinalizing));
         expect(state.lookup.notCompletedItemIds, rebuilt.notCompletedItemIds);
         expect(
           old.lookup.byItemId[old.items[index].id],
@@ -110,6 +112,104 @@ void main() {
         isTrue,
       );
       expect(() => state.lookup.byItemId.clear(), throwsUnsupportedError);
+    },
+  );
+
+  test(
+    'notification candidates follow batch transitions and keep old values',
+    () {
+      void check(DownloadQueueState state) {
+        expect(
+          state.lookup.firstDownloading,
+          same(
+            state.items
+                .where((item) => item.status == DownloadStatus.downloading)
+                .firstOrNull,
+          ),
+        );
+        expect(
+          state.lookup.firstFinalizing,
+          same(
+            state.items
+                .where((item) => item.status == DownloadStatus.finalizing)
+                .firstOrNull,
+          ),
+        );
+      }
+
+      var state = const DownloadQueueState().copyWith(
+        items: List.generate(200, _item),
+      );
+      void update(Map<int, DownloadItem> changes) {
+        final old = state;
+        final next = ChunkedList<DownloadItem>.from(old.items).updated(changes);
+        state = old.copyWith(
+          items: next,
+          lookup: old.lookup.updatedForIndices(
+            previousItems: old.items,
+            nextItems: next,
+            changedIndices: changes.keys.toList().reversed,
+          ),
+        );
+        check(state);
+        check(old);
+      }
+
+      final random = Random(506);
+      for (var tick = 0; tick < 300; tick++) {
+        update({
+          for (var i = 0; i < 7; i++)
+            random.nextInt(200): state.items[random.nextInt(200)],
+        });
+        // Above exercises identity/reordering fallback. Keep IDs stable here to
+        // exercise the incremental path with multiple simultaneous transitions.
+        final changes = <int, DownloadItem>{};
+        for (var i = 0; i < 7; i++) {
+          final index = random.nextInt(200);
+          changes[index] = state.items[index].copyWith(
+            status: DownloadStatus
+                .values[random.nextInt(DownloadStatus.values.length)],
+            progress: tick / 300,
+            track: state.items[index].track.copyWith(name: 'Updated $tick'),
+          );
+        }
+        // Restore unique request IDs after the intentionally malformed batch.
+        state = state.copyWith(
+          items: [
+            for (var i = 0; i < state.items.length; i++)
+              state.items[i].copyWith(id: 'item-$i'),
+          ],
+        );
+        update({
+          for (final entry in changes.entries)
+            entry.key: entry.value.copyWith(id: 'item-${entry.key}'),
+        });
+      }
+      update({
+        for (var i = 0; i < state.items.length; i++)
+          i: state.items[i].copyWith(status: DownloadStatus.completed),
+      });
+      expect(state.lookup.firstDownloading, isNull);
+      expect(state.lookup.firstFinalizing, isNull);
+      update({
+        190: state.items[190].copyWith(status: DownloadStatus.downloading),
+        195: state.items[195].copyWith(status: DownloadStatus.finalizing),
+      });
+      update({
+        195: state.items[195].copyWith(status: DownloadStatus.downloading),
+        190: state.items[190].copyWith(status: DownloadStatus.finalizing),
+        1: state.items[1].copyWith(status: DownloadStatus.downloading),
+        0: state.items[0].copyWith(status: DownloadStatus.finalizing),
+      });
+      expect(state.lookup.firstDownloading, same(state.items[1]));
+      expect(state.lookup.firstFinalizing, same(state.items[0]));
+      update({
+        0: state.items[0].copyWith(status: DownloadStatus.completed),
+        1: state.items[1].copyWith(status: DownloadStatus.completed),
+      });
+      expect(state.lookup.firstDownloading, same(state.items[195]));
+      expect(state.lookup.firstFinalizing, same(state.items[190]));
+      check(const DownloadQueueState());
     },
   );
 }

@@ -39,6 +39,15 @@ void _check(DownloadQueueState state) {
   expect(actual.failedCount, expected.failedCount);
   expect(actual.activeDownloadsCount, expected.activeDownloadsCount);
   expect(actual.finalizingCount, expected.finalizingCount);
+  for (final entry in {
+    DownloadStatus.downloading: actual.firstDownloading,
+    DownloadStatus.finalizing: actual.firstFinalizing,
+  }.entries) {
+    expect(
+      entry.value,
+      same(state.items.where((item) => item.status == entry.key).firstOrNull),
+    );
+  }
   expect(actual.byItemId['absent'], isNull);
   expect(actual.byTrackId['absent'], isNull);
   expect(actual.indexByItemId['absent'], isNull);

@@ -266,6 +266,8 @@ registerExtension({
       );
       final files = <String, String>{};
       final states = <String, List<String>>{};
+      var candidateChecks = 0;
+      var candidatesMatch = true;
       final tracks = [
         for (var i = 0; i < 2; i++)
           Track(
@@ -308,6 +310,21 @@ registerExtension({
         var retried = false;
         String? failedId;
         final subscription = container.listen(downloadQueueProvider, (_, next) {
+          candidateChecks++;
+          candidatesMatch =
+              candidatesMatch &&
+              identical(
+                next.lookup.firstDownloading,
+                next.items
+                    .where((item) => item.status == DownloadStatus.downloading)
+                    .firstOrNull,
+              ) &&
+              identical(
+                next.lookup.firstFinalizing,
+                next.items
+                    .where((item) => item.status == DownloadStatus.finalizing)
+                    .firstOrNull,
+              );
           for (final item in next.items) {
             final transitions = states.putIfAbsent(item.track.id, () => []);
             if (transitions.lastOrNull != item.status.name) {
@@ -362,6 +379,13 @@ registerExtension({
             await done.future.timeout(const Duration(seconds: 60));
           }
           await queue.flushQueuePersistence();
+          expect(candidateChecks, greaterThan(0));
+          expect(
+            candidatesMatch,
+            isTrue,
+            reason:
+                'Cached notification candidates must match each real queue snapshot',
+          );
         } finally {
           subscription.close();
         }

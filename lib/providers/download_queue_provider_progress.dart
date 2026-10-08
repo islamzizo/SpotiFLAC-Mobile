@@ -17,28 +17,11 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
     _progressTracker.pruneLogs(lookup);
     final queuedCount = lookup.queuedCount;
     final downloadingCount = lookup.activeDownloadsCount;
-    DownloadItem? firstDownloading;
+    final firstDownloading = lookup.firstDownloading;
+    final firstFinalizing = lookup.firstFinalizing;
     bool hasFinalizingItem = lookup.finalizingCount > 0;
-    String? finalizingTrackName;
-    String? finalizingArtistName;
-    if (downloadingCount > 0 || hasFinalizingItem) {
-      for (final item in currentItems) {
-        if (firstDownloading == null &&
-            item.status == DownloadStatus.downloading) {
-          firstDownloading = item;
-        }
-        if (finalizingTrackName == null &&
-            item.status == DownloadStatus.finalizing) {
-          hasFinalizingItem = true;
-          finalizingTrackName = item.track.name;
-          finalizingArtistName = item.track.artistName;
-        }
-        if ((downloadingCount == 0 || firstDownloading != null) &&
-            (!hasFinalizingItem || finalizingTrackName != null)) {
-          break;
-        }
-      }
-    }
+    String? finalizingTrackName = firstFinalizing?.track.name;
+    String? finalizingArtistName = firstFinalizing?.track.artistName;
     final replacements = <int, DownloadItem>{};
 
     for (final entry in items.entries) {
