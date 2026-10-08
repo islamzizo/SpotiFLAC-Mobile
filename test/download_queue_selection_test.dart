@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/models/download_item.dart';
@@ -76,9 +78,10 @@ class _Queue extends DownloadQueueNotifier {
   }
 }
 
-Map<String, dynamic> _stableItem(DownloadItem item) => item.toJson()
-  ..remove('id')
-  ..remove('createdAt');
+Map<String, dynamic> _stableItem(DownloadItem item) =>
+    (jsonDecode(jsonEncode(item.toJson())) as Map<String, dynamic>)
+      ..remove('id')
+      ..remove('createdAt');
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -205,6 +208,175 @@ void main() {
           everyElement('LOSSLESS'),
         );
         expect(items.map((item) => item.playlistPosition), [7, 2]);
+      } finally {
+        container.dispose();
+      }
+    },
+  );
+
+  for (final processing in [false, true]) {
+    test(
+      'multiple batches keep independent metadata (processing: $processing)',
+      () {
+        final existing = DownloadItem(
+          id: 'existing',
+          track: _tracks.first,
+          service: 'example',
+          createdAt: DateTime.utc(2026),
+        );
+        final initial = const DownloadQueueState(outputDir: '/old').copyWith(
+          items: [existing],
+          isPaused: true,
+          isProcessing: processing,
+          currentDownload: processing ? existing : null,
+        );
+        final baseline = scope(initial);
+        final bulk = scope(initial);
+        final mutable = _tracks.toList();
+        final batches = [
+          DownloadQueueBatch(
+            tracks: mutable,
+            playlistName: ' One ',
+            playlistPositions: [7, null],
+          ),
+          DownloadQueueBatch(
+            tracks: [_tracks.first],
+            playlistName: 'Second',
+            playlistPositions: [0],
+          ),
+          DownloadQueueBatch(
+            tracks: [_tracks.first, _tracks.first],
+            playlistName: ' ',
+            playlistPositions: [-1, 9, 99],
+          ),
+          const DownloadQueueBatch(tracks: [], playlistName: 'Empty'),
+          DownloadQueueBatch(tracks: [_tracks.last], playlistPositions: [4]),
+        ];
+        try {
+          final loop = baseline.read(downloadQueueProvider.notifier);
+          for (final batch in batches) {
+            loop.addMultipleToQueue(
+              batch.tracks,
+              ' example ',
+              qualityOverride: 'HIGH',
+              playlistName: batch.playlistName,
+              playlistPositions: batch.playlistPositions,
+            );
+          }
+          final queue = bulk.read(downloadQueueProvider.notifier);
+          var publications = 0;
+          bulk.listen(downloadQueueProvider, (_, _) => publications++);
+          queue.addBatchesToQueue(
+            batches,
+            ' example ',
+            qualityOverride: 'HIGH',
+          );
+          final state = bulk.read(downloadQueueProvider);
+          final expected = baseline.read(downloadQueueProvider);
+          expect(state.items.map(_stableItem), expected.items.map(_stableItem));
+          expect(publications, 1);
+          expect(state.items.first, same(existing));
+          expect(state.items.map((item) => item.id).toSet(), hasLength(7));
+          expect(state.isPaused, true);
+          expect(state.isProcessing, processing);
+          expect(state.currentDownload, same(initial.currentDownload));
+          expect(state.outputDir, _settings.downloadDirectory);
+          expect(state.filenameFormat, _settings.filenameFormat);
+          expect(state.audioQuality, _settings.audioQuality);
+          expect(state.autoFallback, _settings.autoFallback);
+          final added = state.items.skip(1).toList();
+          expect(added.map((item) => item.track.albumArtist), [
+            'Artist',
+            'Artist',
+            'Artist & Guest',
+            'Artist & Guest',
+            'Artist & Guest',
+            _tracks.last.albumArtist,
+          ]);
+          expect(added.map((item) => item.fromBatch), [
+            true,
+            true,
+            false,
+            true,
+            true,
+            false,
+          ]);
+          expect(added.map((item) => item.playlistPosition), [
+            7,
+            2,
+            1,
+            null,
+            9,
+            4,
+          ]);
+          expect(added.map((item) => item.playlistName), [
+            ' One ',
+            ' One ',
+            'Second',
+            ' ',
+            ' ',
+            null,
+          ]);
+          expect(
+            added.map((item) => item.service),
+            everyElement('replacement'),
+          );
+          expect(
+            added.map((item) => item.qualityOverride),
+            everyElement('HIGH'),
+          );
+          expect(
+            added.map((item) => item.preserveQualityVariant),
+            everyElement(true),
+          );
+          expect(
+            added.map((item) => item.networkDownloadFolder),
+            everyElement(_settings.networkDownloadFolder),
+          );
+          mutable.clear();
+          batches.clear();
+          expect(state.items, hasLength(7));
+          queue.addBatchesToQueue([
+            DownloadQueueBatch(tracks: [_tracks.first]),
+          ], 'example');
+          expect(
+            bulk
+                .read(downloadQueueProvider)
+                .items
+                .map((item) => item.id)
+                .toSet(),
+            hasLength(8),
+          );
+        } finally {
+          bulk.dispose();
+          baseline.dispose();
+        }
+      },
+    );
+  }
+
+  test(
+    'no batches is a no-op, an explicit empty batch still applies settings',
+    () {
+      const initial = DownloadQueueState(outputDir: '/old', isPaused: true);
+      final container = scope(initial);
+      try {
+        final queue = container.read(downloadQueueProvider.notifier);
+        var publications = 0;
+        container.listen(downloadQueueProvider, (_, _) => publications++);
+        queue.addBatchesToQueue([], 'example');
+        expect(container.read(downloadQueueProvider), same(initial));
+        expect(publications, 0);
+        queue.addBatchesToQueue([
+          const DownloadQueueBatch(tracks: []),
+        ], 'example');
+        expect(publications, 1);
+        expect(container.read(downloadQueueProvider).items, isEmpty);
+        expect(container.exists(extensionProvider), false);
+        expect(
+          container.read(downloadQueueProvider).outputDir,
+          _settings.downloadDirectory,
+        );
       } finally {
         container.dispose();
       }

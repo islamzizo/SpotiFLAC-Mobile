@@ -5,6 +5,19 @@ part 'download_item.g.dart';
 
 const Object _downloadItemUnset = Object();
 
+/// Tracks that share playlist naming and album-artist normalization rules.
+class DownloadQueueBatch {
+  final List<Track> tracks;
+  final String? playlistName;
+  final List<int?>? playlistPositions;
+
+  const DownloadQueueBatch({
+    required this.tracks,
+    this.playlistName,
+    this.playlistPositions,
+  });
+}
+
 enum DownloadStatus {
   queued,
   downloading,

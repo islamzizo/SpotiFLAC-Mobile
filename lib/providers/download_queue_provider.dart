@@ -975,42 +975,68 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     String? playlistName,
     List<int?>? playlistPositions,
   }) {
+    addBatchesToQueue(
+      [
+        DownloadQueueBatch(
+          tracks: tracks,
+          playlistName: playlistName,
+          playlistPositions: playlistPositions,
+        ),
+      ],
+      service,
+      qualityOverride: qualityOverride,
+    );
+  }
+
+  /// Publishes several independent album/playlist batches together. Keep each
+  /// group's artist normalization, batch flag and playlist positions separate.
+  void addBatchesToQueue(
+    List<DownloadQueueBatch> batches,
+    String service, {
+    String? qualityOverride,
+  }) {
+    if (batches.isEmpty) return;
     final settings = ref.read(settingsProvider);
-    updateSettings(settings);
-
+    String? normalizedService;
     final takenIds = state.items.map((item) => item.id).toSet();
-    final shouldAssignPlaylistPositions =
-        playlistName != null && playlistName.trim().isNotEmpty;
-    final normalizedTracks = normalizeBatchAlbumArtists(tracks);
-    final fromBatch = normalizedTracks.length > 1;
-    final newItems = normalizedTracks.asMap().entries.map((entry) {
-      final track = entry.value;
-      final index = entry.key;
-      final explicitPosition =
-          playlistPositions != null &&
-              index < playlistPositions.length &&
-              (playlistPositions[index] ?? 0) > 0
-          ? playlistPositions[index]
-          : null;
-      final id = _newQueueItemId(track, takenIds: takenIds);
-      takenIds.add(id);
-      return DownloadItem(
-        id: id,
-        track: track,
-        service: _normalizeQueuedService(service),
-        createdAt: DateTime.now(),
-        qualityOverride: qualityOverride,
-        playlistName: playlistName,
-        playlistPosition:
-            explicitPosition ??
-            (shouldAssignPlaylistPositions ? index + 1 : null),
-        fromBatch: fromBatch,
-        preserveQualityVariant: settings.allowQualityVariants,
-        networkDownloadFolder: settings.networkDownloadFolder,
-      );
-    }).toList();
+    final newItems = <DownloadItem>[];
+    for (final batch in batches) {
+      final playlistName = batch.playlistName;
+      final playlistPositions = batch.playlistPositions;
+      final shouldAssignPlaylistPositions =
+          playlistName != null && playlistName.trim().isNotEmpty;
+      final normalizedTracks = normalizeBatchAlbumArtists(batch.tracks);
+      final fromBatch = normalizedTracks.length > 1;
+      for (var index = 0; index < normalizedTracks.length; index++) {
+        final track = normalizedTracks[index];
+        final explicitPosition =
+            playlistPositions != null &&
+                index < playlistPositions.length &&
+                (playlistPositions[index] ?? 0) > 0
+            ? playlistPositions[index]
+            : null;
+        final id = _newQueueItemId(track, takenIds: takenIds);
+        takenIds.add(id);
+        newItems.add(
+          DownloadItem(
+            id: id,
+            track: track,
+            service: normalizedService ??= _normalizeQueuedService(service),
+            createdAt: DateTime.now(),
+            qualityOverride: qualityOverride,
+            playlistName: playlistName,
+            playlistPosition:
+                explicitPosition ??
+                (shouldAssignPlaylistPositions ? index + 1 : null),
+            fromBatch: fromBatch,
+            preserveQualityVariant: settings.allowQualityVariants,
+            networkDownloadFolder: settings.networkDownloadFolder,
+          ),
+        );
+      }
+    }
 
-    state = state.copyWith(items: [...state.items, ...newItems]);
+    state = _withSettings(settings, items: [...state.items, ...newItems]);
     _saveQueueToStorage();
 
     if (!state.isProcessing) {

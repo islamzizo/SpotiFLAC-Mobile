@@ -263,15 +263,17 @@ extension _QueueTabSelectionActions on _QueueTabState {
         }
         return;
       }
-      for (final playlist in selectedPlaylists) {
-        final tracks = playlist.tracks.map((e) => e.track).toList();
-        queueNotifier.addMultipleToQueue(
-          tracks,
-          svc,
-          qualityOverride: qualityOverride,
-          playlistName: playlist.name,
-        );
-      }
+      queueNotifier.addBatchesToQueue(
+        [
+          for (final playlist in selectedPlaylists)
+            DownloadQueueBatch(
+              tracks: playlist.tracks.map((entry) => entry.track).toList(),
+              playlistName: playlist.name,
+            ),
+        ],
+        svc,
+        qualityOverride: qualityOverride,
+      );
     }
 
     if (settings.askQualityBeforeDownload || settings.allowQualityVariants) {

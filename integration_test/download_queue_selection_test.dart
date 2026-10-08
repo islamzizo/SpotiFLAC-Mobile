@@ -48,6 +48,8 @@ void main() {
     'platform': Platform.operatingSystem,
     'note':
         'Five alternating pairs of synchronous enqueue on the real notifier, paused during startup. Restore and persistence use private platform SQLite and are verified outside timing. Not download speed or FPS.',
+    'playlist_baseline_note':
+        'Per-playlist loop uses the current single-batch API, which already publishes once. The separate pre-change baseline captures its original two publications. This paired comparison isolates the additional benefit of grouping playlists.',
   };
   var completed = 0;
   late Directory root;
@@ -211,4 +213,191 @@ void main() {
     }
     completed++;
   });
+
+  for (final count in [20, 200]) {
+    testWidgets('enqueue $count playlists with independent batch metadata', (
+      tester,
+    ) async {
+      final tracks = await playlistBatchFixture(count * 20);
+      final groups = [
+        for (var i = 0; i < count; i++) tracks.sublist(i * 20, (i + 1) * 20),
+      ];
+      final batches = [
+        for (var i = 0; i < groups.length; i++)
+          DownloadQueueBatch(tracks: groups[i], playlistName: 'Playlist $i'),
+      ];
+      final expectedTracks = groups.expand(normalizeBatchAlbumArtists).toList();
+      final old = DownloadItem(
+        id: 'persisted',
+        track: tracks.first,
+        service: 'example',
+        createdAt: DateTime.utc(2026),
+        qualityOverride: 'LOSSLESS',
+      );
+      final samples = <String, List<Map<String, int>>>{
+        'per_playlist': [],
+        'bulk': [],
+      };
+      for (var sample = 0; sample < 5; sample++) {
+        for (final bulk in sample.isEven ? [false, true] : [true, false]) {
+          await db.delete('download_queue_items');
+          final stamp = old.createdAt.toIso8601String();
+          await db.insert('download_queue_items', {
+            'id': old.id,
+            'item_json': jsonEncode(old.toJson()),
+            'status': 'queued',
+            'created_at': stamp,
+            'updated_at': stamp,
+          });
+          final container = scope();
+          try {
+            final queue = container.read(downloadQueueProvider.notifier);
+            queue.pauseQueue(persistAcrossRestarts: false);
+            var publications = 0;
+            final subscription = container.listen(
+              downloadQueueProvider,
+              (_, _) => publications++,
+            );
+            final watch = Stopwatch()..start();
+            if (bulk) {
+              queue.addBatchesToQueue(
+                batches,
+                ' example ',
+                qualityOverride: 'HIGH',
+              );
+            } else {
+              for (var i = 0; i < groups.length; i++) {
+                queue.addMultipleToQueue(
+                  groups[i],
+                  ' example ',
+                  qualityOverride: 'HIGH',
+                  playlistName: 'Playlist $i',
+                );
+              }
+            }
+            watch.stop();
+            subscription.close();
+            samples[bulk ? 'bulk' : 'per_playlist']!.add({
+              'microseconds': watch.elapsedMicroseconds,
+              'publications': publications,
+            });
+            expect(publications, bulk ? 1 : count);
+            final early = container.read(downloadQueueProvider).items.toList();
+            expect(early, hasLength(tracks.length));
+            expect(
+              early.map((item) => item.id).toSet(),
+              hasLength(tracks.length),
+            );
+            await queue.flushQueuePersistence();
+            final state = container.read(downloadQueueProvider);
+            expect(state.items.skip(1), early);
+            expect(
+              jsonEncode(state.items.first.toJson()),
+              jsonEncode(old.toJson()),
+            );
+            expect(state.isPaused, true);
+            expect(state.isProcessing, false);
+            final rows = await AppStateDatabase.instance
+                .getPendingDownloadQueueRows();
+            expect(
+              rows.map((row) => row['id']),
+              state.items.map((item) => item.id),
+            );
+            for (var i = 0; i < early.length; i++) {
+              final item = early[i];
+              expect(item.playlistName, 'Playlist ${i ~/ 20}');
+              expect(item.playlistPosition, i % 20 + 1);
+              expect(item.fromBatch, true);
+              expect(item.qualityOverride, 'HIGH');
+              expect(item.service, 'example');
+              expect(item.preserveQualityVariant, true);
+              expect(item.networkDownloadFolder, 'smb://example.test/music');
+              expect(
+                jsonEncode(item.track.toJson()),
+                jsonEncode(expectedTracks[i].toJson()),
+              );
+              expect(
+                jsonDecode(rows[i + 1]['item_json'] as String),
+                jsonDecode(jsonEncode(item.toJson())),
+              );
+            }
+          } finally {
+            container.dispose();
+          }
+        }
+      }
+      report['playlists_$count'] = samples;
+      completed++;
+    });
+  }
+
+  testWidgets(
+    'playlist batches keep prior storage on failure then retry together',
+    (tester) async {
+      await db.delete('download_queue_items');
+      final tracks = await playlistBatchFixture(300);
+      final old = DownloadItem(
+        id: 'keep',
+        track: tracks.first,
+        service: 'example',
+        createdAt: DateTime.utc(2026),
+      );
+      final stamp = old.createdAt.toIso8601String();
+      await db.insert('download_queue_items', {
+        'id': old.id,
+        'item_json': jsonEncode(old.toJson()),
+        'status': 'queued',
+        'created_at': stamp,
+        'updated_at': stamp,
+      });
+      await db.execute(
+        r'''CREATE TRIGGER fail_batches BEFORE INSERT ON download_queue_items
+      WHEN json_extract(NEW.item_json, '$.track.id') = '129'
+      BEGIN SELECT RAISE(ABORT, 'fixture row failure'); END''',
+      );
+      final container = scope();
+      try {
+        final queue = container.read(downloadQueueProvider.notifier);
+        queue.pauseQueue(persistAcrossRestarts: false);
+        queue.addBatchesToQueue([
+          DownloadQueueBatch(
+            tracks: tracks.take(150).toList(),
+            playlistName: 'First',
+          ),
+          DownloadQueueBatch(
+            tracks: tracks.skip(150).toList(),
+            playlistName: 'Second',
+          ),
+        ], 'example');
+        final early = container.read(downloadQueueProvider).items;
+        await queue.flushQueuePersistence();
+        expect(
+          (await db.query('download_queue_items')).map((row) => row['id']),
+          ['keep'],
+        );
+        expect(container.read(downloadQueueProvider).items.skip(1), early);
+        await db.execute('DROP TRIGGER fail_batches');
+        await queue.flushQueuePersistence();
+        final rows = await AppStateDatabase.instance
+            .getPendingDownloadQueueRows();
+        expect(rows.map((row) => row['id']), [
+          'keep',
+          ...early.map((item) => item.id),
+        ]);
+        expect(container.read(downloadQueueProvider).isPaused, true);
+        expect(
+          early.take(150).map((item) => item.playlistName),
+          everyElement('First'),
+        );
+        expect(
+          early.skip(150).map((item) => item.playlistName),
+          everyElement('Second'),
+        );
+      } finally {
+        await db.execute('DROP TRIGGER IF EXISTS fail_batches');
+        container.dispose();
+      }
+      completed++;
+    },
+  );
 }

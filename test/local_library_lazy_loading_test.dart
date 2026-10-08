@@ -9,6 +9,7 @@ import 'package:spotiflac_android/models/download_item.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
+import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/library_browse_provider.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/providers/library_search_provider.dart';
@@ -73,9 +74,49 @@ class _Queue extends DownloadQueueNotifier {
   DownloadQueueState build() => DownloadQueueState();
 }
 
+class _DownloadSettings extends SettingsNotifier {
+  @override
+  AppSettings build() => const AppSettings(
+    defaultLibraryView: 'all',
+    defaultService: 'example',
+    askQualityBeforeDownload: false,
+  );
+}
+
+class _DownloadExtensions extends ExtensionNotifier {
+  @override
+  ExtensionState build() => const ExtensionState(
+    extensions: [
+      Extension(
+        id: 'example',
+        name: 'example',
+        displayName: 'Example',
+        version: '1',
+        description: '',
+        enabled: true,
+        status: 'loaded',
+        hasDownloadProvider: true,
+      ),
+    ],
+  );
+}
+
+class _BatchQueue extends _Queue {
+  _BatchQueue(this._record);
+  final void Function(List<DownloadQueueBatch>, String, String?) _record;
+  @override
+  void addBatchesToQueue(
+    List<DownloadQueueBatch> batches,
+    String service, {
+    String? qualityOverride,
+  }) => _record(batches, service, qualityOverride);
+}
+
 class _SelectionCollections extends LibraryCollectionsNotifier {
-  _SelectionCollections(this._record);
+  _SelectionCollections(this._record, {bool withTracks = false})
+    : _withTracks = withTracks;
   final void Function(List<String>) _record;
+  final bool _withTracks;
 
   @override
   LibraryCollectionsState build() => LibraryCollectionsState(
@@ -87,10 +128,28 @@ class _SelectionCollections extends LibraryCollectionsNotifier {
           name: id,
           createdAt: DateTime.utc(2026),
           updatedAt: DateTime.utc(2026),
-          tracks: const [],
+          tracks: _withTracks
+              ? [
+                  for (var i = 0; i < (id == 'Second' ? 2 : 1); i++)
+                    CollectionTrackEntry(
+                      key: '$id-$i',
+                      addedAt: DateTime.utc(2026),
+                      track: Track(
+                        id: '$id-$i',
+                        name: '$id-$i',
+                        artistName: 'Artist',
+                        albumName: 'Album',
+                        duration: 180,
+                      ),
+                    ),
+                ]
+              : const [],
         ),
     ],
   );
+
+  @override
+  Future<void> ensurePlaylistsLoaded(Iterable<String> ids) async {}
 
   @override
   Future<int> deletePlaylists(Iterable<String> ids) async {
@@ -155,6 +214,84 @@ void main() {
   });
 
   for (final mornye in [false, true]) {
+    testWidgets(
+      'playlist download confirms one grouped enqueue (Mornye: $mornye)',
+      (tester) async {
+        tester.view.physicalSize = const Size(800, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final calls = <List<DownloadQueueBatch>>[];
+        final services = <String>[];
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              settingsProvider.overrideWith(_DownloadSettings.new),
+              extensionProvider.overrideWith(_DownloadExtensions.new),
+              downloadHistoryProvider.overrideWith(() => history),
+              localLibraryProvider.overrideWith(() => local),
+              libraryCollectionsProvider.overrideWith(
+                () => _SelectionCollections((_) {}, withTracks: true),
+              ),
+              downloadQueueProvider.overrideWith(
+                () => _BatchQueue((batches, service, quality) {
+                  calls.add(batches);
+                  services.add(service);
+                  expect(quality, isNull);
+                }),
+              ),
+            ],
+            child: MaterialApp(
+              theme: mornye
+                  ? MornyeTheme.build(Brightness.dark)
+                  : AppTheme.light(),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: const Scaffold(body: QueueTab(librarySection: 'playlists')),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final l10n = AppLocalizations.of(tester.element(find.byType(QueueTab)));
+        await tester.ensureVisible(find.text('First'));
+        await tester.longPress(find.text('First'));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Second'));
+        await tester.tap(find.text('Second'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(l10n.bulkDownloadPlaylistsButton(2)));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(l10n.dialogDownloadPlaylistsMessage(3, 2)),
+          findsOneWidget,
+        );
+        await tester.tap(find.text(l10n.dialogCancel));
+        await tester.pumpAndSettle();
+        expect(calls, isEmpty);
+        await tester.tap(find.text(l10n.bulkDownloadPlaylistsButton(2)));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(l10n.dialogDownload));
+        await tester.pumpAndSettle();
+        expect(calls, hasLength(1));
+        expect(services, ['example']);
+        expect(calls.single.map((batch) => batch.playlistName), [
+          'First',
+          'Second',
+        ]);
+        expect(
+          calls.single.map(
+            (batch) => batch.tracks.map((track) => track.id).toList(),
+          ),
+          [
+            ['First-0'],
+            ['Second-0', 'Second-1'],
+          ],
+        );
+        expect(find.text(l10n.snackbarAddedTracksToQueue(3)), findsOneWidget);
+        expect(find.text(l10n.bulkDownloadPlaylistsButton(2)), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('playlist selection confirms one deletion (Mornye: $mornye)', (
       tester,
     ) async {
