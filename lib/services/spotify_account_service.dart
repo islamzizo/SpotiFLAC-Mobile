@@ -370,10 +370,8 @@ class SpotifyAccountService {
 
     for (var attempt = 0; attempt < 2; attempt++) {
       final httpResponse = await http.put(
-        Uri.parse('https://api.spotify.com/v1/me/library').replace(
-          queryParameters: {
-            'uris': 'spotify:album:$normalizedId',
-          },
+        Uri.parse('https://api.spotify.com/v1/me/albums').replace(
+          queryParameters: {'ids': normalizedId},
         ),
         headers: {
           'Authorization': 'Bearer $token',
