@@ -1,5 +1,32 @@
 {
-  "upgradeIntroWelcome": "SpotiFLAC Mobile 5.0\n에 오신 것을 환영 합니다",
+  "settingsPlaybackSubtitle": "플레이어, 볼륨, AutoMix, 및 오디오 출력",
+  "sectionPlayer": "플레이어",
+  "sectionVolumeAndTransitions": "볼륨 및 전환",
+  "sectionAudioOutput": "오디오 출력",
+  "usbBitPerfect": "Hi-res 및 bit-perfect 오디오",
+  "usbBitPerfectDescription": "지원되는 출력에서는 소스의 정밀도를 그대로 유지합니다. 아래에서 다이렉트 USB 또는 AAudio 전용 출력을 선택하세요. 그 외의 경우 Android USB 출력은 Android 14 이상에서만 사용할 수 있습니다. 이 설정은 다음 트랙부터 적용되며, AutoMix 또는 볼륨 정규화가 적용되지 않은 상태에서 작동합니다. 다이렉트 USB 출력에서는 휴대전화의 시스템 볼륨 조절이 작동하지 않을 수 있습니다",
+  "usbHardwareVolume": "DAC 하드웨어 볼륨",
+  "usbVolumeWarningTitle": "청취 볼륨을 확인하세요",
+  "usbVolumeWarning": "다이렉트 USB 오디오는 일반 재생보다 훨씬 크게 출력될 수 있으며, 휴대전화의 볼륨 버튼으로 음량이 조절되지 않을 수 있습니다. 시작하기 전에 DAC 또는 앰프의 볼륨을 낮추세요. 지원되는 경우 SpotiFLAC은 연결 시 DAC의 볼륨을 최대 −40 dB로 설정합니다. 하지만 이것이 모든 앰프나 헤드폰에서 안전한 청취 음량을 보장하는 것은 아닙니다",
+  "usbVolumeAccept": "이해했습니다",
+  "usbVolumeUnavailable": "이 DAC에는 검증된 하드웨어 볼륨 조절 기능이 없기 때문에 재생이 일시 중지되었습니다. DAC 또는 앰프의 볼륨을 낮춘 다음, 필요하다면 고정 볼륨 출력을 활성화하고 트랙을 다시 선택하세요",
+  "usbFixedVolume": "고정 볼륨 USB 출력 허용",
+  "usbFixedVolumeDescription": "앱에서 볼륨을 조절할 수 없는 DAC용입니다. 자체 볼륨 조절 기능이 없는 USB 헤드셋에서는 켜지 않은 상태로 유지하세요. 이 설정은 다음 트랙부터 적용됩니다",
+  "usbFixedVolumeWarning": "이 출력에서는 앱이 볼륨을 낮출 수 없습니다. 오디오가 최대 음량으로 시작할 수 있으며, 휴대전화의 볼륨 슬라이더로도 조절되지 않습니다. DAC 또는 외부 앰프의 볼륨을 먼저 낮춘 후에만 계속 진행하세요. 자체 볼륨 조절 기능이 없는 헤드셋에서는 이 기능을 활성화하지 마세요",
+  "dapExclusive": "DAP hi-res (AAudio 전용)",
+  "dapExclusiveDescription": "FLAC/WAV PCM 파일을 트랙의 원본 샘플레이트와 정밀도 그대로 재생하려면 Oboe/AAudio를 사용합니다. Android 8.1 이상과 호환되는 하드웨어가 필요합니다. 전용 접근 가능 여부를 확인하며, 지원되지 않는 형식은 일반 재생 방식으로 처리됩니다. DSD는 다이렉트 USB 드라이버가 필요합니다. 이 설정은 다음 트랙부터 적용됩니다",
+  "dapExclusiveUnavailable": "이 트랙과 현재 출력에서는 AAudio 전용 접근을 사용할 수 없습니다. 일반 재생 방식으로 전환합니다. USB DAC을 사용하는 경우 다이렉트 USB 드라이버를 사용해 보세요",
+  "usbDirect": "다이렉트 USB 드라이버",
+  "usbDirectDescription": "FLAC/WAV, DSF/DFF 및 WavPack DSD를 재생하려면 독점 USB 오디오를 사용하며, Android의 USB 권한이 필요합니다. 네이티브 DSD는 인식된 호환 DAC이 필요합니다. 그 외의 PCM 형식은 일반 재생 방식을 사용합니다. 이 설정은 다음 트랙부터 적용됩니다",
+  "usbDsdOverPcm": "DSD over PCM (DoP)",
+  "usbDsdOverPcmDescription": "DAC이 DoP를 명시적으로 지원하는 경우에만 활성화하세요. 네이티브 DSD를 사용할 수 없을 때 DSF/DFF 및 WavPack DSD를 PCM 데이터 안에 담아 전송합니다. 호환되지 않는 기기에서는 잡음이 재생될 수 있으므로, 일반 USB 헤드셋에서는 이 기능을 꺼두세요",
+  "usbDsdUnsupported": "이 DSD 형식 또는 연결된 DAC은 지원되지 않습니다. 재생이 중지되었습니다",
+  "usbPermissionDenied": "USB 권한이 부여되지 않았습니다. 일반 재생을 사용합니다",
+  "usbBitPerfectPending": "다음 트랙과 호환 가능한 USB 출력이 연결되기를 기다리고 있습니다",
+  "usbBitPerfectNoDevice": "USB DAC이 연결되어 있지 않습니다. 일반 오디오 출력을 사용합니다",
+  "usbBitPerfectFallback": "이 기기 또는 오디오 형식은 Bit-Perfect 출력을 지원하지 않습니다. 일반 재생을 사용합니다",
+  "usbBitPerfectRouteChanged": "USB 오디오 출력 경로가 변경되었습니다. 재생이 일시 중지되었습니다. 다시 연결하려면 트랙을 선택하세요",
+  "upgradeIntroWelcome": "SpotiFLAC Mobile 5.0\n에 오신 것을 환영합니다",
   "upgradeIntroThemeTitle": "나만의 스타일로\n꾸며보세요",
   "upgradeIntroThemeBody": "스타일을 선택하세요. 선택한 스타일은 즉시 적용되며, 나중에 디자인 설정에서 변경할 수 있습니다",
   "upgradeIntroThemeMaterialBody": "Material 디자인 컨트롤과 선택한 강조 색상이 적용된 익숙한 레이아웃",
@@ -36,6 +63,32 @@
     "description": "System volume control label in the Mornye player"
   },
   "appearanceStyle": "앱 스타일",
+  "appearanceAccentRed": "빨간색 (기본값)",
+  "appearanceAccentOrange": "주황색",
+  "appearanceAccentGreen": "초록색",
+  "appearanceAccentTeal": "청록색",
+  "appearanceAccentBlue": "파란색",
+  "appearanceAccentPurple": "보라색",
+  "appearanceAccentPink": "분홍색",
+  "appearanceGlassClarity": "글래스 투명도",
+  "appearanceGlassClaritySubtitle": "Mornye 메뉴와 하단바의 투명도를 조절할 수 있습니다. 텍스트 대비는 유지됩니다",
+  "appearanceGlassTinted": "색조",
+  "appearanceGlassClear": "투명",
+  "appearanceGlassClarityBlurOff": "이 기기에서 글래스 효과가 불투명하게 표시됩니다. 투명도를 조절하려면 '{setting}'을 켜세요",
+  "@appearanceGlassClarityBlurOff": {
+    "description": "Shown under the disabled glass clarity slider when the device renders Mornye glass without blur. The placeholder is the name of the force-blur toggle.",
+    "placeholders": {
+      "setting": {
+        "type": "String"
+      }
+    }
+  },
+  "appearanceGlassClarityHighContrast": "시스템의 고대비 설정이 켜져 있는 동안에는 글래스 효과가 불투명하게 표시됩니다",
+  "@appearanceGlassClarityHighContrast": {
+    "description": "Shown under the disabled glass clarity slider while the OS high contrast accessibility setting is on"
+  },
+  "appearanceUseSystemFont": "시스템 글꼴 사용",
+  "appearanceUseSystemFontSubtitle": "앱 텍스트에 기기 기본 글꼴을 사용합니다",
   "@appearanceStyle": {
     "description": "Appearance section for choosing the app visual style"
   },
@@ -99,7 +152,7 @@
   },
   "libraryRecentlyAdded": "최근 추가됨",
   "libraryDownloads": "다운로드",
-  "libraryNoActiveDownloads": "활성화된 다운로드가 없음",
+  "libraryNoActiveDownloads": "진행 중인 다운로드가 없습니다",
   "librarySearchHint": "라이브러리 검색",
   "libraryEmptyCollection": "음악이 여기에 표시됩니다",
   "historySearchHint": "기록 검색...",
@@ -255,6 +308,38 @@
   "@trackReplayGainFailed": {
     "description": "Snackbar message when ReplayGain scan/write fails"
   },
+  "trackRemoveReplayGain": "리플레이게인 제거",
+  "trackRemoveReplayGainSuccess": "리플레이게인 태그 제거됨",
+  "trackRemoveReplayGainFailed": "리플레이게인 태그 제거 실패",
+  "replayGainRemoving": "리플레이게인 제거 중...",
+  "replayGainRemoveConfirmMessage": "{count} 개의 트랙에서 트랙 및 앨범 리플레이게인 태그를 제거하시겠습니까? 오디오, 앨범 아트 및 기타 메타데이터는 보존됩니다",
+  "@replayGainRemoveConfirmMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "selectionRemoveReplayGainCount": "RG 제거 ({count})",
+  "@selectionRemoveReplayGainCount": {
+    "description": "Compact selection action label. RG abbreviates ReplayGain; keep this short for a two-column toolbar.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "replayGainRemoveBatchSuccess": "{total} 개 중 {success} 개의 트랙에서 리플레이게인이 제거됨",
+  "@replayGainRemoveBatchSuccess": {
+    "placeholders": {
+      "success": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "selectionReplayGainCount": "리플레이게인 ({count})",
   "@selectionReplayGainCount": {
     "description": "Batch selection action button label for ReplayGain",
@@ -317,6 +402,14 @@
   "optionsArtistTagModeSplitVorbisSubtitle": "FLAC 및 Opus의 경우 아티스트당 하나의 아티스트 태그를 작성하세요. MP3 및 M4A는 병합된 상태로 유지됩니다",
   "@optionsArtistTagModeSplitVorbisSubtitle": {
     "description": "Subtitle for split Vorbis artist tag mode"
+  },
+  "optionsArtistTagModePrimary": "주요 아티스트만",
+  "@optionsArtistTagModePrimary": {
+    "description": "Artist tag mode option that writes only the first credited artist"
+  },
+  "optionsArtistTagModePrimarySubtitle": "모든 형식에서 아티스트 및 앨범 아티스트 필드에 '아티스트 A'와 같은 첫 번째 아티스트만 입력하여, 플레이어에 하나의 아티스트만 표시되도록 합니다",
+  "@optionsArtistTagModePrimarySubtitle": {
+    "description": "Subtitle for the primary-artist tag mode. Applies when downloading and re-enriching; manual edits keep what the user typed."
   },
   "optionsExtensionStore": "확장 기능 레포",
   "@optionsExtensionStore": {
@@ -569,7 +662,7 @@
   "@setupGrantPermission": {
     "description": "Button to request permission"
   },
-  "setupSkip": "다음에 할래요",
+  "setupSkip": "건너뛰기",
   "@setupSkip": {
     "description": "Skip current step button"
   },
@@ -589,7 +682,7 @@
   "@setupPermissionDeniedMessage": {
     "description": "Error when permission denied"
   },
-  "setupPermissionRequired": "''{permissionType}'' 권한 필요",
+  "setupPermissionRequired": "'{permissionType}' 권한 필요",
   "@setupPermissionRequired": {
     "description": "Generic permission required title",
     "placeholders": {
@@ -599,7 +692,7 @@
       }
     }
   },
-  "setupPermissionRequiredMessage": "최상의 사용 경험을 위해 ''{permissionType}'' 권한이 필요합니다. 설정에서 나중에 변경할 수 있습니다",
+  "setupPermissionRequiredMessage": "최상의 사용 경험을 위해 '{permissionType}' 권한이 필요합니다. 설정에서 나중에 변경할 수 있습니다",
   "@setupPermissionRequiredMessage": {
     "description": "Generic permission required message",
     "placeholders": {
@@ -696,7 +789,7 @@
   "@setupNotificationBackgroundDescription": {
     "description": "Detailed notification explanation"
   },
-  "setupSkipForNow": "다음에 할래요",
+  "setupSkipForNow": "건너뛰기",
   "@setupSkipForNow": {
     "description": "Skip button text"
   },
@@ -884,7 +977,7 @@
   "@libraryReviewDuplicates": {
     "description": "Library settings row opening the duplicate review sheet"
   },
-  "libraryReviewDuplicatesSubtitle": "중복 저장된 트랙 찾기",
+  "libraryReviewDuplicatesSubtitle": "중복 저장된 트랙을 찾을 수 있습니다",
   "@libraryReviewDuplicatesSubtitle": {
     "description": "Subtitle for the duplicate review settings row"
   },
@@ -916,7 +1009,7 @@
       }
     }
   },
-  "duplicatesKeepBestMessage": "\"{trackName}\"의 {count} 개의 저음질 복사본을 삭제하시겠습니까?",
+  "duplicatesKeepBestMessage": "'{trackName}'의 {count} 개의 저음질 복사본을 삭제하시겠습니까?",
   "@duplicatesKeepBestMessage": {
     "description": "Confirmation message for the keep-best action",
     "placeholders": {
@@ -928,7 +1021,7 @@
       }
     }
   },
-  "duplicatesDeleteCopyMessage": "\"{trackName}\"의 복사본을 삭제하시겠습니까?",
+  "duplicatesDeleteCopyMessage": "'{trackName}'의 복사본을 삭제하시겠습니까?",
   "@duplicatesDeleteCopyMessage": {
     "description": "Confirmation message for deleting one duplicate copy",
     "placeholders": {
@@ -945,7 +1038,7 @@
       }
     }
   },
-  "snackbarAddedToQueue": "''{trackName}''가 다운로드 목록에 추가됨",
+  "snackbarAddedToQueue": "'{trackName}'가 다운로드 목록에 추가됨",
   "@snackbarAddedToQueue": {
     "description": "Snackbar - track added to download queue",
     "placeholders": {
@@ -963,7 +1056,7 @@
       }
     }
   },
-  "snackbarAlreadyDownloaded": "''{trackName}''은 이미 다운로드되어 있음",
+  "snackbarAlreadyDownloaded": "'{trackName}'은 이미 다운로드되어 있음",
   "@snackbarAlreadyDownloaded": {
     "description": "Snackbar - track already exists",
     "placeholders": {
@@ -972,7 +1065,7 @@
       }
     }
   },
-  "snackbarAlreadyInLibrary": "라이브러리에 ''{trackName}''이 이미 존재함",
+  "snackbarAlreadyInLibrary": "라이브러리에 '{trackName}'이 이미 존재함",
   "@snackbarAlreadyInLibrary": {
     "description": "Snackbar - track already exists in local library",
     "placeholders": {
@@ -1033,7 +1126,7 @@
   "@snackbarMetadataProviderSaved": {
     "description": "Snackbar - metadata provider order saved"
   },
-  "snackbarExtensionInstalled": "''{extensionName}''이 설치됨",
+  "snackbarExtensionInstalled": "'{extensionName}'이 설치됨",
   "@snackbarExtensionInstalled": {
     "description": "Snackbar - extension installed successfully",
     "placeholders": {
@@ -1042,7 +1135,7 @@
       }
     }
   },
-  "snackbarExtensionUpdated": "''{extensionName}''이 설치됨",
+  "snackbarExtensionUpdated": "'{extensionName}'이 업데이트됨",
   "@snackbarExtensionUpdated": {
     "description": "Snackbar - extension updated successfully",
     "placeholders": {
@@ -1087,7 +1180,7 @@
   "@errorUrlFetchFailed": {
     "description": "Error message - generic URL fetch failure"
   },
-  "errorMissingExtensionSource": "''{item}''을 불러올 수 없음: 확장 소스가 누락됨",
+  "errorMissingExtensionSource": "'{item}'을 불러올 수 없음: 확장 소스가 누락됨",
   "@errorMissingExtensionSource": {
     "description": "Error - extension source not available",
     "placeholders": {
@@ -1318,7 +1411,7 @@
   "@updateWhatsNew": {
     "description": "Changelog section title"
   },
-  "updateDownloadInstall": "다운로드 & 설치",
+  "updateDownloadInstall": "다운로드 및 설치",
   "@updateDownloadInstall": {
     "description": "Update button - download and install"
   },
@@ -1476,6 +1569,8 @@
   "@sectionLyrics": {
     "description": "Settings section header"
   },
+  "lyricsKeepScreenOn": "가사 보는 동안 화면 켜짐 유지",
+  "lyricsKeepScreenOnSubtitle": "가사가 열려 있는 동안 재생이 일시정지된 경우를 포함하여 화면이 꺼지지 않도록 합니다",
   "lyricsMode": "가사 설정",
   "@lyricsMode": {
     "description": "Setting - how to save lyrics"
@@ -2013,7 +2108,7 @@
   "@extensionsMetadataPriority": {
     "description": "Setting - metadata provider order"
   },
-  "extensionsMetadataPrioritySubtitle": "검색 & 메타데이터 출처 순서를 설정하세요",
+  "extensionsMetadataPrioritySubtitle": "검색 및 메타데이터 출처 순서를 설정하세요",
   "@extensionsMetadataPrioritySubtitle": {
     "description": "Subtitle for metadata priority"
   },
@@ -2441,7 +2536,7 @@
       }
     }
   },
-  "discographySinglesOnly": "싱글 & EP만",
+  "discographySinglesOnly": "싱글 및 EP만",
   "@discographySinglesOnly": {
     "description": "Option - download only singles"
   },
@@ -2555,11 +2650,11 @@
   "@settingsLocalLibrary": {
     "description": "Settings menu item - local library"
   },
-  "settingsLocalLibrarySubtitle": "음악 스캔 & 중복 감지",
+  "settingsLocalLibrarySubtitle": "음악 스캔 및 중복 감지",
   "@settingsLocalLibrarySubtitle": {
     "description": "Subtitle for local library settings"
   },
-  "settingsCache": "저장소 & 캐시",
+  "settingsCache": "저장소 및 캐시",
   "@settingsCache": {
     "description": "Settings menu item - cache management"
   },
@@ -2642,7 +2737,7 @@
   "@libraryShowDuplicateIndicator": {
     "description": "Toggle for duplicate indicator in search"
   },
-  "libraryShowDuplicateIndicatorSubtitle": "기존 트랙을 검색할 때 표시",
+  "libraryShowDuplicateIndicatorSubtitle": "기존 트랙을 검색할 때 표시합니다",
   "@libraryShowDuplicateIndicatorSubtitle": {
     "description": "Subtitle for duplicate indicator toggle"
   },
@@ -2698,7 +2793,7 @@
   "@libraryClear": {
     "description": "Button to clear all library entries"
   },
-  "libraryClearSubtitle": "스캔된 모든 트랙 제거",
+  "libraryClearSubtitle": "스캔된 모든 트랙을 제거합니다",
   "@libraryClearSubtitle": {
     "description": "Subtitle for clear button"
   },
@@ -2756,6 +2851,10 @@
   "libraryScanFinalizing": "라이브러리를 마무리하는 중...",
   "@libraryScanFinalizing": {
     "description": "Status shown after file scanning finishes but library persistence is still running"
+  },
+  "libraryScanPaused": "스캔이 일시 중지됨",
+  "@libraryScanPaused": {
+    "description": "Status shown while a library scan is paused by the user"
   },
   "libraryScanProgress": "{total} 개의 파일 중 {progress}%",
   "@libraryScanProgress": {
@@ -3057,7 +3156,7 @@
   "@cleanupOrphanedDownloadsNone": {
     "description": "Snackbar when no orphans found"
   },
-  "cacheTitle": "저장소 & 캐시",
+  "cacheTitle": "저장소 및 캐시",
   "@cacheTitle": {
     "description": "Cache management page title"
   },
@@ -3201,7 +3300,7 @@
   "@cacheClearConfirmTitle": {
     "description": "Dialog title before clearing one cache category"
   },
-  "cacheClearConfirmMessage": "''{target}''의 캐시된 데이터를 지웁니다. 다운로드된 음악 파일은 삭제되지 않습니다",
+  "cacheClearConfirmMessage": "'{target}'의 캐시된 데이터를 지웁니다. 다운로드된 음악 파일은 삭제되지 않습니다",
   "@cacheClearConfirmMessage": {
     "description": "Dialog message before clearing selected cache",
     "placeholders": {
@@ -3282,11 +3381,11 @@
   "@trackReEnrichFieldBasicTags": {
     "description": "Checkbox label for basic tags in re-enrich (title/artist are never overwritten)"
   },
-  "trackReEnrichFieldTrackInfo": "트랙 & 디스크 번호",
+  "trackReEnrichFieldTrackInfo": "트랙 및 디스크 번호",
   "@trackReEnrichFieldTrackInfo": {
     "description": "Checkbox label for track info in re-enrich"
   },
-  "trackReEnrichFieldReleaseInfo": "데이터 & ISRC",
+  "trackReEnrichFieldReleaseInfo": "데이터 및 ISRC",
   "@trackReEnrichFieldReleaseInfo": {
     "description": "Checkbox label for release info in re-enrich"
   },
@@ -3378,7 +3477,7 @@
   "@trackEditMetadata": {
     "description": "Menu action - edit embedded metadata"
   },
-  "trackCoverSaved": "앨범 커버가 ''{fileName}''에 저장됨",
+  "trackCoverSaved": "앨범 커버가 '{fileName}'에 저장됨",
   "@trackCoverSaved": {
     "description": "Snackbar after cover art saved",
     "placeholders": {
@@ -3391,7 +3490,7 @@
   "@trackCoverNoSource": {
     "description": "Snackbar when no cover art URL or embedded cover"
   },
-  "trackLyricsSaved": "가사가 ''{fileName}''에 저장됨",
+  "trackLyricsSaved": "가사가 '{fileName}'에 저장됨",
   "@trackLyricsSaved": {
     "description": "Snackbar after lyrics saved",
     "placeholders": {
@@ -3585,7 +3684,7 @@
   "@cueSplitConfirmTitle": {
     "description": "CUE split confirmation dialog title"
   },
-  "cueSplitConfirmMessage": "''{album}''을 {count} 개의 개별 FLAC 파일로 분할하시겠습니까?\n\n파일은 동일한 디렉토리에 저장됩니다",
+  "cueSplitConfirmMessage": "'{album}'을 {count} 개의 개별 FLAC 파일로 분할하시겠습니까?\n\n파일은 동일한 디렉토리에 저장됩니다",
   "@cueSplitConfirmMessage": {
     "description": "CUE split confirmation dialog message",
     "placeholders": {
@@ -3684,7 +3783,7 @@
       }
     }
   },
-  "collectionAddedToPlaylist": "''{playlistName}''에 추가됨",
+  "collectionAddedToPlaylist": "'{playlistName}'에 추가됨",
   "@collectionAddedToPlaylist": {
     "description": "Snackbar after adding track to playlist",
     "placeholders": {
@@ -3693,7 +3792,7 @@
       }
     }
   },
-  "collectionAlreadyInPlaylist": "이미 ''{playlistName}''에 있음",
+  "collectionAlreadyInPlaylist": "이미 '{playlistName}'에 있음",
   "@collectionAlreadyInPlaylist": {
     "description": "Snackbar when track already exists in playlist",
     "placeholders": {
@@ -3762,7 +3861,7 @@
   "@collectionRemoveFromFolder": {
     "description": "Tooltip for removing track from wishlist/loved folder"
   },
-  "collectionAddedToLoved": "''{trackName}''이 '좋아요 표시한 음악'에 추가됨",
+  "collectionAddedToLoved": "'{trackName}'이 '좋아요 표시한 음악'에 추가됨",
   "@collectionAddedToLoved": {
     "description": "Snackbar after adding track to loved folder",
     "placeholders": {
@@ -3771,7 +3870,7 @@
       }
     }
   },
-  "collectionRemovedFromLoved": "''{trackName}''이 '좋아요 표시한 음악'에서 제거됨",
+  "collectionRemovedFromLoved": "'{trackName}'이 '좋아요 표시한 음악'에서 제거됨",
   "@collectionRemovedFromLoved": {
     "description": "Snackbar after removing track from loved folder",
     "placeholders": {
@@ -3780,7 +3879,7 @@
       }
     }
   },
-  "collectionAddedToWishlist": "''{trackName}''가 위시리스트에 추가됨",
+  "collectionAddedToWishlist": "'{trackName}'가 위시리스트에 추가됨",
   "@collectionAddedToWishlist": {
     "description": "Snackbar after adding track to wishlist",
     "placeholders": {
@@ -3789,7 +3888,7 @@
       }
     }
   },
-  "collectionRemovedFromWishlist": "''{trackName}''가 위시리스트에서 제거됨",
+  "collectionRemovedFromWishlist": "'{trackName}'가 위시리스트에서 제거됨",
   "@collectionRemovedFromWishlist": {
     "description": "Snackbar after removing track from wishlist",
     "placeholders": {
@@ -3798,7 +3897,7 @@
       }
     }
   },
-  "collectionAddedToFavoriteArtists": "''{artistName}''가 좋아하는 아티스트에 추가됨",
+  "collectionAddedToFavoriteArtists": "'{artistName}'가 좋아하는 아티스트에 추가됨",
   "@collectionAddedToFavoriteArtists": {
     "description": "Snackbar after adding artist to favorite artists",
     "placeholders": {
@@ -3807,7 +3906,7 @@
       }
     }
   },
-  "collectionRemovedFromFavoriteArtists": "''{artistName}''가 좋아하는 아티스트에서 제거됨",
+  "collectionRemovedFromFavoriteArtists": "'{artistName}'가 좋아하는 아티스트에서 제거됨",
   "@collectionRemovedFromFavoriteArtists": {
     "description": "Snackbar after removing artist from favorite artists",
     "placeholders": {
@@ -3979,7 +4078,7 @@
       }
     }
   },
-  "lyricsProvidersAtLeastOne": "최소 한 명의 제공자가 활성화된 상태로 유지되어야 합니다",
+  "lyricsProvidersAtLeastOne": "최소 한 개의 제공자가 활성화된 상태로 유지되어야 합니다",
   "@lyricsProvidersAtLeastOne": {
     "description": "Snackbar when user tries to disable the last enabled provider"
   },
@@ -4043,7 +4142,7 @@
   "@settingsDonateSubtitle": {
     "description": "Subtitle for donate menu item"
   },
-  "settingsBackup": "백업 & 복원",
+  "settingsBackup": "백업 및 복원",
   "@settingsBackup": {
     "description": "Settings menu item - backup and restore page"
   },
@@ -4051,7 +4150,7 @@
   "@settingsBackupSubtitle": {
     "description": "Subtitle for backup and restore settings item"
   },
-  "backupTitle": "백업 & 복원",
+  "backupTitle": "백업 및 복원",
   "@backupTitle": {
     "description": "App bar title for the backup and restore page"
   },
@@ -4330,7 +4429,7 @@
   "@downloadErrorFolderAccessLost": {
     "description": "Error shown on downloads that failed because the iOS download folder bookmark could not be opened"
   },
-  "downloadFilenameDescription": "''{artist}'', ''{title}'', ''{album}'', ''{track}'', ''{year}'', ''{date}'', ''{disc}''를 자리표시자로 사용하세요",
+  "downloadFilenameDescription": "'{artist}', '{title}', '{album}', '{track}', '{year}', '{date}', '{disc}'를 자리표시자로 사용하세요",
   "@downloadFilenameDescription": {
     "description": "Description shown in filename format editor"
   },
@@ -4597,7 +4696,7 @@
       }
     }
   },
-  "editMetadataAutoFillFetch": "가져오기 & 채우기",
+  "editMetadataAutoFillFetch": "가져오기 및 채우기",
   "@editMetadataAutoFillFetch": {
     "description": "Button label to fetch online metadata and fill selected fields"
   },
@@ -4910,6 +5009,61 @@
   "@hiResCheckTitle": {
     "description": "Title of the fake Hi-Res check card"
   },
+  "hiResCheckSummary": "스펙트럼과 활성 비트 깊이를 검사하여 업샘플링 또는 패딩의 징후를 확인합니다",
+  "@hiResCheckSummary": {
+    "description": "Introductory text for the sampled Hi-Res analysis"
+  },
+  "hiResCheckLimitedBandwidth": "대역폭이 제한됨",
+  "@hiResCheckLimitedBandwidth": {
+    "description": "Neutral finding: a limited spectrum alone does not prove upsampling"
+  },
+  "hiResCheckNoEvidence": "업샘플링 또는 패딩이 감지되지 않음",
+  "@hiResCheckNoEvidence": {
+    "description": "No evidence was detected; this does not certify the master"
+  },
+  "hiResCheckEstimatedCutoff": "추정되는 컷오프 주파수",
+  "@hiResCheckEstimatedCutoff": {
+    "description": "Estimated upper spectral edge at the analysis threshold"
+  },
+  "hiResCheckActiveBits": "활성화된 / 저장된 비트",
+  "@hiResCheckActiveBits": {
+    "description": "Active integer bit depth versus the container depth in the sampled segment"
+  },
+  "hiResCheckBandwidthExplanation": "더 낮은 컷오프는 마스터링 과정에서 발생할 수 있습니다. 이것만으로 업샘플링이라고 단정할 수는 없습니다",
+  "@hiResCheckBandwidthExplanation": {
+    "description": "Explains why the limited-bandwidth finding is neutral"
+  },
+  "hiResCheckSampledExplanation": "{seconds} 초 분량의 오디오를 기반으로 분석하였습니다. 이 분석만으로 원본 마스터를 인증할 수는 없습니다",
+  "@hiResCheckSampledExplanation": {
+    "description": "Limits of the sampled Hi-Res analysis; seconds is a formatted duration",
+    "placeholders": {
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "hiResCheckImagingEvidence": "스펙트럼에 업샘플링과 일치하는 미러링된 대역이 나타납니다",
+  "@hiResCheckImagingEvidence": {
+    "description": "Spectral imaging is suggestive evidence rather than proof"
+  },
+  "hiResCheckRateEvidence": "{cutoff} 부근에서 급격한 롤오프가 나타나며, 측정된 노이즈 플로어를 고려하면 더 낮은 샘플레이트의 소스에서 비롯되었을 가능성이 있습니다",
+  "@hiResCheckRateEvidence": {
+    "description": "Heuristic evidence from both a brickwall and a 16-bit-like noise floor",
+    "placeholders": {
+      "cutoff": {
+        "type": "String"
+      }
+    }
+  },
+  "hiResCheckSteadyEnergy": "{cutoff} 이상의 에너지는 분석 구간에서 대부분 일정하며, 노이즈일 가능성이 있습니다",
+  "@hiResCheckSteadyEnergy": {
+    "description": "An observation about ultrasonic energy, not proof that removing it is safe",
+    "placeholders": {
+      "cutoff": {
+        "type": "String"
+      }
+    }
+  },
   "hiResCheckDescription": "업샘플링되었거나 비트 패딩된 가짜 Hi-Res 파일을 감지합니다",
   "@hiResCheckDescription": {
     "description": "Explains what the Hi-Res authenticity check does"
@@ -5032,7 +5186,7 @@
   "@cancelDownloadTitle": {
     "description": "Dialog title when confirming cancellation of an active download"
   },
-  "cancelDownloadContent": "''{trackName}''에 대한 활성 다운로드를 취소합니다",
+  "cancelDownloadContent": "'{trackName}'에 대한 활성 다운로드를 취소합니다",
   "@cancelDownloadContent": {
     "description": "Dialog body when confirming cancellation of an active download",
     "placeholders": {
@@ -5070,7 +5224,7 @@
       }
     }
   },
-  "notifDownloadingTrack": "''{trackName}''를 다운로드하는 중",
+  "notifDownloadingTrack": "'{trackName}'를 다운로드하는 중",
   "@notifDownloadingTrack": {
     "description": "Notification title while downloading a track",
     "placeholders": {
@@ -5079,7 +5233,7 @@
       }
     }
   },
-  "notifFinalizingTrack": "''{trackName}''를 마무리하는 중",
+  "notifFinalizingTrack": "'{trackName}'를 마무리하는 중",
   "@notifFinalizingTrack": {
     "description": "Notification title while finalizing (embedding metadata) a track",
     "placeholders": {
@@ -5255,6 +5409,19 @@
   "notifLibraryScanStopped": "스캔이 완료되기 전에 중단되었습니다",
   "@notifLibraryScanStopped": {
     "description": "Notification body when library scan is cancelled"
+  },
+  "notifLibraryScanPaused": "라이브러리 스캔이 일시 중지됨",
+  "@notifLibraryScanPaused": {
+    "description": "Notification title when the user pauses a library scan"
+  },
+  "notifLibraryScanPausedBody": "{count} 개의 파일을 스캔하였습니다. 여기에서 계속하려면 로컬 라이브러리 설정에서 다시 시작하세요",
+  "@notifLibraryScanPausedBody": {
+    "description": "Notification body for a paused library scan - files scanned so far",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "notifDownloadingUpdate": "SpotiFLAC Mobile v{version}을 다운로드하는 중",
   "@notifDownloadingUpdate": {
@@ -5581,7 +5748,7 @@
   "@setupChangeFolderTooltip": {
     "description": "Tooltip for editing the selected download folder"
   },
-  "a11yOpenTrackByArtist": "''{artistName}''의 트랙 ''{trackName}'' 열기",
+  "a11yOpenTrackByArtist": "'{artistName}'의 트랙 '{trackName}' 열기",
   "@a11yOpenTrackByArtist": {
     "description": "Accessibility label for opening a track item",
     "placeholders": {
@@ -5617,7 +5784,7 @@
       }
     }
   },
-  "a11yOpenAlbumByArtistTrackCount": "''{artistName}''의 앨범 ''{albumName}'' 열기 ({trackCount} 번째 곡)",
+  "a11yOpenAlbumByArtistTrackCount": "'{artistName}'의 앨범 '{albumName}' 열기 ({trackCount} 번째 곡)",
   "@a11yOpenAlbumByArtistTrackCount": {
     "description": "Accessibility label for opening an album item with track count",
     "placeholders": {
@@ -5632,7 +5799,7 @@
       }
     }
   },
-  "a11yTrackByArtist": "''{artistName}''의 ''{trackName}''",
+  "a11yTrackByArtist": "'{artistName}'의 '{trackName}'",
   "@a11yTrackByArtist": {
     "description": "Accessibility label for a queue or list track item",
     "placeholders": {
@@ -5644,7 +5811,7 @@
       }
     }
   },
-  "a11ySelectAlbum": "앨범 ''{albumName}'' 선택",
+  "a11ySelectAlbum": "앨범 '{albumName}' 선택",
   "@a11ySelectAlbum": {
     "description": "Accessibility label for selecting an album",
     "placeholders": {
@@ -5653,7 +5820,7 @@
       }
     }
   },
-  "a11yOpenAlbum": "앨범 ''{albumName}'' 열기",
+  "a11yOpenAlbum": "앨범 '{albumName}' 열기",
   "@a11yOpenAlbum": {
     "description": "Accessibility label for opening an album",
     "placeholders": {
@@ -5662,7 +5829,7 @@
       }
     }
   },
-  "settingsFiles": "파일 & 폴더",
+  "settingsFiles": "파일 및 폴더",
   "@settingsFiles": {
     "description": "Settings menu item - file and folder settings"
   },
@@ -5933,7 +6100,7 @@
   "@a11yDeselectTrack": {
     "description": "Accessibility label for deselecting a track"
   },
-  "a11yPlayTrackByArtist": "''{artistName}''의 ''{trackName}'' 재생",
+  "a11yPlayTrackByArtist": "'{artistName}'의 '{trackName}' 재생",
   "@a11yPlayTrackByArtist": {
     "description": "Accessibility label for playing a local library track",
     "placeholders": {
@@ -6266,7 +6433,7 @@
   "@libraryBuiltInPreviewPlayer": {
     "description": "Setting option to use the built-in preview player"
   },
-  "libraryBuiltInPreviewPlayerSubtitle": "SpotiFLAC Mobile 내에서 빠른 로컬 미리 보기",
+  "libraryBuiltInPreviewPlayerSubtitle": "SpotiFLAC Mobile에서 빠르게 미리 들을 수 있습니다 ",
   "@libraryBuiltInPreviewPlayerSubtitle": {
     "description": "Subtitle for built-in preview player option"
   },
@@ -6287,6 +6454,31 @@
     "description": "Tooltip for minimizing the now playing screen"
   },
   "nowPlayingUpNext": "다음 곡",
+  "nowPlayingAudioOutput": "오디오 출력",
+  "nowPlayingWrittenBy": "작성자: {writers}",
+  "@nowPlayingWrittenBy": {
+    "placeholders": {
+      "writers": {
+        "type": "String"
+      }
+    }
+  },
+  "nowPlayingLyricsProvider": "가사: {provider}",
+  "@nowPlayingLyricsProvider": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "concertGetTickets": "티켓 구매",
+  "concertSetList": "콘서트 세트리스트",
+  "concertSetListButton": "세트리스트",
+  "concertAddToCalendar": "캘린더에 추가",
+  "concertOpenMaps": "지도 열기",
+  "concertDetailsUnavailable": "콘서트 세부 정보를 현재 사용할 수 없습니다",
+  "concertCalendarUnavailable": "캘린더를 열 수 없습니다",
+  "nowPlayingAudioOutputUnavailable": "오디오 출력 설정을 열 수 없습니다",
   "@nowPlayingUpNext": {
     "description": "Title for the playback queue sheet"
   },
@@ -6354,6 +6546,18 @@
     "description": "Tab label for the lyrics view"
   },
   "nowPlayingNoLyrics": "이 파일에는 가사가 없음",
+  "nowPlayingInstrumental": "연주곡",
+  "@nowPlayingInstrumental": {
+    "description": "Accessibility label for the three-dot countdown during an instrumental break before lyrics resume"
+  },
+  "nowPlayingLyricsLanguageOptions": "가시 언어 옵션",
+  "@nowPlayingLyricsLanguageOptions": {
+    "description": "Tooltip for the player menu that shows or hides existing lyric pronunciation and translation"
+  },
+  "nowPlayingHidePronunciation": "발음 숨기기",
+  "nowPlayingShowPronunciation": "발음 보기",
+  "nowPlayingHideTranslation": "번역 숨기기",
+  "nowPlayingShowTranslation": "번역 보기",
   "@nowPlayingNoLyrics": {
     "description": "Empty state when the playing file has no embedded lyrics"
   },
@@ -6475,7 +6679,7 @@
   "@snackbarAddedToQueueGeneric": {
     "description": "Snackbar when a track is added to the playback queue without naming it"
   },
-  "selectionDeletePlaylistsCount": "{count} {count, plural, =1{재생목록} other{재생목록}} 삭제",
+  "selectionDeletePlaylistsCount": "{count} 개의 {count, plural, =1{재생목록} other{재생목록}} 삭제",
   "@selectionDeletePlaylistsCount": {
     "description": "Button label for deleting multiple selected playlists",
     "placeholders": {
@@ -6560,7 +6764,7 @@
   "@trackAddToQueue": {
     "description": "Menu action to add a track to the playback queue"
   },
-  "snackbarExtensionInstalledEnable": "''{extensionName}''이 설치됨. '설정 > 확장 기능'에서 활성화하세요",
+  "snackbarExtensionInstalledEnable": "'{extensionName}'이 설치됨. '설정 > 확장 기능'에서 활성화하세요",
   "@snackbarExtensionInstalledEnable": {
     "description": "Snackbar after installing an extension from the repo tab",
     "placeholders": {
@@ -6569,7 +6773,7 @@
       }
     }
   },
-  "snackbarExtensionUpdatedVersion": "''{extensionName}''이 v{version}으로 업데이트됨",
+  "snackbarExtensionUpdatedVersion": "'{extensionName}'이 v{version}으로 업데이트됨",
   "@snackbarExtensionUpdatedVersion": {
     "description": "Snackbar after updating an extension from the repo tab",
     "placeholders": {
@@ -6728,7 +6932,7 @@
   "@settingsSearchHint": {
     "description": "Placeholder of the search field on the Settings tab"
   },
-  "settingsSearchNoResults": "\"{query}\"과 일치하는 설정이 없음",
+  "settingsSearchNoResults": "'{query}'과 일치하는 설정이 없음",
   "@settingsSearchNoResults": {
     "description": "Shown when a Settings search returns nothing",
     "placeholders": {
@@ -6737,15 +6941,15 @@
       }
     }
   },
-  "settingsGroupInterface": "확장 기능 & 디자인",
+  "settingsGroupInterface": "확장 기능 및 디자인",
   "@settingsGroupInterface": {
     "description": "Settings group covering look and feel"
   },
-  "settingsGroupContent": "콘텐츠 & 메타데이터",
+  "settingsGroupContent": "콘텐츠 및 메타데이터",
   "@settingsGroupContent": {
     "description": "Settings group covering the library, metadata and lyrics"
   },
-  "settingsGroupDownloads": "다운로드 & 파일",
+  "settingsGroupDownloads": "다운로드 및 파일",
   "@settingsGroupDownloads": {
     "description": "Settings group covering download behaviour and storage"
   },
@@ -6753,13 +6957,17 @@
   "@settingsGroupSystem": {
     "description": "Settings group covering app-level data, cache and logs"
   },
-  "settingsGroupHelp": "정보 & 후원",
+  "settingsGroupHelp": "정보 및 후원",
   "@settingsGroupHelp": {
     "description": "Settings group covering the about page and donations"
   },
   "libraryFilterMetadataMissingLyrics": "가사 누락",
   "@libraryFilterMetadataMissingLyrics": {
     "description": "Filter option for tracks without embedded or sidecar lyrics"
+  },
+  "libraryFilterMetadataMissingReplayGain": "리플레이게인 누락",
+  "@libraryFilterMetadataMissingReplayGain": {
+    "description": "Filter option for scanned tracks without ReplayGain gain tags"
   },
   "trackOptionCopyTrackName": "트랙 제목 복사",
   "@trackOptionCopyTrackName": {
@@ -6806,8 +7014,11 @@
     "description": "Selected state of the compact favorite action"
   },
   "autoMixDescription": "곡을 비트에 맞춰 믹싱하고, 음정은 유지한 채 템포를 조절합니다. 비트를 맞출 수 없는 경우에는 크로스페이드를 사용합니다",
-  "autoMixOn": "자동믹스 켜짐",
-  "autoMixOff": "자동믹스 꺼짐",
+  "autoMixOn": "AutoMix 켜기",
+  "autoMixOff": "AutoMix 끄기",
+  "autoplayOn": "자동재생 켜기",
+  "autoplayOff": "자동재생 끄기",
+  "autoplayFromLibrary": "라이브러리에서 자동재생",
   "profileTitle": "프로필",
   "profileSetUp": "프로필 설정",
   "profileEdit": "이름 및 사진 편집",
@@ -6818,6 +7029,9 @@
   "profileRemovePhoto": "사진 삭제",
   "profilePhotoError": "20MB보다 작은 유효한 이미지를 선택하세요",
   "profileSaveError": "프로필을 저장할 수 없습니다. 다시 시도하세요",
+  "artistUpcomingConcerts": "예정된 콘서트",
+  "artistAllUpcomingConcerts": "모든 예정된 콘서트",
+  "artistNoUpcomingConcerts": "예정된 콘서트가 없습니다",
   "optionsEmbeddedCoverSizeOriginal": "원본 해상도",
   "@optionsEmbeddedCoverSizeOriginal": {
     "description": "Option that preserves the provider artwork at its original resolution"

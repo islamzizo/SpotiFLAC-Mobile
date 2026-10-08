@@ -1,30 +1,57 @@
 {
+  "settingsPlaybackSubtitle": "Воспроизведение, громкость, автомикс и аудиовыход",
+  "sectionPlayer": "Плеер",
+  "sectionVolumeAndTransitions": "Громкость и переходы",
+  "sectionAudioOutput": "Аудиовыход",
+  "usbBitPerfect": "Hi-Res и Bit-perfect",
+  "usbBitPerfectDescription": "Сохранение исходной точности для поддерживаемых выходов. Ниже выберите прямой USB-выход или эксклюзивный режим AAudio; в противном случае для вывода USB требуется Android 14 или новее. Параметр применяется со следующего трека без учета AutoMix и нормализации. Системная громкость может не регулировать прямой вывод USB.",
+  "usbHardwareVolume": "Аппаратная громкость ЦАПа",
+  "usbVolumeWarningTitle": "Проверьте уровень громкости",
+  "usbVolumeWarning": "Прямое воспроизведение через USB-аудио может быть намного громче стандартного, а аппаратные кнопки громкости могут его не регулировать. Снизьте громкость на вашем ЦАП или усилителе до начала воспроизведения. Когда устройство поддерживается, SpotiFLAC при подключении выставляет на ЦАП уровень не выше −40 дБ, но это не гарантирует безопасную громкость на каждом усилителе или наушниках.",
+  "usbVolumeAccept": "Я понимаю",
+  "usbVolumeUnavailable": "Воспроизведение приостановлено, так как у данного ЦАП не обнаружено проверенного аппаратного управления громкостью. Уменьшите громкость на ЦАП или усилителе, при необходимости включите вывод с фиксированной громкостью и выберите трек заново.",
+  "usbFixedVolume": "Разрешить вывод по USB с фиксированной громкостью",
+  "usbFixedVolumeDescription": "Предназначено для ЦАП, у которых приложение не имеет доступа к управлению громкостью. Не используйте для USB-гарнитур без собственной регулировки громкости. Вступает в силу со следующего трека.",
+  "usbFixedVolumeWarning": "Приложению недоступно снижение громкости на этом аудиовыходе. Звук может быть на максимальной мощности, а регулятор громкости смартфона не поможет. Продолжайте лишь после того, как убавите громкость на ЦАП или внешнем усилителе. Не активируйте для наушников/гарнитур без встроенного регулятора громкости.",
+  "dapExclusive": "DAP Hi-Res (эксклюзив AAudio)",
+  "dapExclusiveDescription": "Используйте Oboe/AAudio с исходной частотой дискретизации и точностью трека для форматов FLAC/WAV PCM. Требуется Android 8.1 или более поздней версии и совместимое оборудование. Эксклюзивный доступ проверен; для недоступных форматов используется обычное воспроизведение. Для DSD требуется драйвер прямого USB-подключения. Применяется со следующего трека.",
+  "dapExclusiveUnavailable": "Эксклюзивный режим AAudio недоступен для данного трека и выбранного аудиовыхода. Применяется стандартное воспроизведение. При использовании USB-ЦАП попробуйте задействовать прямой USB-драйвер.",
+  "usbDirect": "Прямой USB драйвер",
+  "usbDirectDescription": "Использовать эксклюзивный вывод звука по USB для FLAC/WAV, DSF/DFF и WavPack DSD с разрешением Android USB. Для нативного DSD требуется распознанный совместимый ЦАП. Остальные форматы PCM воспроизводятся стандартным способом. Применяется со следующего трека.",
+  "usbDsdOverPcm": "DSD через PCM (DoP)",
+  "usbDsdOverPcmDescription": "Включайте только в том случае, если ваш ЦАП явно поддерживает DoP. Передает DSF/DFF и WavPack DSD внутри контейнера PCM, когда нативный DSD недоступен. Несовместимое устройство может воспроизводить шум; оставляйте выключенным для обычных USB-гарнитур.",
+  "usbDsdUnsupported": "Этот формат DSD или подключенный ЦАП не поддерживается. Воспроизведение остановлено.",
+  "usbPermissionDenied": "Разрешение на USB не получено. Используется обычное воспроизведение.",
+  "usbBitPerfectPending": "Ожидание следующего трека и совместимого USB-выхода.",
+  "usbBitPerfectNoDevice": "USB ЦАП не подключен. Используется обычный аудиовыход.",
+  "usbBitPerfectFallback": "Это устройство или аудиоформат не поддерживает вывод bit-perfect. Используется обычное воспроизведение.",
+  "usbBitPerfectRouteChanged": "Маршрут USB-аудио изменился. Воспроизведение приостановлено; выберите трек для повторного подключения.",
   "upgradeIntroWelcome": "Добро пожаловать в SpotiFLAC-Mobile 5.0",
   "upgradeIntroThemeTitle": "Создайте свой\nсобственный стиль.",
   "upgradeIntroThemeBody": "Выберите внешний вид. Изменения применятся сразу, и вы можете потом изменить его позже в настройках.",
   "upgradeIntroThemeMaterialBody": "Привычный интерфейс с элементами Material и вашим акцентным цветом.",
   "upgradeIntroThemeMornyeBody": "Эффект стекла в навигации, обновленная медиатека и плеер с эффектом погружения.",
   "upgradeIntroRustTitle": "Новый движок построенный на Rust.",
-  "upgradeIntroRustBody": "В 5.0 бэкенд приложения переехал из Go to Rust. Это движок, работающий за экранами, которые вы используете каждый день.",
-  "upgradeIntroRustEngineTitle": "Работа за сценой",
-  "upgradeIntroRustEngineBody": "Rust обеспечивает обработку загрузок, аудиометаданных, сканирование библиотек и выполнение расширений на Android и iOS.",
+  "upgradeIntroRustBody": "В 5.0 бэкенд приложения переехал из Go to Rust. Это движок, работающий за экраном, который вы используете каждый день.",
+  "upgradeIntroRustEngineTitle": "Работа за кулисами",
+  "upgradeIntroRustEngineBody": "Rust обеспечивает обработку загрузок, аудиометаданных, сканирование медиатеки и выполнение расширений на Android и iOS.",
   "upgradeIntroRustMemoryTitle": "Больше осторожности с памятью",
   "upgradeIntroRustMemoryBody": "Повторное использование буферов и сокращение количества копий позволяют уменьшить количество временных выделений памяти при обработке графических объектов и данных расширений.",
-  "upgradeIntroRustKeepTitle": "Keep your music",
+  "upgradeIntroRustKeepTitle": "Вся ваша музыка останется с вами",
   "upgradeIntroRustKeepBody": "Скачивать медиатеку заново не придётся. Ваша музыка и настройки на месте, повторная настройка не нужна.",
   "upgradeIntroWelcomeBody": "Быстро расскажем, что изменилось и где это искать.",
   "upgradeIntroMornyeBody": "Новый облик плеера, экрана текстов песен и навигации.",
   "upgradeIntroLibrarySummary": "Просматривайте свою музыку по плейлистам, исполнителям или альбомам.",
   "upgradeIntroRepoSummary": "Выбирайте источники музыки и провайдеров с помощью расширений.",
   "upgradeIntroLibraryTitle": "Познакомьтесь со\nсвоей медиатекой.",
-  "upgradeIntroLibraryBody": "In Mornye, browse by category or find your albums in Recently Added.",
+  "upgradeIntroLibraryBody": "В Mornye вы можете просматривать треки по категориям или находить свои альбомы в разделе \"Недавно добавленные\".",
   "upgradeIntroDownloadsBody": "Управляйте загрузками в правом верхнем углу. Готовая музыка переносится в «Недавно добавленные».",
   "upgradeIntroSearchBody": "Здесь можно искать сохраненную музыку. На отдельной вкладке «Поиск» осуществляется поиск по вашим расширениям.",
   "upgradeIntroPlayerTitle": "Настройте\nсвой плеер.",
   "upgradeIntroPlayerBody": "Вы можете в любой момент изменить тему и настройки воспроизведения. Вот где их найти.",
-  "upgradeIntroAppearanceBody": "Change themes in Settings → Appearance. In Mornye, scroll down for compact navigation; scroll up to expand it.",
+  "upgradeIntroAppearanceBody": "Изменить тему можно в меню «Настройки» → «Внешний вид». В Mornye прокрутите вниз для компактного вида навигации или вверх, чтобы развернуть её.",
   "upgradeIntroAutoMixBody": "Синхронизировать темп и ритм между треками. Включить эту функцию можно в разделе «Настройки» → «Локальная медиатека» → «Воспроизведение». По умолчанию эта функция отключена.",
-  "upgradeIntroSettingsBody": "In Mornye, tap your profile on Home to open Settings and edit your name and photo.",
+  "upgradeIntroSettingsBody": "В Mornye нажмите на свой профиль на главной странице для открытия настроек и изменения вашего имени и фото.",
   "upgradeIntroSkip": "Пропустить",
   "upgradeIntroContinue": "Далее",
   "upgradeIntroDone": "Начать слушать",
@@ -36,6 +63,32 @@
     "description": "System volume control label in the Mornye player"
   },
   "appearanceStyle": "Стиль приложения",
+  "appearanceAccentRed": "Красный (по умолчанию)",
+  "appearanceAccentOrange": "Оранжевый",
+  "appearanceAccentGreen": "Зелёный",
+  "appearanceAccentTeal": "Морской",
+  "appearanceAccentBlue": "Синий",
+  "appearanceAccentPurple": "Фиолетовый",
+  "appearanceAccentPink": "Розовый",
+  "appearanceGlassClarity": "Glass clarity",
+  "appearanceGlassClaritySubtitle": "Adjust transparency in Mornye menus and navigation. Text contrast is preserved.",
+  "appearanceGlassTinted": "Tinted",
+  "appearanceGlassClear": "Clear",
+  "appearanceGlassClarityBlurOff": "Glass is opaque on this device. Turn on “{setting}” to adjust clarity.",
+  "@appearanceGlassClarityBlurOff": {
+    "description": "Shown under the disabled glass clarity slider when the device renders Mornye glass without blur. The placeholder is the name of the force-blur toggle.",
+    "placeholders": {
+      "setting": {
+        "type": "String"
+      }
+    }
+  },
+  "appearanceGlassClarityHighContrast": "Glass stays opaque while the system’s high contrast setting is on.",
+  "@appearanceGlassClarityHighContrast": {
+    "description": "Shown under the disabled glass clarity slider while the OS high contrast accessibility setting is on"
+  },
+  "appearanceUseSystemFont": "Использовать системный шрифт",
+  "appearanceUseSystemFontSubtitle": "Использовать системный шрифт вашего устройства для текста приложения.",
   "@appearanceStyle": {
     "description": "Appearance section for choosing the app visual style"
   },
@@ -255,6 +308,38 @@
   "@trackReplayGainFailed": {
     "description": "Snackbar message when ReplayGain scan/write fails"
   },
+  "trackRemoveReplayGain": "Удалить ReplayGain",
+  "trackRemoveReplayGainSuccess": "Теги ReplayGain удалены",
+  "trackRemoveReplayGainFailed": "Не удалось удалить теги ReplayGain",
+  "replayGainRemoving": "Удаление ReplayGain...",
+  "replayGainRemoveConfirmMessage": "Удалить теги ReplayGain трека и альбома для {count, plural, one {{count} трека} other {{count} треков}}? Аудио, обложки и другие метаданные будут сохранены.",
+  "@replayGainRemoveConfirmMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "selectionRemoveReplayGainCount": "Удалить RG ({count})",
+  "@selectionRemoveReplayGainCount": {
+    "description": "Compact selection action label. RG abbreviates ReplayGain; keep this short for a two-column toolbar.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "replayGainRemoveBatchSuccess": "ReplayGain удален из {success} из {total, plural, one {{total} трека} few {{total} треков} many {{total} треков} other {{total} треков}}",
+  "@replayGainRemoveBatchSuccess": {
+    "placeholders": {
+      "success": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "selectionReplayGainCount": "ReplayGain ({count})",
   "@selectionReplayGainCount": {
     "description": "Batch selection action button label for ReplayGain",
@@ -302,11 +387,11 @@
   "@optionsArtistTagModeDescription": {
     "description": "Bottom-sheet description for artist tag mode setting"
   },
-  "optionsArtistTagModeJoined": "Single joined value",
+  "optionsArtistTagModeJoined": "Объединять в одну строку",
   "@optionsArtistTagModeJoined": {
     "description": "Artist tag mode option that joins multiple artists into one value"
   },
-  "optionsArtistTagModeJoinedSubtitle": "Write one ARTIST value like \"Artist A, Artist B\" for maximum player compatibility.",
+  "optionsArtistTagModeJoinedSubtitle": "Записывать исполнителей через запятую для максимальной совместимости с плеерами.",
   "@optionsArtistTagModeJoinedSubtitle": {
     "description": "Subtitle for joined artist tag mode"
   },
@@ -314,11 +399,19 @@
   "@optionsArtistTagModeSplitVorbis": {
     "description": "Artist tag mode option that writes repeated ARTIST tags for Vorbis formats"
   },
-  "optionsArtistTagModeSplitVorbisSubtitle": "Write one artist tag per artist for FLAC and Opus; MP3 and M4A stay joined.",
+  "optionsArtistTagModeSplitVorbisSubtitle": "Один тег на исполнителя для FLAC/Opus; Для MP3/M4A — один общий.",
   "@optionsArtistTagModeSplitVorbisSubtitle": {
     "description": "Subtitle for split Vorbis artist tag mode"
   },
-  "optionsExtensionStore": "Репозиторий расширения",
+  "optionsArtistTagModePrimary": "Primary artist only",
+  "@optionsArtistTagModePrimary": {
+    "description": "Artist tag mode option that writes only the first credited artist"
+  },
+  "optionsArtistTagModePrimarySubtitle": "Write only the first artist, like \"Artist A\", to Artist and Album Artist in every format, so players list one artist.",
+  "@optionsArtistTagModePrimarySubtitle": {
+    "description": "Subtitle for the primary-artist tag mode. Applies when downloading and re-enriching; manual edits keep what the user typed."
+  },
+  "optionsExtensionStore": "Репозиторий расширений",
   "@optionsExtensionStore": {
     "description": "Show/hide repo tab"
   },
@@ -391,7 +484,7 @@
   "@extensionsUninstall": {
     "description": "Uninstall extension button"
   },
-  "storeTitle": "Репозиторий расширения",
+  "storeTitle": "Репозиторий расширений",
   "@storeTitle": {
     "description": "Repo screen title"
   },
@@ -507,11 +600,11 @@
   "@aboutSachinsenalDesc": {
     "description": "Credit description for sachinsenal0x64"
   },
-  "aboutUnituneDesc": "Открытый распознаватель музыкальных ссылок от Flaze, используемый для резервного кроссплатформенного сопоставления.",
+  "aboutUnituneDesc": "Открытый распознаватель музыкальных ссылок от Flaze, используемый для резервного кроссплатформенного определения.",
   "@aboutUnituneDesc": {
     "description": "Credit for the UniTune resolver"
   },
-  "aboutMusicBrainzDesc": "Открытая музыкальная база данных, поддерживаемая MetaBrainz и сообществом. Используется для сопоставления перекрестных ссылок.",
+  "aboutMusicBrainzDesc": "Открытая музыкальная база данных, поддерживаемая MetaBrainz и сообществом. Используется для определения перекрестных ссылок.",
   "@aboutMusicBrainzDesc": {
     "description": "Credit for the MusicBrainz database"
   },
@@ -519,7 +612,7 @@
   "@aboutSquiglyDesc": {
     "description": "Credit for the Squigly resolver"
   },
-  "aboutAppDescription": "Ищите метаданных музыки, управляйте расширениями и организуйте свою библиотеку.",
+  "aboutAppDescription": "Поиск метаданных, управление расширениями и организация медиатеки.",
   "@aboutAppDescription": {
     "description": "App description in header card"
   },
@@ -838,7 +931,7 @@
   "@dialogImportPlaylistTitle": {
     "description": "Dialog title - import CSV playlist"
   },
-  "dialogImportPlaylistMessage": "Found {count} tracks in the playlist file. Add them to download queue?",
+  "dialogImportPlaylistMessage": "В файле плейлиста найдено {count, plural, one {{count} трек} few {{count} трека} many {{count} треков} other {{count} треков}}. Добавить их в очередь загрузки?",
   "csvImportTracks": "{count} трек(-ов) из CSV",
   "@csvImportTracks": {
     "description": "Label shown in quality picker for CSV import",
@@ -852,7 +945,7 @@
   "@collectionExportM3u": {
     "description": "Tooltip on the collection screen action that exports the track list as an M3U8 playlist file"
   },
-  "collectionExportM3uDone": "Exported {exported} of {total} tracks",
+  "collectionExportM3uDone": "Экспортировано {exported} из {total, plural, one {{total} трека} few {{total} треков} many {{total} треков} other {{total} треков}}",
   "@collectionExportM3uDone": {
     "description": "Snackbar after M3U8 export; tracks without a local file are not exported",
     "placeholders": {
@@ -900,7 +993,7 @@
   "@duplicatesKeepBest": {
     "description": "Button that deletes all but the highest-quality copy in a duplicate group"
   },
-  "duplicatesKeepBestAll": "Keep best for all",
+  "duplicatesKeepBestAll": "Оставить лучшее качество",
   "@duplicatesKeepBestAll": {
     "description": "Button that keeps the highest-quality copy in every duplicate group and deletes the rest"
   },
@@ -972,7 +1065,7 @@
       }
     }
   },
-  "snackbarAlreadyInLibrary": "\"{trackName}\" уже есть в вашей библиотеке",
+  "snackbarAlreadyInLibrary": "\"{trackName}\" уже есть в вашей медиатеке",
   "@snackbarAlreadyInLibrary": {
     "description": "Snackbar - track already exists in local library",
     "placeholders": {
@@ -1042,7 +1135,7 @@
       }
     }
   },
-  "snackbarExtensionUpdated": "{extensionName} Обновлено.",
+  "snackbarExtensionUpdated": "{extensionName} обновлён.",
   "@snackbarExtensionUpdated": {
     "description": "Snackbar - extension updated successfully",
     "placeholders": {
@@ -1476,6 +1569,8 @@
   "@sectionLyrics": {
     "description": "Settings section header"
   },
+  "lyricsKeepScreenOn": "Keep screen on while viewing lyrics",
+  "lyricsKeepScreenOnSubtitle": "Prevent screen timeout while lyrics are open, including when playback is paused.",
   "lyricsMode": "Режим текстов песен",
   "@lyricsMode": {
     "description": "Setting - how to save lyrics"
@@ -2201,7 +2296,7 @@
   "@appearanceAmoledDarkSubtitle": {
     "description": "Subtitle for AMOLED dark"
   },
-  "appearanceHeroAnimations": "Hero animations",
+  "appearanceHeroAnimations": "Hero-анимации",
   "@appearanceHeroAnimations": {
     "description": "Toggle for shared-element (Hero) transitions"
   },
@@ -2261,7 +2356,7 @@
   "@concurrentDownloadsOne": {
     "description": "Concurrent downloads option - sequential"
   },
-  "concurrentDownloadsCount": "До {count} {count, plural, one {трек} few {трека} many {треков} other{треков}} одновременно",
+  "concurrentDownloadsCount": "До {count} {count, plural, one {трек} other{треков}} одновременно",
   "@concurrentDownloadsCount": {
     "description": "Concurrent downloads option - parallel",
     "placeholders": {
@@ -2575,7 +2670,7 @@
   "@libraryScanSettings": {
     "description": "Section header for scan settings"
   },
-  "libraryEnableLocalLibrary": "Включить локальную библиотеку",
+  "libraryEnableLocalLibrary": "Включить локальную медиатеку",
   "@libraryEnableLocalLibrary": {
     "description": "Toggle to enable library scanning"
   },
@@ -2583,7 +2678,7 @@
   "@libraryEnableLocalLibrarySubtitle": {
     "description": "Subtitle for enable toggle"
   },
-  "libraryFolder": "Папка библиотеки",
+  "libraryFolder": "Папка медиатеки",
   "@libraryFolder": {
     "description": "Folder selection setting"
   },
@@ -2591,7 +2686,7 @@
   "@libraryFolderHint": {
     "description": "Placeholder when no folder selected"
   },
-  "libraryAddFolder": "Добавить папку библиотеки",
+  "libraryAddFolder": "Добавить папку медиатеки",
   "@libraryAddFolder": {
     "description": "Action to add another local library source"
   },
@@ -2630,7 +2725,7 @@
   "@libraryExternalStorage": {
     "description": "Label for a removable or external library source"
   },
-  "libraryRemoveFolder": "Удалить папку библиотеки",
+  "libraryRemoveFolder": "Удалить папку медиатеки",
   "@libraryRemoveFolder": {
     "description": "Action to remove one indexed library source"
   },
@@ -2650,7 +2745,7 @@
   "@libraryAutoScan": {
     "description": "Setting for automatic library scanning"
   },
-  "libraryAutoScanSubtitle": "Автоматически сканировать библиотеку на новые файлы",
+  "libraryAutoScanSubtitle": "Автоматически сканировать медиатеку на новые файлы",
   "@libraryAutoScanSubtitle": {
     "description": "Subtitle for auto scan setting"
   },
@@ -2674,7 +2769,7 @@
   "@libraryActions": {
     "description": "Section header for library actions"
   },
-  "libraryScan": "Сканировать библиотеку",
+  "libraryScan": "Сканировать медиатеку",
   "@libraryScan": {
     "description": "Button to start library scan"
   },
@@ -2694,7 +2789,7 @@
   "@libraryCleanupMissingFilesSubtitle": {
     "description": "Subtitle for cleanup button"
   },
-  "libraryClear": "Очистить библиотеку",
+  "libraryClear": "Очистить медиатеку",
   "@libraryClear": {
     "description": "Button to clear all library entries"
   },
@@ -2702,15 +2797,15 @@
   "@libraryClearSubtitle": {
     "description": "Subtitle for clear button"
   },
-  "libraryClearConfirmTitle": "Очистить библиотеку",
+  "libraryClearConfirmTitle": "Очистить медиатеку",
   "@libraryClearConfirmTitle": {
     "description": "Dialog title for clear confirmation"
   },
-  "libraryClearConfirmMessage": "Это удалит все сканированные треки из вашей библиотеки. Ваши фактические файлы не будут удалены.",
+  "libraryClearConfirmMessage": "Это удалит все сканированные треки из вашей медиатеки. Ваши фактические файлы не будут удалены.",
   "@libraryClearConfirmMessage": {
     "description": "Dialog message for clear confirmation"
   },
-  "libraryAbout": "О локальной библиотеке",
+  "libraryAbout": "О локальной медиатеке",
   "@libraryAbout": {
     "description": "Section header for about info"
   },
@@ -2757,6 +2852,10 @@
   "@libraryScanFinalizing": {
     "description": "Status shown after file scanning finishes but library persistence is still running"
   },
+  "libraryScanPaused": "Scan paused",
+  "@libraryScanPaused": {
+    "description": "Status shown while a library scan is paused by the user"
+  },
   "libraryScanProgress": "{progress}% из {total} файлов",
   "@libraryScanProgress": {
     "description": "Scan progress display",
@@ -2769,11 +2868,11 @@
       }
     }
   },
-  "libraryInLibrary": "В библиотеке",
+  "libraryInLibrary": "В медиатеке",
   "@libraryInLibrary": {
     "description": "Badge shown on tracks that exist in local library"
   },
-  "libraryRemovedMissingFiles": "Удалено {count} {count, plural, one{отсутствующий файл} few{трека} many{отсутствующих файлов} other{отсутствующих файлов}} в библиотеке",
+  "libraryRemovedMissingFiles": "Удалено {count} {count, plural, one{отсутствующий файл} few{трека} many{отсутствующих файлов} other{отсутствующих файлов}} в медиатеке",
   "@libraryRemovedMissingFiles": {
     "description": "Snackbar after cleanup",
     "placeholders": {
@@ -2790,7 +2889,7 @@
   "@libraryStorageAccessRequired": {
     "description": "Dialog title for storage permission"
   },
-  "libraryStorageAccessMessage": "SpotiFLAC требуется доступ к хранилищу для сканирования вашей библиотеки музыки. Пожалуйста, предоставьте разрешение в настройках.",
+  "libraryStorageAccessMessage": "SpotiFLAC требуется доступ к хранилищу для сканирования вашей медиатеки. Пожалуйста, предоставьте разрешение в настройках.",
   "@libraryStorageAccessMessage": {
     "description": "Dialog message for storage permission"
   },
@@ -2932,11 +3031,11 @@
   "@tutorialWelcomeTitle": {
     "description": "Tutorial welcome page title"
   },
-  "tutorialWelcomeDesc": "Learn how to find music with extensions, choose the quality you want, and manage downloads in SpotiFLAC Mobile.",
+  "tutorialWelcomeDesc": "Узнайте, как находить музыку с помощью расширений, выбирать желаемое качество и управлять загрузками в SpotiFLAC Mobile.",
   "@tutorialWelcomeDesc": {
     "description": "Tutorial welcome page description"
   },
-  "tutorialWelcomeTip1": "Search with an installed extension or paste a supported music link",
+  "tutorialWelcomeTip1": "Воспользуйтесь установленным расширением для поиска или вставьте прямую ссылку на музыкальный контент",
   "@tutorialWelcomeTip1": {
     "description": "Tutorial welcome tip 1"
   },
@@ -3110,7 +3209,7 @@
   "@cacheCoverImageDesc": {
     "description": "Description of what cover image cache contains"
   },
-  "cacheLibraryCover": "Кэш обложек библиотеки",
+  "cacheLibraryCover": "Кэш обложек медиатеки",
   "@cacheLibraryCover": {
     "description": "Cache item title for local library cover art images"
   },
@@ -3130,7 +3229,7 @@
   "@cacheAudioAnalysis": {
     "description": "Cache item title for saved audio analysis results"
   },
-  "cacheAudioAnalysisDesc": "Saved spectrograms and analysis results. Will re-analyze on next open.",
+  "cacheAudioAnalysisDesc": "Сохраненные спектрограммы и результаты анализа. Будут проанализированы повторно при следующем открытии.",
   "@cacheAudioAnalysisDesc": {
     "description": "Description of what audio analysis cache contains"
   },
@@ -3150,7 +3249,7 @@
   "@cacheTrackLookupDesc": {
     "description": "Description of what track lookup cache contains"
   },
-  "cacheCleanupUnusedDesc": "Удалить записи из истории загрузок и библиотеки, которые остались без файлов.",
+  "cacheCleanupUnusedDesc": "Удалить записи из истории загрузок и медиатеки, которые остались без файлов.",
   "@cacheCleanupUnusedDesc": {
     "description": "Description of what cleanup unused data does"
   },
@@ -3226,11 +3325,11 @@
   "@cacheCleanupUnused": {
     "description": "Action title for cleaning unused entries"
   },
-  "cacheCleanupUnusedSubtitle": "Удалить историю загрузок, оставшихся без просмотра, и отсутствующие записи в библиотеке",
+  "cacheCleanupUnusedSubtitle": "Удалить историю загрузок, оставшихся без просмотра, и отсутствующие записи в медиатеке",
   "@cacheCleanupUnusedSubtitle": {
     "description": "Subtitle for cleanup unused data action"
   },
-  "cacheCleanupResult": "Очистка завершена: {downloadCount} потерянных загрузок, {libraryCount} отсутствующих записей в библиотеке",
+  "cacheCleanupResult": "Очистка завершена: {downloadCount} потерянных загрузок, {libraryCount} отсутствующих записей в медиатеке",
   "@cacheCleanupResult": {
     "description": "Snackbar after unused data cleanup",
     "placeholders": {
@@ -3302,7 +3401,7 @@
   "@trackReEnrichModeIsrc": {
     "description": "Batch metadata mode that only writes ISRC"
   },
-  "trackReEnrichModeIsrcSubtitle": "Find and add the recording identifier without changing other tags",
+  "trackReEnrichModeIsrcSubtitle": "Найти и добавить идентификатор записи, не меняя другие теги",
   "@trackReEnrichModeIsrcSubtitle": {
     "description": "Explanation for the ISRC-only batch metadata mode"
   },
@@ -3310,7 +3409,7 @@
   "@trackReEnrichModeMissing": {
     "description": "Batch metadata mode that fills only empty tags"
   },
-  "trackReEnrichModeMissingSubtitle": "Keep existing values and fill only fields that are empty",
+  "trackReEnrichModeMissingSubtitle": "Оставить существующие значения и заполнять только пустые поля",
   "@trackReEnrichModeMissingSubtitle": {
     "description": "Explanation for the fill-missing batch metadata mode"
   },
@@ -3318,15 +3417,15 @@
   "@trackReEnrichModeReplace": {
     "description": "Batch metadata mode that replaces selected tag groups"
   },
-  "trackReEnrichModeReplaceSubtitle": "Choose which existing values may be replaced by online metadata",
+  "trackReEnrichModeReplaceSubtitle": "Выберите, какие из существующих значений могут быть заменены онлайн-метаданными",
   "@trackReEnrichModeReplaceSubtitle": {
     "description": "Explanation for the selected-tag batch metadata mode"
   },
-  "trackReEnrichModeManual": "Set common values",
+  "trackReEnrichModeManual": "Установка общих значений",
   "@trackReEnrichModeManual": {
     "description": "Batch metadata mode that applies shared values to every selected track"
   },
-  "trackReEnrichModeManualSubtitle": "Apply the same values to every selected track",
+  "trackReEnrichModeManualSubtitle": "Применить эти же значения ко всем выбранным трекам",
   "@trackReEnrichModeManualSubtitle": {
     "description": "Explanation for the manual shared-value batch metadata mode"
   },
@@ -3334,7 +3433,7 @@
   "@trackReEnrichManualFieldsTitle": {
     "description": "Heading above manual batch metadata inputs"
   },
-  "trackReEnrichManualHint": "Leave a field empty to keep its current value. Track titles, numbers, and ISRCs stay unchanged.",
+  "trackReEnrichManualHint": "Оставьте поле пустым, чтобы сохранить его текущее значение. Названия треков, номера и ISRC-коды останутся без изменений.",
   "@trackReEnrichManualHint": {
     "description": "Safety explanation for manual batch metadata inputs"
   },
@@ -3350,7 +3449,7 @@
   "@trackReEnrichReviewTitle": {
     "description": "Title of the batch metadata review sheet"
   },
-  "trackReEnrichReviewSubtitle": "{changeCount} proposed changes across {trackCount} tracks",
+  "trackReEnrichReviewSubtitle": "Предложено {changeCount, plural, one {{changeCount} изменение} few {{changeCount} изменения} other {{changeCount} изменений}} для {trackCount, plural, one {{trackCount} трека} few {{trackCount} треков} other {{trackCount} треков}}",
   "@trackReEnrichReviewSubtitle": {
     "description": "Summary shown above proposed batch metadata changes",
     "placeholders": {
@@ -3362,7 +3461,7 @@
       }
     }
   },
-  "trackReEnrichNoChanges": "No metadata changes were found for the selected tracks.",
+  "trackReEnrichNoChanges": "Для выбранных треков изменений в метаданных не найдено.",
   "@trackReEnrichNoChanges": {
     "description": "Message when batch metadata preview has no proposed changes"
   },
@@ -3408,15 +3507,15 @@
   "@trackReEnrichSearching": {
     "description": "Snackbar while searching metadata from internet for local items"
   },
-  "trackReEnrichPreparing": "Preparing metadata changes...",
+  "trackReEnrichPreparing": "Подготовка изменений метаданных...",
   "@trackReEnrichPreparing": {
     "description": "Progress message while preparing manual batch metadata changes"
   },
   "trackReEnrichSuccess": "Метаданные успешно обновлены",
   "trackReEnrichMetadataSaved": "Метаданные сохранены",
   "trackReEnrichLyricsUpdated": "Текст обновлён",
-  "trackReEnrichLyricsPreserved": "No new lyrics found; existing lyrics kept",
-  "trackReEnrichLyricsDisabled": "Lyrics not updated: lyric downloading is disabled in Settings",
+  "trackReEnrichLyricsPreserved": "Новые тексты не найдены; старые сохранены",
+  "trackReEnrichLyricsDisabled": "Текст песни не обновлён: загрузка текстов отключена в настройках",
   "@trackReEnrichSuccess": {
     "description": "Snackbar after successful re-enrichment"
   },
@@ -3428,7 +3527,7 @@
   "@queueFlacAction": {
     "description": "Action/button label for queueing FLAC redownloads for local tracks"
   },
-  "queueFlacConfirmMessage": "Search online matches for the selected tracks and queue FLAC downloads.\n\nExisting files will not be modified or deleted.\n\nOnly high-confidence matches are queued automatically.\n\n{count} selected",
+  "queueFlacConfirmMessage": "Поиск сетевых совпадений для выбранных треков и добавление FLAC в очередь скачивания.\n\nСуществующие файлы не изменяются и не удаляются.\n\nВ очередь автоматически попадают только точные совпадения.\n\nВыбрано: {count}",
   "@queueFlacConfirmMessage": {
     "description": "Confirmation dialog body before queueing FLAC redownloads for local tracks",
     "placeholders": {
@@ -3437,11 +3536,11 @@
       }
     }
   },
-  "queueFlacNoReliableMatches": "No reliable online matches found for the selection",
+  "queueFlacNoReliableMatches": "Не найдено надежных онлайн совпадений из выбранных",
   "@queueFlacNoReliableMatches": {
     "description": "Snackbar when no safe FLAC redownload matches were found"
   },
-  "queueFlacQueuedWithSkipped": "Added {addedCount} tracks to queue, skipped {skippedCount}",
+  "queueFlacQueuedWithSkipped": "Добавлено {addedCount, plural, one {{addedCount} трек} few {{addedCount} трека} other {{addedCount} треков}} в очередь, пропущено {skippedCount, plural, one {{skippedCount} трек} few {{skippedCount} трека} other {{skippedCount} треков}}",
   "@queueFlacQueuedWithSkipped": {
     "description": "Snackbar when some selected local tracks were queued for FLAC redownload and some were skipped",
     "placeholders": {
@@ -3482,7 +3581,7 @@
   "@trackConvertKeepOriginal": {
     "description": "Toggle to preserve the source file during conversion"
   },
-  "trackConvertKeepOriginalDescription": "Add the converted file as a separate library entry",
+  "trackConvertKeepOriginalDescription": "Добавить сконвертированный файл как отдельный трек в медиатеку",
   "@trackConvertKeepOriginalDescription": {
     "description": "Description for preserving the source file during conversion"
   },
@@ -3893,7 +3992,6 @@
       }
     }
   },
-  "selectionBatchConvertConfirmMessageLossless": "Конвертировать {count} {count, plural, =1{track} other{tracks}} в {format}? (Без потери качества)\n\nОригинальные файлы будут удалены после конвертации.",
   "@selectionBatchConvertConfirmMessageLossless": {
     "description": "Confirmation dialog message for lossless batch conversion",
     "placeholders": {
@@ -3905,7 +4003,7 @@
       }
     }
   },
-  "selectionBatchConvertConfirmKeepOriginal": "Конвертировать {count} {count, plural, one {трек} few {трека} many {треков} =1{трек} other{треков}} в {format}?\n\nОригинальные файлы будут храниться и преобразовываться как отдельные элементы библиотеки.",
+  "selectionBatchConvertConfirmKeepOriginal": "Конвертировать {count} {count, plural, one {трек} few {трека} many {треков} other{треков}} в {format}?\n\nОригинальные файлы будут храниться и преобразовываться как отдельные элементы медиатеки.",
   "@selectionBatchConvertConfirmKeepOriginal": {
     "description": "Batch conversion confirmation when source files will be preserved",
     "placeholders": {
@@ -3957,7 +4055,7 @@
   "@lyricsProvidersDescription": {
     "description": "Description on the lyrics provider priority page"
   },
-  "lyricsProvidersInfoText": "Extension lyrics providers run before built-in lyrics providers. At least one provider must remain enabled.",
+  "lyricsProvidersInfoText": "Сторонние источники текстов проверяются раньше встроенных. Необходимо оставить включённым хотя бы один источник.",
   "@lyricsProvidersInfoText": {
     "description": "Info tip on lyrics provider priority page"
   },
@@ -3991,7 +4089,7 @@
   "@lyricsProvidersDiscardContent": {
     "description": "Body text of the discard-changes dialog on lyrics provider page"
   },
-  "lyricsProviderLrclibDesc": "Open-source synced lyrics database",
+  "lyricsProviderLrclibDesc": "База данных синхронизированных текстов песен с открытым исходным кодом",
   "@lyricsProviderLrclibDesc": {
     "description": "Description for LRCLIB provider"
   },
@@ -4003,7 +4101,7 @@
   "@lyricsProviderMusixmatchDesc": {
     "description": "Description for Musixmatch provider"
   },
-  "lyricsProviderAppleMusicDesc": "Word-by-word synced lyrics (via proxy)",
+  "lyricsProviderAppleMusicDesc": "Синхронизация текстов по словам (через прокси)",
   "@lyricsProviderAppleMusicDesc": {
     "description": "Description for Apple Music provider"
   },
@@ -4011,7 +4109,7 @@
   "@lyricsProviderQqMusicDesc": {
     "description": "Description for QQ Music provider"
   },
-  "lyricsProviderLyricsPlusDesc": "Word-by-word karaoke lyrics (Apple/Musixmatch/Spotify/QQ, via proxy)",
+  "lyricsProviderLyricsPlusDesc": "Послойные караоке-тексты (Apple/Musixmatch/Spotify/QQ, через прокси)",
   "@lyricsProviderLyricsPlusDesc": {
     "description": "Description for LyricsPlus provider"
   },
@@ -4047,7 +4145,7 @@
   "@settingsBackup": {
     "description": "Settings menu item - backup and restore page"
   },
-  "settingsBackupSubtitle": "Переместить свою библиотеку, историю и настройки на новое устройство",
+  "settingsBackupSubtitle": "Переместить свою медиатеку, историю и настройки на новое устройство",
   "@settingsBackupSubtitle": {
     "description": "Subtitle for backup and restore settings item"
   },
@@ -4059,7 +4157,7 @@
   "@backupExportSectionTitle": {
     "description": "Section title for the export/backup card"
   },
-  "backupExportSectionDescription": "Save your settings, download history, liked tracks, wishlist, favorite artists and playlists into a single file you can keep or move to another phone.",
+  "backupExportSectionDescription": "Сохраните свои настройки, историю загрузок, понравившиеся треки, список желаний, любимых исполнителей и плейлисты в одном файле, который можно сохранить или перенести на другой телефон.",
   "@backupExportSectionDescription": {
     "description": "Description of what a backup contains"
   },
@@ -4071,7 +4169,7 @@
   "@backupImportSectionTitle": {
     "description": "Section title for the import/restore card"
   },
-  "backupImportSectionDescription": "Выберите файл резервной копии для восстановления данных. Это заменит текущие настройки, историю и библиотеку на этом устройстве.",
+  "backupImportSectionDescription": "Выберите файл резервной копии для восстановления данных. Это заменит текущие настройки, историю и медиатеку на этом устройстве.",
   "@backupImportSectionDescription": {
     "description": "Description for the restore action"
   },
@@ -4091,7 +4189,7 @@
   "@backupRestoreConfirmTitle": {
     "description": "Confirmation dialog title before restoring a backup"
   },
-  "backupRestoreConfirmMessage": "This will replace your current settings, download history, liked tracks, wishlist and playlists with the contents of the backup. This cannot be undone.",
+  "backupRestoreConfirmMessage": "Ваши текущие настройки, история загрузок, понравившиеся треки, список желаний и плейлисты будут заменены содержимым резервной копии. Это действие нельзя отменить.",
   "@backupRestoreConfirmMessage": {
     "description": "Confirmation dialog message before restoring a backup"
   },
@@ -4121,12 +4219,12 @@
   },
   "backupSettingsOnly": "Только настройки",
   "backupSelectHistory": "История загрузок",
-  "backupSelectCollections": "Коллекции библиотеки",
+  "backupSelectCollections": "Коллекции медиатеки",
   "backupSelectCollectionsDescription": "Любимые треки, список желаний, любимые исполнители, плейлисты и обложки плейлистов.",
   "backupSelectExtensions": "Расширения и их настройки",
   "backupSelectedExportDescription": "Сохранить выбранные категории в файл резервной копии. Аудио файлы не включены.",
   "backupSelectAtLeastOne": "Выберите хотя бы одну категорию для создания резервной копии.",
-  "backupSelectedRestoreMessage": "Only the categories listed below will be restored. Categories not included in this backup will stay unchanged. Restoring can replace existing data and cannot be undone.",
+  "backupSelectedRestoreMessage": "Будут восстановлены только перечисленные ниже категории. Категории, не вошедшие в эту резервную копию, останутся без изменений. Восстановление может перезаписать существующие данные, это действие нельзя отменить.",
   "backupContentsSettings": "Настройки приложения",
   "@backupContentsSettings": {
     "description": "Backup contents row label for settings"
@@ -4185,11 +4283,11 @@
       }
     }
   },
-  "backupIncludeSecrets": "Include extension credentials",
+  "backupIncludeSecrets": "Включать учётные данные расширений",
   "@backupIncludeSecrets": {
     "description": "Toggle to include secret extension settings (tokens, API keys) in the backup"
   },
-  "backupIncludeSecretsDescription": "Tokens and API keys from extensions will be saved into the backup file. Keep the file private. When off, you re-enter them after restoring.",
+  "backupIncludeSecretsDescription": "Токены и API-ключи из расширений будут сохранены в файл резервной копии. Храните этот файл в конфиденциальном месте. Если функция отключена, вам придётся ввести их заново после восстановления.",
   "@backupIncludeSecretsDescription": {
     "description": "Explanation for the include-credentials toggle"
   },
@@ -4202,7 +4300,7 @@
       }
     }
   },
-  "tooltipLoveAll": "Love All",
+  "tooltipLoveAll": "Лайкнуть всё",
   "@tooltipLoveAll": {
     "description": "Tooltip for the Love All button on album/playlist screens"
   },
@@ -4210,7 +4308,7 @@
   "@tooltipAddToPlaylist": {
     "description": "Tooltip for the Add to Playlist button"
   },
-  "snackbarRemovedTracksFromLoved": "Removed {count} tracks from Loved",
+  "snackbarRemovedTracksFromLoved": "Удалено {count, plural, one {{count} трек} few {{count} трека} other {{count} треков}} из Любимых",
   "@snackbarRemovedTracksFromLoved": {
     "description": "Snackbar after removing multiple tracks from Loved folder",
     "placeholders": {
@@ -4219,7 +4317,7 @@
       }
     }
   },
-  "snackbarAddedTracksToLoved": "Added {count} tracks to Loved",
+  "snackbarAddedTracksToLoved": "Добавлено {count, plural, one {{count} трек} few {{count} трека} other {{count} треков}} в Любимые",
   "@snackbarAddedTracksToLoved": {
     "description": "Snackbar after adding multiple tracks to Loved folder",
     "placeholders": {
@@ -4232,7 +4330,7 @@
   "@dialogDownloadAllTitle": {
     "description": "Dialog title for bulk download confirmation"
   },
-  "dialogDownloadAllMessage": "Download {count} tracks?",
+  "dialogDownloadAllMessage": "Загрузить {count, plural, one {{count} трек} few {{count} трека} other {{count} треков}}?",
   "@dialogDownloadAllMessage": {
     "description": "Body of the Download All confirmation dialog",
     "placeholders": {
@@ -4278,27 +4376,27 @@
       }
     }
   },
-  "snackbarNoActionDefined": "No action defined for this button",
+  "snackbarNoActionDefined": "Для этой кнопки не задано действие",
   "@snackbarNoActionDefined": {
     "description": "Snackbar when an extension button has no action configured"
   },
-  "noTracksFoundForAlbum": "No tracks found for this album",
+  "noTracksFoundForAlbum": "Трек-лист для этого альбома не найден",
   "@noTracksFoundForAlbum": {
     "description": "Empty state message when an album has no tracks"
   },
-  "downloadLocationSubtitle": "Choose where to save your downloaded tracks",
+  "downloadLocationSubtitle": "Выберите, где сохранять загруженные треки",
   "@downloadLocationSubtitle": {
     "description": "Subtitle shown in the download location picker sheet"
   },
   "storageAutomaticFolder": "Автоматическая папка",
-  "storageAutomaticDownloadFolder": "Uses Download/SpotiFLAC when writable, otherwise app storage",
+  "storageAutomaticDownloadFolder": "Использует папку «Download/SpotiFLAC», если она доступна для записи, в противном случае — хранилище приложения",
   "storageSafRecommended": "Выбрать папку (Рекомендуется)",
-  "storageDownloadFolderHint": "In the Android folder picker, open Download and select SpotiFLAC. If it does not exist, create it using New folder, then tap Use this folder to grant access.",
+  "storageDownloadFolderHint": "В окне выбора папок Android откройте папку «Загрузки» и выберите SpotiFLAC. Если этой папки нет, создайте её, нажав «Новая папка», а затем нажмите «Использовать эту папку», чтобы предоставить доступ.",
   "storageModeAppFolder": "Папка приложения (рекомендуется)",
   "@storageModeAppFolder": {
     "description": "Storage mode option - app-managed folder"
   },
-  "storageModeAppFolderSubtitle": "Saves to Music/SpotiFLAC by default",
+  "storageModeAppFolderSubtitle": "Сохраняет Music/SpotiFLAC по умолчанию",
   "@storageModeAppFolderSubtitle": {
     "description": "Subtitle for app folder storage mode"
   },
@@ -4310,11 +4408,11 @@
   "@storageModeSafSubtitle": {
     "description": "Subtitle for SAF storage mode"
   },
-  "downloadFolderAccessLostTitle": "Download folder access lost",
+  "downloadFolderAccessLostTitle": "Доступ к папке загрузок потерян",
   "@downloadFolderAccessLostTitle": {
     "description": "Title of the warning banner shown in Files settings when the saved SAF folder grant is no longer valid"
   },
-  "downloadFolderAccessLostSubtitle": "Downloads will fail until you re-select the folder",
+  "downloadFolderAccessLostSubtitle": "Загрузка не будет выполнена, пока вы не выберете папку повторно",
   "@downloadFolderAccessLostSubtitle": {
     "description": "Subtitle of the warning banner shown when the saved SAF folder grant is no longer valid"
   },
@@ -4322,11 +4420,11 @@
   "@downloadFolderReselect": {
     "description": "Button that reopens the folder picker to restore download folder access"
   },
-  "downloadErrorSafPermissionLost": "SAF permission invalid or revoked. Please reconfigure download location in Settings.",
+  "downloadErrorSafPermissionLost": "Разрешения SAF недействительны или аннулированы. Пожалуйста, измените расположение загрузки в настройках.",
   "@downloadErrorSafPermissionLost": {
     "description": "Error shown on downloads that failed because the persisted Android SAF folder grant is no longer valid"
   },
-  "downloadErrorFolderAccessLost": "Download folder access lost. Please re-select your download folder in Settings.",
+  "downloadErrorFolderAccessLost": "Доступ к папке потерян. Пожалуйста, выберите папку для скачивания заново в Настройках.",
   "@downloadErrorFolderAccessLost": {
     "description": "Error shown on downloads that failed because the iOS download folder bookmark could not be opened"
   },
@@ -4338,11 +4436,11 @@
   "@downloadFilenameInsertTag": {
     "description": "Label above filename tag chips"
   },
-  "downloadSeparateSinglesEnabled": "Singles and EPs saved in a separate folder",
+  "downloadSeparateSinglesEnabled": "Синглы и EP будут в отдельной папке",
   "@downloadSeparateSinglesEnabled": {
     "description": "Subtitle when separate singles folder is on"
   },
-  "downloadSeparateSinglesDisabled": "Singles and albums saved in the same folder",
+  "downloadSeparateSinglesDisabled": "Синглы и альбомы будут в одной папке",
   "@downloadSeparateSinglesDisabled": {
     "description": "Subtitle when separate singles folder is off"
   },
@@ -4350,19 +4448,19 @@
   "@downloadArtistNameFilters": {
     "description": "Setting title for artist folder filter options"
   },
-  "downloadCreatePlaylistSourceFolder": "Playlist Source Folder",
+  "downloadCreatePlaylistSourceFolder": "Папка-источник плейлиста",
   "@downloadCreatePlaylistSourceFolder": {
     "description": "Setting to create a subfolder per playlist source"
   },
-  "downloadCreatePlaylistSourceFolderEnabled": "A subfolder is created for each playlist",
+  "downloadCreatePlaylistSourceFolderEnabled": "Для каждого плейлиста создается подпапка",
   "@downloadCreatePlaylistSourceFolderEnabled": {
     "description": "Subtitle when playlist folder is enabled"
   },
-  "downloadCreatePlaylistSourceFolderDisabled": "All tracks saved directly to download folder",
+  "downloadCreatePlaylistSourceFolderDisabled": "Все треки будут сохранены непосредственно в папку для загрузки",
   "@downloadCreatePlaylistSourceFolderDisabled": {
     "description": "Subtitle when playlist folder is disabled"
   },
-  "downloadCreatePlaylistSourceFolderRedundant": "Handled by folder organization setting",
+  "downloadCreatePlaylistSourceFolderRedundant": "Обрабатывается настройками организации папок",
   "@downloadCreatePlaylistSourceFolderRedundant": {
     "description": "Subtitle when folder organization is already set to playlist"
   },
@@ -4374,7 +4472,7 @@
   "@downloadNetworkCompatibilityMode": {
     "description": "Setting for legacy TLS/network handling"
   },
-  "downloadNetworkCompatibilityModeEnabled": "Allowing legacy HTTP endpoints; TLS verification remains enabled",
+  "downloadNetworkCompatibilityModeEnabled": "Разрешить устаревшие HTTP-адреса; проверка TLS по-прежнему включена",
   "@downloadNetworkCompatibilityModeEnabled": {
     "description": "Subtitle when network compatibility mode is on"
   },
@@ -4386,19 +4484,19 @@
   "@downloadAllowLocalNetwork": {
     "description": "Setting title for allowing requests to private/local network targets"
   },
-  "downloadAllowLocalNetworkEnabled": "Requests to local/private addresses are allowed (for local proxy or custom DNS)",
+  "downloadAllowLocalNetworkEnabled": "Разрешить запросы на локальные или частные адреса (для локального прокси или пользовательского DNS)",
   "@downloadAllowLocalNetworkEnabled": {
     "description": "Subtitle when allow local network access is on"
   },
-  "downloadAllowLocalNetworkDisabled": "Local/private addresses are blocked for security",
+  "downloadAllowLocalNetworkDisabled": "Локальные/приватные адреса заблокированы для безопасности",
   "@downloadAllowLocalNetworkDisabled": {
     "description": "Subtitle when allow local network access is off"
   },
-  "downloadSelectServiceToEnable": "Select a provider with quality options to enable this option",
+  "downloadSelectServiceToEnable": "Выберите провайдера с параметрами качества, чтобы включить эту функцию",
   "@downloadSelectServiceToEnable": {
     "description": "Subtitle when quality picker is disabled due to extension service"
   },
-  "downloadEmbedLyricsDisabled": "Enable metadata embedding first",
+  "downloadEmbedLyricsDisabled": "Сначала включите встраивание метаданных",
   "@downloadEmbedLyricsDisabled": {
     "description": "Subtitle when lyrics embedding is blocked by metadata toggle"
   },
@@ -4406,11 +4504,11 @@
   "@downloadNeteaseIncludeTranslation": {
     "description": "Setting to include translated lyrics from Netease"
   },
-  "downloadNeteaseIncludeTranslationEnabled": "Chinese translation lines included",
+  "downloadNeteaseIncludeTranslationEnabled": "Китайские строки перевода включены",
   "@downloadNeteaseIncludeTranslationEnabled": {
     "description": "Subtitle when Netease translation is on"
   },
-  "downloadNeteaseIncludeTranslationDisabled": "Original lyrics only",
+  "downloadNeteaseIncludeTranslationDisabled": "Только оригинал текста",
   "@downloadNeteaseIncludeTranslationDisabled": {
     "description": "Subtitle when Netease translation is off"
   },
@@ -4430,23 +4528,23 @@
   "@downloadAppleQqMultiPerson": {
     "description": "Setting for word-by-word multi-person lyrics from Apple Music and QQ Music"
   },
-  "downloadAppleQqMultiPersonEnabled": "Speaker labels included for duets and group tracks",
+  "downloadAppleQqMultiPersonEnabled": "Имена исполнителей включены для дуэтов и групповых треков",
   "@downloadAppleQqMultiPersonEnabled": {
     "description": "Subtitle when multi-person lyrics is on"
   },
-  "downloadAppleQqMultiPersonDisabled": "Standard lyrics without speaker labels",
+  "downloadAppleQqMultiPersonDisabled": "Стандартные тексты песен без имён исполнителей",
   "@downloadAppleQqMultiPersonDisabled": {
     "description": "Subtitle when multi-person lyrics is off"
   },
-  "downloadAppleElrcWordSync": "Apple Music eLRC Word Sync",
+  "downloadAppleElrcWordSync": "Apple Music eLRC синхронизация слов",
   "@downloadAppleElrcWordSync": {
     "description": "Setting for preserving Apple Music word-by-word eLRC timestamps"
   },
-  "downloadAppleElrcWordSyncEnabled": "Raw word-by-word timestamps preserved",
+  "downloadAppleElrcWordSyncEnabled": "Сохраняются исходные метки времени для каждого слова",
   "@downloadAppleElrcWordSyncEnabled": {
     "description": "Subtitle when Apple Music eLRC word sync is enabled"
   },
-  "downloadAppleElrcWordSyncDisabled": "Safer line-by-line Apple Music lyrics",
+  "downloadAppleElrcWordSyncDisabled": "Более стабильные построчные тексты Apple Music",
   "@downloadAppleElrcWordSyncDisabled": {
     "description": "Subtitle when Apple Music eLRC word sync is disabled"
   },
@@ -4458,19 +4556,19 @@
   "@downloadMusixmatchLanguageAuto": {
     "description": "Subtitle when no language is set"
   },
-  "downloadFilterContributing": "Filter Contributing Artists",
+  "downloadFilterContributing": "Фильтр приглашённых исполнителей",
   "@downloadFilterContributing": {
     "description": "Setting to strip contributing artists from Album Artist folder name"
   },
-  "downloadFilterContributingEnabled": "Contributing artists removed from Album Artist folder name",
+  "downloadFilterContributingEnabled": "Приглашённые исполнители исключаются из названия папки исполнителя альбома",
   "@downloadFilterContributingEnabled": {
     "description": "Subtitle when contributing artist filter is on"
   },
-  "downloadFilterContributingDisabled": "Full Album Artist string used",
+  "downloadFilterContributingDisabled": "Используется полное имя исполнителя альбома",
   "@downloadFilterContributingDisabled": {
     "description": "Subtitle when contributing artist filter is off"
   },
-  "downloadProvidersNoneEnabled": "No providers enabled",
+  "downloadProvidersNoneEnabled": "Нет включенных провайдеров",
   "@downloadProvidersNoneEnabled": {
     "description": "Shown when no lyrics providers are active"
   },
@@ -4478,11 +4576,11 @@
   "@downloadMusixmatchLanguageCode": {
     "description": "Label for Musixmatch language input field"
   },
-  "downloadMusixmatchLanguageHint": "e.g. en, de, ja",
+  "downloadMusixmatchLanguageHint": "например: en, de, ja",
   "@downloadMusixmatchLanguageHint": {
     "description": "Placeholder for Musixmatch language input"
   },
-  "downloadMusixmatchLanguageDesc": "Enter a BCP-47 language code (e.g. en, de, ja) to request translated lyrics from Musixmatch.",
+  "downloadMusixmatchLanguageDesc": "Введите код языка BCP-47 (например, ru, de, ja) для запроса текстов песен с Musixmatch.",
   "@downloadMusixmatchLanguageDesc": {
     "description": "Description in Musixmatch language picker"
   },
@@ -4498,7 +4596,7 @@
   "@downloadNetworkWifiOnlySubtitle": {
     "description": "Subtitle for WiFi-only option in picker"
   },
-  "downloadSongLinkRegionDesc": "Region used when resolving track links via SongLink. Choose the country where your streaming services are available.",
+  "downloadSongLinkRegionDesc": "Регион, используемый при разрешении ссылок на треки через SongLink. Выберите страну, в которой доступны ваши стриминговые сервисы.",
   "@downloadSongLinkRegionDesc": {
     "description": "Description in SongLink region picker"
   },
@@ -4531,11 +4629,11 @@
       }
     }
   },
-  "bulkDownloadSelectPlaylists": "Select playlists to download",
+  "bulkDownloadSelectPlaylists": "Выберите плейлисты для загрузки",
   "@bulkDownloadSelectPlaylists": {
     "description": "Button label when no playlists are selected for download"
   },
-  "snackbarSelectedPlaylistsEmpty": "Selected playlists have no tracks",
+  "snackbarSelectedPlaylistsEmpty": "У выбранных плейлистов нет треков",
   "@snackbarSelectedPlaylistsEmpty": {
     "description": "Snackbar when selected playlists contain no tracks"
   },
@@ -4568,7 +4666,7 @@
   "@editMetadataAutoFillFind": {
     "description": "Button label for finding an online metadata candidate"
   },
-  "editMetadataAutoFillPreview": "Data from {source}",
+  "editMetadataAutoFillPreview": "Данные из {source}",
   "@editMetadataAutoFillPreview": {
     "description": "Title for the online metadata preview",
     "placeholders": {
@@ -4577,11 +4675,11 @@
       }
     }
   },
-  "editMetadataAutoFillCoverAvailable": "Cover artwork available",
+  "editMetadataAutoFillCoverAvailable": "Обложка доступна",
   "@editMetadataAutoFillCoverAvailable": {
     "description": "Preview value when the selected metadata source provides cover artwork"
   },
-  "editMetadataAutoFillApply": "Apply selected data",
+  "editMetadataAutoFillApply": "Применить выбранные данные",
   "@editMetadataAutoFillApply": {
     "description": "Button label for applying the previewed metadata"
   },
@@ -4605,7 +4703,7 @@
   "@editMetadataAutoFillSearching": {
     "description": "Snackbar shown while searching for online metadata"
   },
-  "editMetadataAutoFillNoResults": "No matching metadata found online",
+  "editMetadataAutoFillNoResults": "Подходящие метаданные не найдены",
   "@editMetadataAutoFillNoResults": {
     "description": "Snackbar when online metadata search returns no results"
   },
@@ -4618,7 +4716,7 @@
       }
     }
   },
-  "editMetadataAutoFillNoneSelected": "Select at least one field to auto-fill",
+  "editMetadataAutoFillNoneSelected": "Выберите хотя бы одно поле для автозаполнения",
   "@editMetadataAutoFillNoneSelected": {
     "description": "Snackbar when user taps Fetch without selecting any fields"
   },
@@ -4709,19 +4807,19 @@
       }
     }
   },
-  "queueEmptyAlbums": "No album downloads",
+  "queueEmptyAlbums": "Нет скачанных альбомов",
   "@queueEmptyAlbums": {
     "description": "Empty state title when no album downloads exist"
   },
-  "queueEmptyAlbumsSubtitle": "Download multiple tracks from an album to see them here",
+  "queueEmptyAlbumsSubtitle": "Скачайте треки из альбома, чтобы увидеть их здесь",
   "@queueEmptyAlbumsSubtitle": {
     "description": "Empty state subtitle for album downloads"
   },
-  "queueEmptySingles": "No single downloads",
+  "queueEmptySingles": "Нет скачанных синглов",
   "@queueEmptySingles": {
     "description": "Empty state title when no single track downloads exist"
   },
-  "queueEmptySinglesSubtitle": "Single track downloads will appear here",
+  "queueEmptySinglesSubtitle": "Здесь будут отображаться загрузки отдельных треков",
   "@queueEmptySinglesSubtitle": {
     "description": "Empty state subtitle for single track downloads"
   },
@@ -4734,7 +4832,7 @@
       }
     }
   },
-  "queueEmptyPlaylistsSubtitle": "Create a playlist to organize your tracks",
+  "queueEmptyPlaylistsSubtitle": "Создайте плейлист для организации ваших треков",
   "@queueEmptyPlaylistsSubtitle": {
     "description": "Empty state subtitle for the playlists library view"
   },
@@ -4762,7 +4860,7 @@
   "@selectionTapPlaylistsToSelect": {
     "description": "Hint shown in playlist selection mode"
   },
-  "selectionSelectPlaylistsToDelete": "Select playlists to delete",
+  "selectionSelectPlaylistsToDelete": "Выберите плейлисты для удаления",
   "@selectionSelectPlaylistsToDelete": {
     "description": "Hint shown when no playlists are selected for deletion"
   },
@@ -4862,39 +4960,39 @@
   "@audioAnalysisRescan": {
     "description": "Tooltip/label for the button that re-runs the audio analysis, discarding cached results"
   },
-  "downloadRedownloadFakeHiRes": "Re-download fake Hi-Res",
+  "downloadRedownloadFakeHiRes": "Перекачать поддельный Hi-Res",
   "@downloadRedownloadFakeHiRes": {
     "description": "Setting title: automatically replace downloads that measure as fake Hi-Res"
   },
-  "downloadRedownloadFakeHiResSubtitle": "Off by default. Check Hi-Res downloads and replace only when every audio sample is preserved. Keep the original if verification or processing fails",
+  "downloadRedownloadFakeHiResSubtitle": "По умолчанию отключено. Установите флажок «Загрузки в высоком разрешении» и заменяйте файлы только в том случае, если сохранены все аудиосэмплы. Сохраняйте исходный файл, если проверка или обработка завершились неудачно",
   "@downloadRedownloadFakeHiResSubtitle": {
     "description": "Setting subtitle for the fake Hi-Res re-download toggle"
   },
-  "hiResCheckVerdictFakeCertain": "Fake Hi-Res",
+  "hiResCheckVerdictFakeCertain": "Фейковый Hi-Res",
   "@hiResCheckVerdictFakeCertain": {
     "description": "Verdict: an exact fingerprint (padded bits or upsampling pattern) proves the file is not real Hi-Res"
   },
-  "hiResCheckVerdictFakeSuspect": "Possibly a filtered master",
+  "hiResCheckVerdictFakeSuspect": "Возможно отфильтрованный мастеринг",
   "@hiResCheckVerdictFakeSuspect": {
     "description": "Verdict: fails the cutoff test but may be a genuine master low-pass filtered in mastering"
   },
-  "hiResCheckReasonSampleHold": "Every sample is repeated: upsampled by duplication",
+  "hiResCheckReasonSampleHold": "Каждый сэмпл повторяется: повышение частоты дискретизации путем дублирования",
   "@hiResCheckReasonSampleHold": {
     "description": "Reason: sample-and-hold upsampling detected"
   },
-  "hiResCheckReasonInterpolation": "In-between samples are linearly interpolated",
+  "hiResCheckReasonInterpolation": "Промежуточные семплы интерполированы линейно",
   "@hiResCheckReasonInterpolation": {
     "description": "Reason: linear-interpolation upsampling detected"
   },
-  "hiResCheckReasonImaging": "Content above 22 kHz mirrors the audible band",
+  "hiResCheckReasonImaging": "Частоты выше 22 кГц дублируют слышимый диапазон",
   "@hiResCheckReasonImaging": {
     "description": "Reason: spectral imaging from upsampling detected"
   },
-  "hiResCheckMusicContent": "Musical content",
+  "hiResCheckMusicContent": "Музыкальный контент",
   "@hiResCheckMusicContent": {
     "description": "Label for the highest frequency that still moves with the music"
   },
-  "hiResCheckUltrasonicNoise": "Above {cutoff} only steady noise (typical of DSD or analog tape transfers): a {rate} file would hold all the music",
+  "hiResCheckUltrasonicNoise": "Выше {cutoff} слышен только постоянный шум (характерный для DSD или аналоговых записей с ленты): файл с {rate} будет содержать всю музыку",
   "@hiResCheckUltrasonicNoise": {
     "description": "Shown when the ultrasonic content of a Hi-Res file is noise rather than music",
     "placeholders": {
@@ -4906,55 +5004,110 @@
       }
     }
   },
-  "hiResCheckTitle": "Hi-Res Authenticity",
+  "hiResCheckTitle": "Hi-Res проверка",
   "@hiResCheckTitle": {
     "description": "Title of the fake Hi-Res check card"
   },
-  "hiResCheckDescription": "Detect upsampled or bit-padded fake Hi-Res files",
+  "hiResCheckSummary": "Проверяет спектр и глубину активных битов на наличие признаков повышения частоты дискретизации или добавления заполняющих битов.",
+  "@hiResCheckSummary": {
+    "description": "Introductory text for the sampled Hi-Res analysis"
+  },
+  "hiResCheckLimitedBandwidth": "Ограниченный диапазон частот",
+  "@hiResCheckLimitedBandwidth": {
+    "description": "Neutral finding: a limited spectrum alone does not prove upsampling"
+  },
+  "hiResCheckNoEvidence": "Не обнаружено ни апсэмплинга, ни добавления \"заполняющих нулей\"",
+  "@hiResCheckNoEvidence": {
+    "description": "No evidence was detected; this does not certify the master"
+  },
+  "hiResCheckEstimatedCutoff": "Примерная частота среза",
+  "@hiResCheckEstimatedCutoff": {
+    "description": "Estimated upper spectral edge at the analysis threshold"
+  },
+  "hiResCheckActiveBits": "Активные / сохранённые биты",
+  "@hiResCheckActiveBits": {
+    "description": "Active integer bit depth versus the container depth in the sampled segment"
+  },
+  "hiResCheckBandwidthExplanation": "Низкая частота среза может быть результатом мастеринга. Сама по себе она не доказывает апсемплинг.",
+  "@hiResCheckBandwidthExplanation": {
+    "description": "Explains why the limited-bandwidth finding is neutral"
+  },
+  "hiResCheckSampledExplanation": "Основано на {seconds} секундах звука. Этот анализ не может определить изначальный мастеринг.",
+  "@hiResCheckSampledExplanation": {
+    "description": "Limits of the sampled Hi-Res analysis; seconds is a formatted duration",
+    "placeholders": {
+      "seconds": {
+        "type": "String"
+      }
+    }
+  },
+  "hiResCheckImagingEvidence": "Спектр содержит зеркальные полосы, характерные для апсемплинга.",
+  "@hiResCheckImagingEvidence": {
+    "description": "Spectral imaging is suggestive evidence rather than proof"
+  },
+  "hiResCheckRateEvidence": "Крутой срез в районе {cutoff} и измеренный уровень шума свидетельствуют об исходнике с меньшей частотой.",
+  "@hiResCheckRateEvidence": {
+    "description": "Heuristic evidence from both a brickwall and a 16-bit-like noise floor",
+    "placeholders": {
+      "cutoff": {
+        "type": "String"
+      }
+    }
+  },
+  "hiResCheckSteadyEnergy": "Энергия выше {cutoff} в проанализированном сегменте преимущественно стабильна и может являться шумом.",
+  "@hiResCheckSteadyEnergy": {
+    "description": "An observation about ultrasonic energy, not proof that removing it is safe",
+    "placeholders": {
+      "cutoff": {
+        "type": "String"
+      }
+    }
+  },
+  "hiResCheckDescription": "Обнаружение поддельных файлов высокого разрешения с увеличенной частотой дискретизации или с повышением битности",
   "@hiResCheckDescription": {
     "description": "Explains what the Hi-Res authenticity check does"
   },
-  "hiResCheckRun": "Check",
+  "hiResCheckRun": "Проверка",
   "@hiResCheckRun": {
     "description": "Button that starts the Hi-Res authenticity check"
   },
-  "hiResCheckChecking": "Checking Hi-Res authenticity...",
+  "hiResCheckChecking": "Проверка подлинности Hi-Res...",
   "@hiResCheckChecking": {
     "description": "Loading text while the Hi-Res check runs"
   },
-  "hiResCheckVerdictFake": "Likely fake Hi-Res",
+  "hiResCheckVerdictFake": "Вероятно поддельный Hi-Res",
   "@hiResCheckVerdictFake": {
     "description": "Verdict: the file claims Hi-Res but does not measure as it"
   },
-  "hiResCheckVerdictGenuine": "Measures as genuine Hi-Res",
+  "hiResCheckVerdictGenuine": "Оценено как подлинный Hi-Res",
   "@hiResCheckVerdictGenuine": {
     "description": "Verdict: no upsampling or padded bit depth found"
   },
-  "hiResCheckVerdictStandard": "Standard definition, nothing to flag",
+  "hiResCheckVerdictStandard": "Стандартное разрешение, ничего примечательного",
   "@hiResCheckVerdictStandard": {
     "description": "Verdict: neither sample rate nor bit depth claims Hi-Res"
   },
-  "hiResCheckVerdictInconclusive": "Inconclusive: the analyzed segment is too quiet or short",
+  "hiResCheckVerdictInconclusive": "Недостаточно данных: проанализированный сегмент слишком тихий или короткий",
   "@hiResCheckVerdictInconclusive": {
     "description": "Verdict: analysis could not reach a reliable conclusion"
   },
-  "hiResCheckUnsupported": "Only FLAC and WAV files can be checked",
+  "hiResCheckUnsupported": "Только файлы FLAC и WAV могут быть проверены",
   "@hiResCheckUnsupported": {
     "description": "Shown when the file format cannot be decoded by the Hi-Res check"
   },
-  "hiResCheckCutoff": "Content cutoff",
+  "hiResCheckCutoff": "Срез содержимого",
   "@hiResCheckCutoff": {
     "description": "Label for the highest frequency with real content"
   },
-  "hiResCheckBitsInUse": "Bits in use",
+  "hiResCheckBitsInUse": "Используемые биты",
   "@hiResCheckBitsInUse": {
     "description": "Label for effective vs declared bit depth"
   },
-  "hiResCheckDisclaimer": "The spectrum stops early, but nothing proves it was upsampled: it may be a genuine master low-pass filtered in mastering. It is not replaced automatically.",
+  "hiResCheckDisclaimer": "Спектр обрывается рано, но нет никаких доказательств того, что он был подвергнут повышающению дискретизации: возможно, это подлинный мастер, пропущенный через фильтр при мастеринге. Он не заменяется автоматически.",
   "@hiResCheckDisclaimer": {
     "description": "Caveat shown under a fake Hi-Res verdict"
   },
-  "hiResCheckFailed": "Hi-Res check failed: {error}",
+  "hiResCheckFailed": "Hi-Res проверка не удалась: {error}",
   "@hiResCheckFailed": {
     "description": "Error shown when the Hi-Res check fails",
     "placeholders": {
@@ -4963,7 +5116,7 @@
       }
     }
   },
-  "hiResCheckReasonRate": "Declares {sampleRate} but content stops at ~{cutoff}",
+  "hiResCheckReasonRate": "Заявлена частота {sampleRate}, но содержимое обрывается на ~{cutoff}",
   "@hiResCheckReasonRate": {
     "description": "Reason for a fake verdict caused by upsampling",
     "placeholders": {
@@ -4975,7 +5128,7 @@
       }
     }
   },
-  "hiResCheckReasonDepth": "Declares {declared}-bit but only {effective} bits carry data",
+  "hiResCheckReasonDepth": "Формат {declared}-бит, но фактически используется {effective} бит",
   "@hiResCheckReasonDepth": {
     "description": "Reason for a fake verdict caused by padded bit depth",
     "placeholders": {
@@ -4995,7 +5148,7 @@
   "@extensionsHomeFeedProvider": {
     "description": "Extensions page - label for home feed provider selector"
   },
-  "extensionsHomeFeedDescription": "Choose which extension provides the home feed on the main screen",
+  "extensionsHomeFeedDescription": "Выберите расширение, предоставляющее ленту на главном экране",
   "@extensionsHomeFeedDescription": {
     "description": "Extensions page - description for home feed provider picker"
   },
@@ -5003,7 +5156,7 @@
   "@extensionsHomeFeedAuto": {
     "description": "Label for auto-selected search provider"
   },
-  "extensionsHomeFeedAutoSubtitle": "Automatically select the best available",
+  "extensionsHomeFeedAutoSubtitle": "Автоматический выбор лучшего из доступных",
   "@extensionsHomeFeedAutoSubtitle": {
     "description": "Extensions page - subtitle for auto home feed option"
   },
@@ -5011,7 +5164,7 @@
   "@extensionsHomeFeedOff": {
     "description": "Extensions page - home feed provider option: off"
   },
-  "extensionsHomeFeedOffSubtitle": "Do not show the home feed on the main screen",
+  "extensionsHomeFeedOffSubtitle": "Не показывать домашнюю ленту на главном экране",
   "@extensionsHomeFeedOffSubtitle": {
     "description": "Extensions page - subtitle for off home feed option"
   },
@@ -5024,7 +5177,7 @@
       }
     }
   },
-  "extensionsNoHomeFeedExtensions": "No extensions with home feed",
+  "extensionsNoHomeFeedExtensions": "Нет расширений с домашней лентой",
   "@extensionsNoHomeFeedExtensions": {
     "description": "Extensions page - shown when no installed extension has home feed"
   },
@@ -5032,7 +5185,7 @@
   "@cancelDownloadTitle": {
     "description": "Dialog title when confirming cancellation of an active download"
   },
-  "cancelDownloadContent": "This will cancel the active download for \"{trackName}\".",
+  "cancelDownloadContent": "Это отменит активную загрузку для \"{trackName}\".",
   "@cancelDownloadContent": {
     "description": "Dialog body when confirming cancellation of an active download",
     "placeholders": {
@@ -5049,7 +5202,7 @@
   "@queueCancelledTitle": {
     "description": "Dialog title when opening a cancelled queue item"
   },
-  "queueCancelledMessage": "This download was cancelled. Retry it or remove it from the queue.",
+  "queueCancelledMessage": "Загрузка была отменена. Повторите попытку или удалите её из очереди.",
   "@queueCancelledMessage": {
     "description": "Dialog body when opening a cancelled queue item"
   },
@@ -5092,7 +5245,7 @@
   "@notifEmbeddingMetadata": {
     "description": "Notification body while embedding metadata into a downloaded track"
   },
-  "notifAlreadyInLibraryCount": "Уже в библиотеке ({completed}/{total})",
+  "notifAlreadyInLibraryCount": "{completed} Уже в библиотеке ({completed}/{total})",
   "@notifAlreadyInLibraryCount": {
     "description": "Notification title when track is already in library, with count",
     "placeholders": {
@@ -5104,7 +5257,7 @@
       }
     }
   },
-  "notifAlreadyInLibrary": "Уже в библиотеке",
+  "notifAlreadyInLibrary": "Уже в медиатеке",
   "@notifAlreadyInLibrary": {
     "description": "Notification title when track is already in library"
   },
@@ -5140,7 +5293,7 @@
   "@notifVerificationRequiredTitle": {
     "description": "Notification title shown when a download needs the user to complete a verification challenge but the app is in the background"
   },
-  "notifVerificationRequiredBody": "Open the app to complete verification and resume downloads",
+  "notifVerificationRequiredBody": "Откройте приложение, чтобы завершить проверку и возобновить загрузку",
   "@notifVerificationRequiredBody": {
     "description": "Notification body prompting the user to return to the app to solve a verification challenge"
   },
@@ -5182,7 +5335,7 @@
       }
     }
   },
-  "notifScanningLibrary": "Сканирование локальной библиотеки",
+  "notifScanningLibrary": "Сканирование локальной медиатеки",
   "@notifScanningLibrary": {
     "description": "Notification title while scanning local library"
   },
@@ -5213,7 +5366,7 @@
       }
     }
   },
-  "notifLibraryScanComplete": "Сканирование библиотеки завершено",
+  "notifLibraryScanComplete": "Сканирование медиатеки завершено",
   "@notifLibraryScanComplete": {
     "description": "Notification title when library scan finishes"
   },
@@ -5244,17 +5397,30 @@
       }
     }
   },
-  "notifLibraryScanFailed": "Ошибка сканирования библиотеки",
+  "notifLibraryScanFailed": "Ошибка сканирования медиатеки",
   "@notifLibraryScanFailed": {
     "description": "Notification title when library scan fails"
   },
-  "notifLibraryScanCancelled": "Сканирование библиотеки отменено",
+  "notifLibraryScanCancelled": "Сканирование медиатеки отменено",
   "@notifLibraryScanCancelled": {
     "description": "Notification title when library scan is cancelled by the user"
   },
   "notifLibraryScanStopped": "Сканирование остановлено перед завершением.",
   "@notifLibraryScanStopped": {
     "description": "Notification body when library scan is cancelled"
+  },
+  "notifLibraryScanPaused": "Library scan paused",
+  "@notifLibraryScanPaused": {
+    "description": "Notification title when the user pauses a library scan"
+  },
+  "notifLibraryScanPausedBody": "{count} files scanned. Resume in Local Library settings to continue from here.",
+  "@notifLibraryScanPausedBody": {
+    "description": "Notification body for a paused library scan - files scanned so far",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "notifDownloadingUpdate": "Скачивание SpotiFLAC Mobile v{version}",
   "@notifDownloadingUpdate": {
@@ -5350,11 +5516,11 @@
   "@optionsEmbedMetadata": {
     "description": "Settings toggle title for writing metadata into downloaded files"
   },
-  "optionsEmbedMetadataSubtitleOn": "Write metadata, cover art, and embedded lyrics to files",
+  "optionsEmbedMetadataSubtitleOn": "Записывать метаданные, обложки и тексты песен в файлы",
   "@optionsEmbedMetadataSubtitleOn": {
     "description": "Subtitle when metadata embedding is enabled"
   },
-  "optionsEmbedMetadataSubtitleOff": "Disabled (advanced): skip all metadata embedding",
+  "optionsEmbedMetadataSubtitleOff": "Отключено (расширенный режим): пропустить запись всех метаданных",
   "@optionsEmbedMetadataSubtitleOff": {
     "description": "Subtitle when metadata embedding is disabled"
   },
@@ -5382,7 +5548,7 @@
   "@trackCoverSelected": {
     "description": "Label for the newly selected cover preview"
   },
-  "trackCoverReplaceNotice": "The selected cover will replace the current embedded cover when you tap Save.",
+  "trackCoverReplaceNotice": "Выбранная обложка заменит текущую встроенную при нажатии \"Сохранить\".",
   "@trackCoverReplaceNotice": {
     "description": "Notice shown when a new cover has been selected but not saved yet"
   },
@@ -5390,11 +5556,11 @@
   "@trackCoverResolution": {
     "description": "Label for selecting the embedded cover art resolution"
   },
-  "trackCoverResolutionHint": "Sets the longest edge when saved. Enlarging does not add image detail.",
+  "trackCoverResolutionHint": "Задает длину самой большой стороны при сохранении. Увеличение размера не улучшает детализацию изображения.",
   "@trackCoverResolutionHint": {
     "description": "Explanation below the embedded cover art resolution selector"
   },
-  "trackCoverResizeFailed": "The cover image could not be resized. Please try another size or image.",
+  "trackCoverResizeFailed": "Не удалось изменить размер обложки. Пожалуйста, попробуйте другой размер или изображение.",
   "@trackCoverResizeFailed": {
     "description": "Error shown when resizing cover art before saving metadata fails"
   },
@@ -5406,15 +5572,15 @@
   "@queueFinalizingDownload": {
     "description": "Accessibility label for a queue item that is finalizing"
   },
-  "queueDownloadNext": "Download next",
+  "queueDownloadNext": "Загрузить следующим",
   "@queueDownloadNext": {
     "description": "Tooltip on a queued download row; moves the item to the front of the queue so the next free slot downloads it"
   },
-  "queueMoveUp": "Move up",
+  "queueMoveUp": "Переместить вверх",
   "@queueMoveUp": {
     "description": "Queue item menu action - move the queued item one position earlier"
   },
-  "queueMoveDown": "Move down",
+  "queueMoveDown": "Переместить вниз",
   "@queueMoveDown": {
     "description": "Queue item menu action - move the queued item one position later"
   },
@@ -5426,7 +5592,7 @@
   "@editMetadataMusicBrainzFilled": {
     "description": "Snackbar after MusicBrainz suggestions were applied to the tag editor fields"
   },
-  "editMetadataMusicBrainzNothing": "Nothing found on MusicBrainz",
+  "editMetadataMusicBrainzNothing": "На MusicBrainz ничего не найдено",
   "@editMetadataMusicBrainzNothing": {
     "description": "Snackbar when the MusicBrainz lookup returns no data"
   },
@@ -5446,7 +5612,7 @@
   "@nowPlayingRepeatOne": {
     "description": "Repeat toggle tooltip when the current track repeats"
   },
-  "queueNetworkFailedOffline": "{count} downloads failed while offline",
+  "queueNetworkFailedOffline": "{count, plural, one {{count} трек} few {{count} трека} other {{count} треков}} из истории загрузок (исключено из списка)",
   "@queueNetworkFailedOffline": {
     "description": "Snackbar shown when connectivity returns and network-failed downloads can be retried",
     "placeholders": {
@@ -5471,11 +5637,11 @@
   "@queueRateLimitTitle": {
     "description": "Title shown on a failed queue item when the download service rate limits requests"
   },
-  "queueRateLimitMessage": "This track may still be available. Wait a few minutes, reduce parallel downloads, then retry.",
+  "queueRateLimitMessage": "Этот трек все еще может быть доступен. Подождите несколько минут, уменьшите параллельные загрузки, а затем повторите попытку.",
   "@queueRateLimitMessage": {
     "description": "Explanation shown on a failed queue item when the download service rate limits requests"
   },
-  "appearanceSelectAccentColor": "Select accent color {hex}",
+  "appearanceSelectAccentColor": "Выберите цвет акцента {hex}",
   "@appearanceSelectAccentColor": {
     "description": "Accessibility label for picking an accent color",
     "placeholders": {
@@ -5492,7 +5658,7 @@
   "@logAutoScrollOff": {
     "description": "Tooltip when auto-scroll is disabled on the log screen"
   },
-  "logCopyLogs": "Copy logs",
+  "logCopyLogs": "Скопировать логи",
   "@logCopyLogs": {
     "description": "Tooltip for copying logs"
   },
@@ -5548,11 +5714,11 @@
   "@logIssueTrackNotFoundSuggestion": {
     "description": "Diagnostic badge suggestion when a track is unavailable"
   },
-  "clickableLookingUpArtist": "Looking up artist...",
+  "clickableLookingUpArtist": "Поиск исполнителя...",
   "@clickableLookingUpArtist": {
     "description": "Snackbar shown while clickable artist metadata is being resolved"
   },
-  "clickableInformationUnavailable": "{type} information not available",
+  "clickableInformationUnavailable": "Информация о {type} недоступна",
   "@clickableInformationUnavailable": {
     "description": "Snackbar shown when clickable metadata cannot open a destination",
     "placeholders": {
@@ -5569,7 +5735,7 @@
   "@extensionDetailsInformation": {
     "description": "Section title for extension metadata information"
   },
-  "extensionUtilityFunctions": "Utility Functions",
+  "extensionUtilityFunctions": "Утилиты",
   "@extensionUtilityFunctions": {
     "description": "Capability label for utility-only extensions"
   },
@@ -5581,7 +5747,7 @@
   "@setupChangeFolderTooltip": {
     "description": "Tooltip for editing the selected download folder"
   },
-  "a11yOpenTrackByArtist": "Open track {trackName} by {artistName}",
+  "a11yOpenTrackByArtist": "Открыть трек {trackName} от {artistName}",
   "@a11yOpenTrackByArtist": {
     "description": "Accessibility label for opening a track item",
     "placeholders": {
@@ -5593,7 +5759,7 @@
       }
     }
   },
-  "a11yOpenItem": "Open {itemType} {name}",
+  "a11yOpenItem": "Открыть {itemType} {name}",
   "@a11yOpenItem": {
     "description": "Accessibility label for opening a generic item",
     "placeholders": {
@@ -5666,15 +5832,15 @@
   "@settingsFiles": {
     "description": "Settings menu item - file and folder settings"
   },
-  "settingsFilesSubtitle": "Download location, filename, folder structure",
+  "settingsFilesSubtitle": "Расположение загрузок, имя файла и структура папок",
   "@settingsFilesSubtitle": {
     "description": "Subtitle for files & folders settings"
   },
-  "settingsMetadata": "Metadata",
+  "settingsMetadata": "Метаданные",
   "@settingsMetadata": {
     "description": "Settings menu item - metadata settings"
   },
-  "settingsMetadataSubtitle": "Cover art, tags, ReplayGain, providers",
+  "settingsMetadataSubtitle": "Обложки, теги, ReplayGain, провайдеры",
   "@settingsMetadataSubtitle": {
     "description": "Subtitle for metadata settings"
   },
@@ -5682,15 +5848,15 @@
   "@settingsLyrics": {
     "description": "Settings menu item - lyrics settings"
   },
-  "settingsLyricsSubtitle": "Embed, mode, providers, language options",
+  "settingsLyricsSubtitle": "Внедрение, режим, провайдеры, языковые параметры",
   "@settingsLyricsSubtitle": {
     "description": "Subtitle for lyrics settings"
   },
-  "settingsApp": "App",
+  "settingsApp": "Приложение",
   "@settingsApp": {
     "description": "Settings menu item - app settings"
   },
-  "settingsAppSubtitle": "Updates, data, extension repo, debug",
+  "settingsAppSubtitle": "Обновления, данные, репозиторий расширений и отладка",
   "@settingsAppSubtitle": {
     "description": "Subtitle for app settings"
   },
@@ -5710,31 +5876,31 @@
   "@metadataProvidersTitle": {
     "description": "Settings item title for metadata provider order"
   },
-  "metadataProvidersSubtitle": "Drag to set search and metadata source order",
+  "metadataProvidersSubtitle": "Перетащите для задания порядка поиска и источника метаданных",
   "@metadataProvidersSubtitle": {
     "description": "Subtitle for metadata provider priority item"
   },
-  "downloadDeduplication": "Skip Duplicate Downloads",
+  "downloadDeduplication": "Пропустить дублирование загрузок",
   "@downloadDeduplication": {
     "description": "Setting - skip tracks already in download history"
   },
-  "downloadDeduplicationEnabled": "Already-downloaded tracks will be skipped",
+  "downloadDeduplicationEnabled": "Уже загруженные треки будут пропущены",
   "@downloadDeduplicationEnabled": {
     "description": "Subtitle when deduplication is on"
   },
-  "downloadDeduplicationWithQualityVariants": "Existing files at the selected quality will be skipped",
+  "downloadDeduplicationWithQualityVariants": "Существующие файлы в выбранном качестве будут пропущены",
   "@downloadDeduplicationWithQualityVariants": {
     "description": "Deduplication subtitle when separate quality versions are allowed"
   },
-  "downloadDeduplicationDisabled": "All tracks will be downloaded regardless of history",
+  "downloadDeduplicationDisabled": "Все треки будут загружены независимо от истории",
   "@downloadDeduplicationDisabled": {
     "description": "Subtitle when deduplication is off"
   },
-  "downloadQualityVariants": "Allow different quality versions",
+  "downloadQualityVariants": "Разрешить скачивание версий в другом качестве",
   "@downloadQualityVariants": {
     "description": "Setting to retain multiple quality versions of the same track"
   },
-  "downloadQualityVariantsDescription": "Keep every quality version; add its measured quality to the filename only when the name is already used",
+  "downloadQualityVariantsDescription": "Сохранять все версии качества; добавлять показатель качества к имени файла только тогда, когда имя уже занято",
   "@downloadQualityVariantsDescription": {
     "description": "Description for retaining multiple quality versions"
   },
@@ -5742,11 +5908,11 @@
   "@trackOptionDownloadQualityVariant": {
     "description": "Track menu action to download another quality version"
   },
-  "downloadFallbackExtensions": "Fallback Extensions",
+  "downloadFallbackExtensions": "Резервные расширения",
   "@downloadFallbackExtensions": {
     "description": "Settings item for configuring fallback extension providers"
   },
-  "downloadFallbackExtensionsSubtitle": "Choose which extensions can be used as fallback",
+  "downloadFallbackExtensionsSubtitle": "Выберите, какие расширения будут использоваться как резервные",
   "@downloadFallbackExtensionsSubtitle": {
     "description": "Subtitle for fallback extensions item"
   },
@@ -5758,7 +5924,7 @@
   "@editMetadataFieldTrackTotal": {
     "description": "Label for total tracks field in the edit metadata sheet"
   },
-  "editMetadataFieldDiscTotal": "Disc Total",
+  "editMetadataFieldDiscTotal": "Всего дисков",
   "@editMetadataFieldDiscTotal": {
     "description": "Label for total discs field in the edit metadata sheet"
   },
@@ -5774,7 +5940,7 @@
   "@trackAlbumType": {
     "description": "Label for an album or release type metadata value"
   },
-  "editMetadataFieldAlbumTypeHint": "Album, single, EP, compilation...",
+  "editMetadataFieldAlbumTypeHint": "Альбом, сингл, EP, сборник...",
   "@editMetadataFieldAlbumTypeHint": {
     "description": "Hint for the release type metadata field"
   },
@@ -5782,7 +5948,7 @@
   "@editMetadataFieldExplicit": {
     "description": "Label for the explicit content metadata field"
   },
-  "editMetadataFieldExplicitHint": "Mark this track as containing explicit content",
+  "editMetadataFieldExplicitHint": "Пометить этот трек как содержащий откровенное содержимое(Explicit)",
   "@editMetadataFieldExplicitHint": {
     "description": "Description for the explicit content metadata switch"
   },
@@ -5794,7 +5960,7 @@
   "@editMetadataFieldUpc": {
     "description": "Label for the release barcode metadata field"
   },
-  "editMetadataFieldUpcHint": "Numeric UPC, EAN, or GTIN",
+  "editMetadataFieldUpcHint": "Числовой UPC, EAN, или GTIN",
   "@editMetadataFieldUpcHint": {
     "description": "Hint for the release barcode metadata field"
   },
@@ -5802,15 +5968,15 @@
   "@editMetadataAdvanced": {
     "description": "Expandable section label for advanced metadata fields"
   },
-  "libraryFilterMetadataMissingTrackNumber": "Missing track number",
+  "libraryFilterMetadataMissingTrackNumber": "Отсутствует номер трека",
   "@libraryFilterMetadataMissingTrackNumber": {
     "description": "Filter option - items missing track number"
   },
-  "libraryFilterMetadataMissingDiscNumber": "Missing disc number",
+  "libraryFilterMetadataMissingDiscNumber": "Отсутствует номер диска",
   "@libraryFilterMetadataMissingDiscNumber": {
     "description": "Filter option - items missing disc number"
   },
-  "libraryFilterMetadataMissingArtist": "Missing artist",
+  "libraryFilterMetadataMissingArtist": "Отсутствует исполнитель",
   "@libraryFilterMetadataMissingArtist": {
     "description": "Filter option - items missing artist"
   },
@@ -5822,7 +5988,7 @@
   "@libraryFilterMetadataMissingIsrc": {
     "description": "Filter option - items without any ISRC tag"
   },
-  "libraryFilterMetadataMissingLabel": "Missing label",
+  "libraryFilterMetadataMissingLabel": "Без лейбла",
   "@libraryFilterMetadataMissingLabel": {
     "description": "Filter option - items missing record label"
   },
@@ -5904,7 +6070,7 @@
       }
     }
   },
-  "queueDownloadSpeedStatus": "Downloading - {speed} MB/s",
+  "queueDownloadSpeedStatus": "Загрузка - {speed} МБ/с",
   "@queueDownloadSpeedStatus": {
     "description": "Queue status while downloading with speed",
     "placeholders": {
@@ -5914,9 +6080,9 @@
     }
   },
   "queueDownloadStarting": "Запуск...",
-  "queueCheckingDownloadSession": "Checking download session...",
-  "queueResolvingDownloadMetadata": "Resolving track metadata...",
-  "queueResolvingDownloadStream": "Preparing audio stream...",
+  "queueCheckingDownloadSession": "Проверка сеанса загрузки...",
+  "queueResolvingDownloadMetadata": "Определение метаданных трека...",
+  "queueResolvingDownloadStream": "Подготовка аудиопотока...",
   "queueWaitingForVerification": "Ожидание верификации...",
   "queueResumingAfterVerification": "Продолжение после верификации...",
   "@queueDownloadStarting": {
@@ -5925,15 +6091,15 @@
   "@queueCheckingDownloadSession": {
     "description": "Queue status while the download provider's session is being checked during preparation (preparationStage 'checking_session'). This is about the provider session, not about locating a finished file."
   },
-  "a11ySelectTrack": "Select track",
+  "a11ySelectTrack": "Выбрать трек",
   "@a11ySelectTrack": {
     "description": "Accessibility label for selecting a track"
   },
-  "a11yDeselectTrack": "Deselect track",
+  "a11yDeselectTrack": "Отменить выбор трека",
   "@a11yDeselectTrack": {
     "description": "Accessibility label for deselecting a track"
   },
-  "a11yPlayTrackByArtist": "Play {trackName} by {artistName}",
+  "a11yPlayTrackByArtist": "Играть {trackName} от {artistName}",
   "@a11yPlayTrackByArtist": {
     "description": "Accessibility label for playing a local library track",
     "placeholders": {
@@ -5954,7 +6120,7 @@
       }
     }
   },
-  "storeRequiresVersion": "Requires v{version}+",
+  "storeRequiresVersion": "Требуется v{version}+",
   "@storeRequiresVersion": {
     "description": "Store compatibility badge for minimum app version",
     "placeholders": {
@@ -5963,15 +6129,15 @@
       }
     }
   },
-  "actionGo": "Go",
+  "actionGo": "ОК",
   "@actionGo": {
     "description": "Generic action button label"
   },
-  "logIssueSummary": "Issue Summary",
+  "logIssueSummary": "Краткое описание проблемы",
   "@logIssueSummary": {
     "description": "Header for log issue analysis summary"
   },
-  "logTotalErrors": "Total errors: {count}",
+  "logTotalErrors": "Всего ошибок: {count}",
   "@logTotalErrors": {
     "description": "Total error count in log issue analysis",
     "placeholders": {
@@ -5980,7 +6146,7 @@
       }
     }
   },
-  "logAffectedDomains": "Affected: {domains}",
+  "logAffectedDomains": "Затронуто: {domains}",
   "@logAffectedDomains": {
     "description": "Affected domains in log issue analysis",
     "placeholders": {
@@ -5989,15 +6155,15 @@
       }
     }
   },
-  "libraryScanCancelled": "Scan cancelled",
+  "libraryScanCancelled": "Сканирование отменено",
   "@libraryScanCancelled": {
     "description": "Library scan status when a scan was cancelled"
   },
-  "libraryScanCancelledSubtitle": "You can retry the scan when ready.",
+  "libraryScanCancelledSubtitle": "Вы можете повторить сканирование, когда будете готовы.",
   "@libraryScanCancelledSubtitle": {
     "description": "Library scan status subtitle after cancellation"
   },
-  "libraryDownloadsHistoryExcluded": "{count} from Downloads history (excluded from list)",
+  "libraryDownloadsHistoryExcluded": "{count, plural, one {{count} трек} few {{count} трека} other {{count} треков}} из истории загрузок (исключено из списка)",
   "@libraryDownloadsHistoryExcluded": {
     "description": "Library count note for downloaded history items excluded from the local list",
     "placeholders": {
@@ -6006,11 +6172,11 @@
       }
     }
   },
-  "downloadNativeWorker": "Native download worker",
+  "downloadNativeWorker": "Нативный загрузчик",
   "@downloadNativeWorker": {
     "description": "Setting title for Android native download worker"
   },
-  "downloadNativeWorkerSubtitle": "Android background service for extension downloads",
+  "downloadNativeWorkerSubtitle": "Фоновая служба Android для загрузки расширений",
   "@downloadNativeWorkerSubtitle": {
     "description": "Setting subtitle for Android native download worker"
   },
@@ -6031,7 +6197,7 @@
       }
     }
   },
-  "extensionOauthConnectHint": "Tap Connect to Spotify to fill this field.",
+  "extensionOauthConnectHint": "Нажмите Подключиться к Spotify для заполнения этого поля.",
   "@extensionOauthConnectHint": {
     "description": "Hint for an OAuth login link field before connecting Spotify"
   },
@@ -6044,7 +6210,7 @@
       }
     }
   },
-  "extensionRefreshStatus": "Refresh status",
+  "extensionRefreshStatus": "Обновить статус",
   "@extensionRefreshStatus": {
     "description": "Tooltip for refreshing extension service health status"
   },
@@ -6073,7 +6239,7 @@
   "@extensionHealthOnline": {
     "description": "Extension service health status - online"
   },
-  "extensionHealthDegraded": "Degraded",
+  "extensionHealthDegraded": "Деградация",
   "@extensionHealthDegraded": {
     "description": "Extension service health status - degraded"
   },
@@ -6109,7 +6275,7 @@
   "@extensionHealthServiceOnline": {
     "description": "Tooltip for online extension service"
   },
-  "extensionHealthServiceDegraded": "Service degraded",
+  "extensionHealthServiceDegraded": "Сервис деградировал",
   "@extensionHealthServiceDegraded": {
     "description": "Tooltip for degraded extension service"
   },
@@ -6117,7 +6283,7 @@
   "@extensionHealthServiceOffline": {
     "description": "Tooltip for offline extension service"
   },
-  "extensionHealthServiceUnknown": "Service status unknown",
+  "extensionHealthServiceUnknown": "Состояние сервиса неизвестно",
   "@extensionHealthServiceUnknown": {
     "description": "Tooltip for unknown extension service health"
   },
@@ -6162,11 +6328,11 @@
   "@permissionNotification": {
     "description": "Notification permission type label"
   },
-  "errorInvalidFolderSelected": "Invalid folder selected",
+  "errorInvalidFolderSelected": "Выбрана неверная папка",
   "@errorInvalidFolderSelected": {
     "description": "Error when the selected folder is invalid"
   },
-  "storeAnyVersion": "Any",
+  "storeAnyVersion": "Любая",
   "@storeAnyVersion": {
     "description": "Store detail value when any app version is accepted"
   },
@@ -6174,7 +6340,7 @@
   "@storeCategoryMetadata": {
     "description": "Store extension category - metadata"
   },
-  "storeCategoryDownload": "Download",
+  "storeCategoryDownload": "Скачивание",
   "@storeCategoryDownload": {
     "description": "Store extension category - download"
   },
@@ -6211,15 +6377,15 @@
   "@settingsSaveDownloadHistory": {
     "description": "Settings switch title for storing completed downloads in history"
   },
-  "settingsSaveDownloadHistorySubtitle": "Keep completed downloads in history and library views",
+  "settingsSaveDownloadHistorySubtitle": "Сохранять завершённые загрузки в истории и медиатеке",
   "@settingsSaveDownloadHistorySubtitle": {
     "description": "Settings switch subtitle for storing completed downloads in history"
   },
-  "dialogDisableHistoryTitle": "Turn off download history?",
+  "dialogDisableHistoryTitle": "Отключить историю загрузок?",
   "@dialogDisableHistoryTitle": {
     "description": "Confirmation dialog title shown before disabling download history"
   },
-  "dialogDisableHistoryMessage": "Existing history will be cleared. Downloaded files will not be deleted.",
+  "dialogDisableHistoryMessage": "Существующая история будет очищена. Загруженные файлы не будут удалены.",
   "@dialogDisableHistoryMessage": {
     "description": "Confirmation dialog message shown before disabling download history"
   },
@@ -6227,11 +6393,11 @@
   "@dialogDisableAndClear": {
     "description": "Confirmation action to disable download history and clear existing entries"
   },
-  "openInOtherServices": "Open in Other Services",
+  "openInOtherServices": "Открыть в других сервисах",
   "@openInOtherServices": {
     "description": "Title and tooltip for finding the current collection in other services"
   },
-  "shareSheetNoExtensions": "No other compatible services",
+  "shareSheetNoExtensions": "Нет других совместимых сервисов",
   "@shareSheetNoExtensions": {
     "description": "Empty state when no extensions can be searched for cross-service links"
   },
@@ -6250,7 +6416,7 @@
       "service": {}
     }
   },
-  "libraryPlayback": "Playback",
+  "libraryPlayback": "Воспроизведение",
   "@libraryPlayback": {
     "description": "Section header for playback settings in library settings"
   },
@@ -6258,19 +6424,19 @@
   "@libraryExternalPlayer": {
     "description": "Setting option to use an external music player"
   },
-  "libraryExternalPlayerSubtitle": "Recommended for listening, best quality, gapless playback, EQ, and wider format support",
+  "libraryExternalPlayerSubtitle": "Рекомендуется для прослушивания, лучшее качество, воспроизведение без пауз, эквалайзер и поддержка более широкого спектра форматов",
   "@libraryExternalPlayerSubtitle": {
     "description": "Subtitle for external player option"
   },
-  "libraryBuiltInPreviewPlayer": "Built-in preview player",
+  "libraryBuiltInPreviewPlayer": "Встроенный плеер для предпросмотра",
   "@libraryBuiltInPreviewPlayer": {
     "description": "Setting option to use the built-in preview player"
   },
-  "libraryBuiltInPreviewPlayerSubtitle": "Quick local previews inside SpotiFLAC Mobile",
+  "libraryBuiltInPreviewPlayerSubtitle": "Быстрое предварительное прослушивание внутри SpotiFLAC Mobile",
   "@libraryBuiltInPreviewPlayerSubtitle": {
     "description": "Subtitle for built-in preview player option"
   },
-  "libraryBuiltInPlayerInfo": "The built-in player is a preview tool for checking local tracks quickly. Use an external music player for actual listening.",
+  "libraryBuiltInPlayerInfo": "Встроенный плеер предназначен для быстрого предпрослушивания локальных треков. Для полноценного прослушивания используйте внешний музыкальный плеер.",
   "@libraryBuiltInPlayerInfo": {
     "description": "Info note explaining the built-in player is for previews only"
   },
@@ -6286,7 +6452,32 @@
   "@nowPlayingMinimize": {
     "description": "Tooltip for minimizing the now playing screen"
   },
-  "nowPlayingUpNext": "Up next",
+  "nowPlayingUpNext": "Далее",
+  "nowPlayingAudioOutput": "Аудиовыход",
+  "nowPlayingWrittenBy": "Автор(ы): {writers}",
+  "@nowPlayingWrittenBy": {
+    "placeholders": {
+      "writers": {
+        "type": "String"
+      }
+    }
+  },
+  "nowPlayingLyricsProvider": "Провайдер текста:{provider}",
+  "@nowPlayingLyricsProvider": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "concertGetTickets": "Получить билеты",
+  "concertSetList": "Список Концертов",
+  "concertSetListButton": "Сет-лист",
+  "concertAddToCalendar": "Добавить в календарь",
+  "concertOpenMaps": "Открыть карты",
+  "concertDetailsUnavailable": "Детали концерта в настоящее время недоступны.",
+  "concertCalendarUnavailable": "Невозможно открыть календарь.",
+  "nowPlayingAudioOutputUnavailable": "Невозможно открыть настройки аудиовыхода.",
   "@nowPlayingUpNext": {
     "description": "Title for the playback queue sheet"
   },
@@ -6298,15 +6489,15 @@
   "@nowPlayingNextTrack": {
     "description": "Tooltip for the next-track playback control"
   },
-  "nowPlayingDetails": "Details",
+  "nowPlayingDetails": "Подробности",
   "@nowPlayingDetails": {
     "description": "Menu item and section title for track metadata details"
   },
-  "nowPlayingSleepTimer": "Sleep timer",
+  "nowPlayingSleepTimer": "Таймер сна",
   "@nowPlayingSleepTimer": {
     "description": "Menu item and sheet title for the playback sleep timer"
   },
-  "nowPlayingSleepTimerActive": "Ends at {time}",
+  "nowPlayingSleepTimerActive": "Заканчивается в {time}",
   "@nowPlayingSleepTimerActive": {
     "description": "Active sleep timer deadline shown in the player menu",
     "placeholders": {
@@ -6324,11 +6515,11 @@
       }
     }
   },
-  "nowPlayingSleepTimerOff": "Turn off sleep timer",
+  "nowPlayingSleepTimerOff": "Отключить таймер сна",
   "@nowPlayingSleepTimerOff": {
     "description": "Action to cancel the active playback sleep timer"
   },
-  "nowPlayingSleepTimerSet": "Sleep timer set for {duration}",
+  "nowPlayingSleepTimerSet": "Таймер сна установлен на {duration}",
   "@nowPlayingSleepTimerSet": {
     "description": "Confirmation after setting the playback sleep timer",
     "placeholders": {
@@ -6337,31 +6528,43 @@
       }
     }
   },
-  "nowPlayingSleepTimerCancelled": "Sleep timer turned off",
+  "nowPlayingSleepTimerCancelled": "Таймер сна отключен",
   "@nowPlayingSleepTimerCancelled": {
     "description": "Confirmation after cancelling the playback sleep timer"
   },
-  "nowPlayingOpenInExternalPlayer": "Open in external player",
+  "nowPlayingOpenInExternalPlayer": "Открыть во внешнем плеере",
   "@nowPlayingOpenInExternalPlayer": {
     "description": "Menu item to open the current track in an external player"
   },
-  "nowPlayingTabPlayer": "Player",
+  "nowPlayingTabPlayer": "Плеер",
   "@nowPlayingTabPlayer": {
     "description": "Tab label for the player view"
   },
-  "nowPlayingTabLyrics": "Lyrics",
+  "nowPlayingTabLyrics": "Текст песни",
   "@nowPlayingTabLyrics": {
     "description": "Tab label for the lyrics view"
   },
   "nowPlayingNoLyrics": "В файле нет текста",
+  "nowPlayingInstrumental": "Инструментальный",
+  "@nowPlayingInstrumental": {
+    "description": "Accessibility label for the three-dot countdown during an instrumental break before lyrics resume"
+  },
+  "nowPlayingLyricsLanguageOptions": "Параметры языка текстов песен",
+  "@nowPlayingLyricsLanguageOptions": {
+    "description": "Tooltip for the player menu that shows or hides existing lyric pronunciation and translation"
+  },
+  "nowPlayingHidePronunciation": "Скрыть произношение",
+  "nowPlayingShowPronunciation": "Показать произношение",
+  "nowPlayingHideTranslation": "Скрыть перевод",
+  "nowPlayingShowTranslation": "Показать перевод",
   "@nowPlayingNoLyrics": {
     "description": "Empty state when the playing file has no embedded lyrics"
   },
-  "nowPlayingLibraryEmpty": "Your library is empty",
+  "nowPlayingLibraryEmpty": "Ваша медиатека пуста",
   "@nowPlayingLibraryEmpty": {
     "description": "Snackbar when shuffle library is requested but library has no tracks"
   },
-  "nowPlayingShuffleLibraryFailed": "Could not shuffle library: {error}",
+  "nowPlayingShuffleLibraryFailed": "Не удалось перемешать медиатеку: {error}",
   "@nowPlayingShuffleLibraryFailed": {
     "description": "Snackbar when shuffling the library fails",
     "placeholders": {
@@ -6370,15 +6573,15 @@
       }
     }
   },
-  "nowPlayingShuffleOn": "Shuffle on",
+  "nowPlayingShuffleOn": "Перемешивание вкл",
   "@nowPlayingShuffleOn": {
     "description": "Tooltip when shuffle mode is enabled"
   },
-  "nowPlayingPlayInOrder": "Play in order",
+  "nowPlayingPlayInOrder": "Играть в очереди",
   "@nowPlayingPlayInOrder": {
     "description": "Tooltip when shuffle mode is disabled"
   },
-  "nowPlayingShuffleLibrary": "Shuffle library",
+  "nowPlayingShuffleLibrary": "Перемешать медиатеку",
   "@nowPlayingShuffleLibrary": {
     "description": "Button label to shuffle and play the entire local library"
   },
@@ -6390,7 +6593,7 @@
   "@nowPlayingNoMetadata": {
     "description": "Empty state when track metadata cannot be loaded"
   },
-  "announcementUnableToOpenLink": "Unable to open link. Please try again.",
+  "announcementUnableToOpenLink": "Не удалось открыть ссылку. Пожалуйста, попробуйте еще раз.",
   "@announcementUnableToOpenLink": {
     "description": "Snackbar shown when an announcement CTA link cannot be opened"
   },
@@ -6403,7 +6606,7 @@
       }
     }
   },
-  "trackConvertConfirmMessageLosslessCapped": "Convert from {sourceFormat} to {targetFormat} ({quality})?\n\nThe output stays in a lossless codec, but bit depth/sample rate will be capped. Original file will be deleted after conversion.",
+  "trackConvertConfirmMessageLosslessCapped": "Конвертировать из {sourceFormat} в {targetFormat} ({quality})?\n\nАудио останется в lossless-формате, но битрейт/разрядность и частота дискретизации будут ограничены. Оригинал будет удален после завершения конвертации.",
   "@trackConvertConfirmMessageLosslessCapped": {
     "description": "Confirmation dialog message for capped lossless conversion of a single file",
     "placeholders": {
@@ -6418,6 +6621,7 @@
       }
     }
   },
+  "selectionBatchConvertConfirmMessageLossless": "Конвертировать {count} {count, plural, =1{track} other{tracks}} в {format}? (Без потери качества)\n\nОригинальные файлы будут удалены после конвертации.",
   "selectionBatchConvertConfirmMessageLosslessCapped": "Конвертировать {count} {count, plural, =1{трек} few{трека} other{треков}} в {format} ({quality})?\n\nРезультат останется в кодеке lossless, но разрядность и частота дискретизации будут ограничены. Исходные файлы будут удалены после конвертации.",
   "@selectionBatchConvertConfirmMessageLosslessCapped": {
     "description": "Confirmation dialog message for capped lossless batch conversion",
@@ -6463,11 +6667,11 @@
       }
     }
   },
-  "aboutPaxsenixSubtitle": "Lyrics proxy for Musixmatch, Netease, Apple Music, QQ Music, Spotify, Deezer, YouTube, Kugou, and Genius",
+  "aboutPaxsenixSubtitle": "Прокси на тексты песен Musixmatch, Netease, Apple Music, QQ Music, Spotify, Deezer, YouTube, Kugou и Genius",
   "@aboutPaxsenixSubtitle": {
     "description": "Subtitle for Paxsenix special thanks entry on the about page"
   },
-  "snackbarPlayingNext": "Playing next",
+  "snackbarPlayingNext": "Следующий",
   "@snackbarPlayingNext": {
     "description": "Snackbar when a track is inserted as the next queue item"
   },
@@ -6484,23 +6688,23 @@
       }
     }
   },
-  "actionShuffle": "Shuffle",
+  "actionShuffle": "Перемешать",
   "@actionShuffle": {
     "description": "Tooltip for shuffle playback action"
   },
-  "downloadPrimaryArtistOnlyOn": "Primary only: On",
+  "downloadPrimaryArtistOnlyOn": "Только основной: вкл",
   "@downloadPrimaryArtistOnlyOn": {
     "description": "Status label when primary-artist-only folder naming is enabled"
   },
-  "downloadPrimaryArtistOnlyOff": "Primary only: Off",
+  "downloadPrimaryArtistOnlyOff": "Только основной: выкл",
   "@downloadPrimaryArtistOnlyOff": {
     "description": "Status label when primary-artist-only folder naming is disabled"
   },
-  "downloadAlbumArtistMetadataPrimaryOnly": "Album Artist metadata: Primary only",
+  "downloadAlbumArtistMetadataPrimaryOnly": "Метаданные исполнителя альбома: только основные",
   "@downloadAlbumArtistMetadataPrimaryOnly": {
     "description": "Status label when album-artist folder filtering uses primary artist only"
   },
-  "downloadAlbumArtistMetadataFull": "Album Artist metadata: Full",
+  "downloadAlbumArtistMetadataFull": "Метаданные исполнителя альбома: Полные",
   "@downloadAlbumArtistMetadataFull": {
     "description": "Status label when album-artist folder filtering uses full metadata"
   },
@@ -6524,7 +6728,7 @@
   "@trackConvertResampler": {
     "description": "Section label for lossless conversion resampler options"
   },
-  "trackConvertDitherNone": "None",
+  "trackConvertDitherNone": "Нет",
   "@trackConvertDitherNone": {
     "description": "Lossless conversion dither option with no dithering applied"
   },
@@ -6532,7 +6736,7 @@
   "@trackConvertDitherTriangular": {
     "description": "Lossless conversion triangular probability density function dither option"
   },
-  "trackConvertDitherTriangularHp": "Triangular HP",
+  "trackConvertDitherTriangularHp": "Треугольный с фильтром ВЧ",
   "@trackConvertDitherTriangularHp": {
     "description": "Lossless conversion high-pass triangular dither option"
   },
@@ -6544,7 +6748,7 @@
   "@trackConvertResamplerSoxr": {
     "description": "Lossless conversion SoX resampler option"
   },
-  "updateSeeReleaseNotes": "See release notes for details.",
+  "updateSeeReleaseNotes": "Смотрите примечания к релизу для подробностей.",
   "@updateSeeReleaseNotes": {
     "description": "Fallback changelog text when release notes cannot be parsed"
   },
@@ -6560,7 +6764,7 @@
   "@trackAddToQueue": {
     "description": "Menu action to add a track to the playback queue"
   },
-  "snackbarExtensionInstalledEnable": "{extensionName} installed. Enable it in Settings > Extensions",
+  "snackbarExtensionInstalledEnable": "{extensionName} установлен. Включите его в Настройки > Расширения",
   "@snackbarExtensionInstalledEnable": {
     "description": "Snackbar after installing an extension from the repo tab",
     "placeholders": {
@@ -6569,7 +6773,7 @@
       }
     }
   },
-  "snackbarExtensionUpdatedVersion": "{extensionName} обновлено до v{version}",
+  "snackbarExtensionUpdatedVersion": "{extensionName} обновлён до v{version}",
   "@snackbarExtensionUpdatedVersion": {
     "description": "Snackbar after updating an extension from the repo tab",
     "placeholders": {
@@ -6590,7 +6794,7 @@
       }
     }
   },
-  "snackbarFailedToUpdateNamed": "Failed to update {extensionName}",
+  "snackbarFailedToUpdateNamed": "Не удалось обновить {extensionName}",
   "@snackbarFailedToUpdateNamed": {
     "description": "Snackbar when extension update fails in the repo tab",
     "placeholders": {
@@ -6667,15 +6871,15 @@
   "@extensionVerificationBrowserTitle": {
     "description": "Settings option title for extension verification browser preference"
   },
-  "extensionVerificationBrowserSubtitleExternal": "Open challenges in the default browser first",
+  "extensionVerificationBrowserSubtitleExternal": "Открывать верификацию в браузере по умолчанию",
   "@extensionVerificationBrowserSubtitleExternal": {
     "description": "Subtitle when external browser is preferred for extension verification"
   },
-  "extensionVerificationBrowserSubtitleInApp": "Open challenges in the in-app browser first",
+  "extensionVerificationBrowserSubtitleInApp": "Открывать верификацию во внутреннем браузере",
   "@extensionVerificationBrowserSubtitleInApp": {
     "description": "Subtitle when in-app browser is preferred for extension verification"
   },
-  "extensionVerificationBrowserExternal": "External",
+  "extensionVerificationBrowserExternal": "Внешний",
   "@extensionVerificationBrowserExternal": {
     "description": "Chip label for external browser verification mode"
   },
@@ -6683,7 +6887,7 @@
   "@extensionVerificationBrowserInApp": {
     "description": "Chip label for in-app browser verification mode"
   },
-  "extensionVerificationUnavailable": "No verification page is available for {extension}. Retry the download to request a new challenge.",
+  "extensionVerificationUnavailable": "Для {extension} нет доступной страницы подтверждения. Повторите загрузку, чтобы запросить новую задачу.",
   "@extensionVerificationUnavailable": {
     "description": "Shown when the app cannot retrieve a pending verification challenge",
     "placeholders": {
@@ -6704,7 +6908,7 @@
   "@extensionVerificationHelpMessageManual": {
     "description": "Dialog message when automatic browser launch for verification fails"
   },
-  "extensionVerificationHelpMessageWaiting": "If the browser did not open, or verification finished but did not return to SpotiFLAC Mobile, open this link again or copy it manually.",
+  "extensionVerificationHelpMessageWaiting": "Если окно браузера не открылось либо проверка завершилась, но приложение SpotiFLAC Mobile не открылось автоматически, перейдите по ссылке повторно или скопируйте её вручную.",
   "@extensionVerificationHelpMessageWaiting": {
     "description": "Dialog message when verification may need manual browser help"
   },
@@ -6737,11 +6941,11 @@
       }
     }
   },
-  "settingsGroupInterface": "Extensions & appearance",
+  "settingsGroupInterface": "Расширения и внешний вид",
   "@settingsGroupInterface": {
     "description": "Settings group covering look and feel"
   },
-  "settingsGroupContent": "Content & metadata",
+  "settingsGroupContent": "Содержимое и метаданные",
   "@settingsGroupContent": {
     "description": "Settings group covering the library, metadata and lyrics"
   },
@@ -6761,53 +6965,60 @@
   "@libraryFilterMetadataMissingLyrics": {
     "description": "Filter option for tracks without embedded or sidecar lyrics"
   },
-  "trackOptionCopyTrackName": "Copy track name",
+  "libraryFilterMetadataMissingReplayGain": "Missing ReplayGain",
+  "@libraryFilterMetadataMissingReplayGain": {
+    "description": "Filter option for scanned tracks without ReplayGain gain tags"
+  },
+  "trackOptionCopyTrackName": "Копировать название трека",
   "@trackOptionCopyTrackName": {
     "description": "Track menu action that copies the track title"
   },
-  "trackOptionCopyArtist": "Copy artist",
+  "trackOptionCopyArtist": "Копировать исполнителя",
   "@trackOptionCopyArtist": {
     "description": "Track menu action that copies the artist name"
   },
-  "trackOptionCopyTrackAndArtist": "Copy track and artist",
+  "trackOptionCopyTrackAndArtist": "Копировать трек и исполнителя",
   "@trackOptionCopyTrackAndArtist": {
     "description": "Track menu action that copies the track title and artist"
   },
-  "metadataCopyValue": "Copy value",
+  "metadataCopyValue": "Копировать значение",
   "@metadataCopyValue": {
     "description": "Metadata menu action that copies only the selected value"
   },
-  "metadataCopyField": "Copy field and value",
+  "metadataCopyField": "Копировать поле и значение",
   "@metadataCopyField": {
     "description": "Metadata menu action that copies the selected key and value"
   },
-  "mornyeShowTabs": "Show tabs",
+  "mornyeShowTabs": "Показывать вкладки",
   "mornyeSearch": "Поиск",
-  "mornyeContinuePlaying": "Continue Playing",
+  "mornyeContinuePlaying": "Продолжить воспроизведение",
   "metadataCopyAll": "Скопировать все метаданные",
   "@metadataCopyAll": {
     "description": "Metadata menu action that copies every visible key and value"
   },
-  "optionsEmbeddedCoverSize": "Embedded Cover Size",
+  "optionsEmbeddedCoverSize": "Размер встраиваемой обложки",
   "@optionsEmbeddedCoverSize": {
     "description": "Metadata setting that limits downloaded artwork resolution before it is embedded"
   },
-  "optionsEmbeddedCoverSizeDescription": "Downscale remotely downloaded cover art before embedding it. Images already within the limit are kept unchanged.",
+  "optionsEmbeddedCoverSizeDescription": "Масштабировать загруженные обложки перед записью. Обложки, уже соответствующие лимиту, не изменяются.",
   "@optionsEmbeddedCoverSizeDescription": {
     "description": "Description shown in the embedded cover size picker"
   },
-  "mornyeFavorite": "Favorite",
+  "mornyeFavorite": "В избранное",
   "mornyeGoToArtist": "Перейти к исполнителю",
   "@mornyeFavorite": {
     "description": "Compact context menu action that adds a track to Loved"
   },
-  "mornyeFavorited": "Favorited",
+  "mornyeFavorited": "Избранное",
   "@mornyeFavorited": {
     "description": "Selected state of the compact favorite action"
   },
-  "autoMixDescription": "Blend songs with beat matching and pitch-preserving tempo adjustment. Uses crossfade when beats cannot be matched.",
-  "autoMixOn": "AutoMix on",
-  "autoMixOff": "AutoMix off",
+  "autoMixDescription": "Плавный переход с подгонкой темпа и сохранением тональности. При невозможности синхронизации битов применяется кроссфейд.",
+  "autoMixOn": "Автомикс вкл",
+  "autoMixOff": "Автомикс выкл",
+  "autoplayOn": "Автовоспроизведение вкл",
+  "autoplayOff": "Автовоспроизведение выкл",
+  "autoplayFromLibrary": "Автовоспроизведение из вашей медиатеки",
   "profileTitle": "Профиль",
   "profileSetUp": "Настройте свой профиль",
   "profileEdit": "Изменить имя и фото",
@@ -6818,6 +7029,9 @@
   "profileRemovePhoto": "Удалить фото",
   "profilePhotoError": "Выберите изображение размером менее 20 МБ.",
   "profileSaveError": "Не удалось сохранить ваш профиль. Пожалуйста, попробуйте еще раз.",
+  "artistUpcomingConcerts": "Предстоящие концерты",
+  "artistAllUpcomingConcerts": "Все предстоящие концерты",
+  "artistNoUpcomingConcerts": "Нет предстоящих концертов.",
   "optionsEmbeddedCoverSizeOriginal": "Оригинальное разрешение",
   "@optionsEmbeddedCoverSizeOriginal": {
     "description": "Option that preserves the provider artwork at its original resolution"
