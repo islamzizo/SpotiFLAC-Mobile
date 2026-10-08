@@ -831,12 +831,13 @@ impl ExtensionManager {
                 manifest.name
             )));
         }
-        let enabled = self
-            .environment
-            .settings(&manifest.name)
-            .map_err(error_from_environment)?
-            .get("_enabled")
-            == Some(&Value::Bool(true));
+        // A package is still installed when its private settings cannot be
+        // decrypted. Keep it visible for recovery without running its code or
+        // replacing the unreadable data with defaults.
+        let settings = self.environment.settings(&manifest.name);
+        let enabled = settings
+            .as_ref()
+            .is_ok_and(|values| values.get("_enabled") == Some(&Value::Bool(true)));
         let entry = Arc::new(Installed {
             manifest,
             manifest_json,
@@ -848,8 +849,13 @@ impl ExtensionManager {
             engine: Mutex::default(),
             downloads: Mutex::default(),
         });
-        if let Err(error) = self.validate(&entry) {
-            self.failed(&entry, &error);
+        match settings {
+            Err(error) => self.failed(&entry, &error_from_environment(error)),
+            Ok(_) => {
+                if let Err(error) = self.validate(&entry) {
+                    self.failed(&entry, &error);
+                }
+            }
         }
         self.check()?;
         let id = entry.manifest.name.clone();
@@ -1048,8 +1054,105 @@ fn information(entry: &Installed) -> Value {
 #[cfg(test)]
 mod tests {
     use super::{ExtensionManager, RuntimeLimits};
+    use crate::storage::{StorageMasterKey, encrypt};
+    use serde_json::{Value, json};
     use std::fs::File;
     use std::sync::Arc;
+
+    #[test]
+    fn unreadable_settings_keep_installed_packages_visible_and_preserve_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let sources = directory.path().join("sources");
+        let data = directory.path().join("data");
+        let original_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let other_key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+        let key = StorageMasterKey::from_base64(original_key).unwrap();
+        let ids = ["example.first", "example.second"];
+        let mut snapshots = Vec::new();
+        for id in ids {
+            let source = sources.join(id);
+            let private = data.join(id);
+            std::fs::create_dir_all(&source).unwrap();
+            std::fs::create_dir_all(&private).unwrap();
+            std::fs::write(
+                source.join("manifest.json"),
+                json!({"name":id,"displayName":"Example","version":"1","description":"Storage recovery fixture","type":["metadata_provider"]}).to_string(),
+            ).unwrap();
+            // Even validation must not execute while private storage is broken.
+            std::fs::write(source.join("index.js"), "throw Error('must not run');").unwrap();
+            let settings = encrypt(
+                br#"{"_enabled":true,"region":"example"}"#,
+                &key.derive(id, "settings"),
+            )
+            .unwrap();
+            let credentials = encrypt(
+                br#"{"token":"example-secret"}"#,
+                &key.derive(id, "credentials"),
+            )
+            .unwrap();
+            std::fs::write(private.join("settings.enc"), &settings).unwrap();
+            std::fs::write(private.join(".credentials.enc"), &credentials).unwrap();
+            snapshots.push((private, settings, credentials));
+        }
+        let manager =
+            ExtensionManager::new(&sources, &data, other_key, "1", RuntimeLimits::default())
+                .unwrap();
+        let loaded: Value = serde_json::from_str(&manager.load_all().unwrap()).unwrap();
+        assert_eq!(loaded["loaded"], json!(ids));
+        let installed: Value = serde_json::from_str(&manager.installed().unwrap()).unwrap();
+        assert_eq!(installed.as_array().unwrap().len(), 2);
+        for entry in installed.as_array().unwrap() {
+            assert_eq!(entry["enabled"], false);
+            assert_eq!(entry["status"], "error");
+            assert_eq!(
+                entry["error_message"],
+                "cipher: message authentication failed"
+            );
+            assert!(
+                manager
+                    .get(entry["id"].as_str().unwrap())
+                    .unwrap()
+                    .engine
+                    .lock()
+                    .unwrap()
+                    .runtime
+                    .is_none()
+            );
+        }
+        for (private, settings, credentials) in &snapshots {
+            assert_eq!(
+                std::fs::read(private.join("settings.enc")).unwrap(),
+                *settings
+            );
+            assert_eq!(
+                std::fs::read(private.join(".credentials.enc")).unwrap(),
+                *credentials
+            );
+            assert!(!private.join(".cred_salt").exists());
+        }
+        manager.shutdown();
+
+        // Restoring the correct key makes the existing settings readable again.
+        for id in ids {
+            std::fs::write(sources.join(id).join("index.js"), "registerExtension({});").unwrap();
+        }
+        let recovered =
+            ExtensionManager::new(&sources, &data, original_key, "1", RuntimeLimits::default())
+                .unwrap();
+        recovered.load_all().unwrap();
+        let installed: Value = serde_json::from_str(&recovered.installed().unwrap()).unwrap();
+        for entry in installed.as_array().unwrap() {
+            assert_eq!(entry["enabled"], true);
+            assert_eq!(entry["status"], "loaded");
+            assert_eq!(
+                recovered
+                    .environment
+                    .settings(entry["id"].as_str().unwrap())
+                    .unwrap()["region"],
+                "example"
+            );
+        }
+    }
 
     #[test]
     fn manager_and_isolated_vm_share_one_retained_source_allocation() {
