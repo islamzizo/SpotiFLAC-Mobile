@@ -963,37 +963,31 @@ class _SpotifyLogoPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.shortestSide / 2;
-    final circlePaint = Paint()
+    // Use the same clean white treatment as the adjacent add button:
+    // transparent background with the Spotify mark drawn in white.
+    final width = size.width;
+    final height = size.height;
+    final paint = Paint()
       ..color = color
-      ..style = PaintingStyle.fill;
-
-    canvas.drawCircle(center, radius, circlePaint);
-
-    final arcPaint = Paint()
-      ..color = Colors.black
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
-      ..strokeWidth = radius * 0.16;
+      ..strokeWidth = size.shortestSide * 0.105;
 
-    final rect = Rect.fromCircle(
-      center: center,
-      radius: radius * 0.58,
-    );
-    canvas.drawArc(rect, -2.75, 1.45, false, arcPaint);
+    final paths = <Path>[
+      Path()
+        ..moveTo(width * 0.13, height * 0.30)
+        ..cubicTo(width * 0.37, height * 0.18, width * 0.68, height * 0.22, width * 0.88, height * 0.34),
+      Path()
+        ..moveTo(width * 0.18, height * 0.48)
+        ..cubicTo(width * 0.39, height * 0.39, width * 0.64, height * 0.43, width * 0.82, height * 0.53),
+      Path()
+        ..moveTo(width * 0.24, height * 0.65)
+        ..cubicTo(width * 0.42, height * 0.59, width * 0.61, height * 0.62, width * 0.75, height * 0.70),
+    ];
 
-    final rect2 = Rect.fromCircle(
-      center: center,
-      radius: radius * 0.43,
-    );
-    canvas.drawArc(rect2, -2.68, 1.32, false, arcPaint);
-
-    final rect3 = Rect.fromCircle(
-      center: center,
-      radius: radius * 0.28,
-    );
-    canvas.drawArc(rect3, -2.55, 1.12, false, arcPaint);
+    for (final path in paths) {
+      canvas.drawPath(path, paint);
+    }
   }
 
   @override
