@@ -1,26 +1,21 @@
 import 'dart:async';
 
-/// Runs live queue candidates with bounded concurrency. A single timed waiter
-/// observes completions instead of attaching listeners to active work each tick.
-class DownloadScheduler<T> {
-  const DownloadScheduler({
-    required this.queuedItems,
-    required this.idOf,
-    required this.isPaused,
-    required this.concurrency,
-    required this.start,
-    this.onFinished,
-    this.checkInterval = const Duration(milliseconds: 250),
+import 'package:spotiflac_android/services/download_scheduler.dart';
+
+/// Original scheduler for paired device timing. Keep its scheduling/draining
+/// behavior intact so both variants include the same futures and timer costs.
+class LegacyDownloadScheduler<T> extends DownloadScheduler<T> {
+  const LegacyDownloadScheduler({
+    required super.queuedItems,
+    required super.idOf,
+    required super.isPaused,
+    required super.concurrency,
+    required super.start,
+    super.onFinished,
+    super.checkInterval,
   });
 
-  final Iterable<T> Function() queuedItems;
-  final String Function(T) idOf;
-  final bool Function() isPaused;
-  final int Function() concurrency;
-  final Future<void> Function(T) start;
-  final void Function(String)? onFinished;
-  final Duration checkInterval;
-
+  @override
   Future<void> run() async {
     final active = <String>{};
     (Object, StackTrace)? failure;
@@ -68,8 +63,6 @@ class DownloadScheduler<T> {
               final id = idOf(item);
               // Retry can requeue an item before its previous attempt unwinds.
               if (!active.contains(id)) launch(item, id);
-              // Advancing the lazy filter again may scan a long completed tail.
-              if (active.length >= limit || isPaused()) break;
             }
           }
         }

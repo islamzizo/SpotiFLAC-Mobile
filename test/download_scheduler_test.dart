@@ -32,6 +32,37 @@ class _Queue {
 }
 
 void main() {
+  testWidgets('does not traverse a completed tail after the last free slot', (
+    tester,
+  ) async {
+    var checked = 0;
+    var paused = false;
+    final work = <Completer<void>>[];
+    final run = DownloadScheduler<int>(
+      queuedItems: () => Iterable<int>.generate(10000).where((item) {
+        checked++;
+        return item < 3;
+      }),
+      idOf: (item) => '$item',
+      isPaused: () => paused,
+      concurrency: () => 3,
+      start: (_) {
+        final pending = Completer<void>();
+        work.add(pending);
+        return pending.future;
+      },
+    ).run();
+    final checksAtAdmission = checked;
+    paused = true;
+    for (final pending in work) {
+      pending.complete();
+    }
+    await tester.pump();
+    await run;
+    expect(work, hasLength(3));
+    expect(checksAtAdmission, 3);
+  });
+
   testWidgets('fills free slots without scanning when every slot is occupied', (
     tester,
   ) async {
@@ -52,6 +83,84 @@ void main() {
     await tester.pump();
     await run;
     expect(queue.finished, ['b', 'a', 'c', 'd']);
+  });
+
+  testWidgets('stops selecting as soon as starting work pauses the queue', (
+    tester,
+  ) async {
+    var paused = false;
+    var checked = 0;
+    final started = <int>[];
+    final work = Completer<void>();
+    final run = DownloadScheduler<int>(
+      queuedItems: () => Iterable<int>.generate(10000).where((item) {
+        checked++;
+        return item == 0 || item == 9999;
+      }),
+      idOf: (item) => '$item',
+      isPaused: () => paused,
+      concurrency: () => 3,
+      start: (item) {
+        started.add(item);
+        paused = true;
+        return work.future;
+      },
+    ).run();
+    expect(checked, 1);
+    expect(started, [0]);
+    work.complete();
+    await tester.pump();
+    await run;
+  });
+
+  test(
+    'a pause during lazy selection prevents starting the yielded item',
+    () async {
+      var paused = false;
+      var started = false;
+      await DownloadScheduler<int>(
+        queuedItems: () => [0].where((item) {
+          paused = true;
+          return true;
+        }),
+        idOf: (item) => '$item',
+        isPaused: () => paused,
+        concurrency: () => 3,
+        start: (_) async => started = true,
+      ).run();
+      expect(started, isFalse);
+    },
+  );
+
+  testWidgets('selection errors still drain active work before returning', (
+    tester,
+  ) async {
+    final work = {'a': Completer<void>(), 'b': Completer<void>()};
+    final finished = <String>[];
+    var rejectSelection = false;
+    var done = false;
+    final failure = StateError('Queue selection unavailable');
+    final run = DownloadScheduler<String>(
+      queuedItems: () sync* {
+        if (rejectSelection) throw failure;
+        yield* work.keys;
+      },
+      idOf: (id) => id,
+      isPaused: () => false,
+      concurrency: () => 2,
+      start: (id) => work[id]!.future,
+      onFinished: finished.add,
+    ).run().whenComplete(() => done = true);
+    final assertion = expectLater(run, throwsA(same(failure)));
+    rejectSelection = true;
+    work['a']!.complete();
+    await tester.pump();
+    expect(done, isFalse);
+    expect(finished, ['a']);
+    work['b']!.complete();
+    await tester.pump();
+    await assertion;
+    expect(finished, ['a', 'b']);
   });
 
   testWidgets(
