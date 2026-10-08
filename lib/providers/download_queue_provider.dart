@@ -2025,10 +2025,8 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     _startMultiProgressPolling();
     try {
       await DownloadScheduler<DownloadItem>(
-        queuedItems: () => state.items.where(
-          (item) =>
-              item.status == DownloadStatus.queued &&
-              !_pausePendingItemIds.contains(item.id),
+        queuedItems: () => state.queuedItems.where(
+          (item) => !_pausePendingItemIds.contains(item.id),
         ),
         idOf: (item) => item.id,
         isPaused: () => state.isPaused,

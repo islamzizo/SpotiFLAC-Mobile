@@ -41,6 +41,94 @@ DownloadItem _item(int index) => DownloadItem(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'queued positions span word/chunk boundaries and preserve iterables',
+    () {
+      final queued = {
+        0,
+        1,
+        30,
+        31,
+        32,
+        33,
+        63,
+        64,
+        65,
+        1023,
+        1024,
+        2047,
+        2048,
+        2099,
+      };
+      var state = const DownloadQueueState().copyWith(
+        items: [
+          for (var i = 0; i < 2100; i++)
+            _item(i).copyWith(
+              status: queued.contains(i)
+                  ? DownloadStatus.queued
+                  : DownloadStatus.completed,
+            ),
+        ],
+      );
+      final old = state;
+      final captured = state.queuedItems;
+      final original = state.items
+          .where((item) => item.status == DownloadStatus.queued)
+          .toList();
+      for (final removed in [31, 32, 0, 2048, 2047, 33, 1024, 2099, 500, 64]) {
+        state = state.withoutItem('item-$removed');
+        expect(
+          state.queuedItems,
+          state.items.where((item) => item.status == DownloadStatus.queued),
+        );
+        expect(captured, original);
+        expect(old.queuedItems, original);
+      }
+      final previous = state.items;
+      final next = ChunkedList<DownloadItem>.from(previous).updated({
+        for (var i = 0; i < previous.length; i++)
+          i: previous[i].copyWith(status: DownloadStatus.completed),
+      });
+      state = state.copyWith(
+        items: next,
+        lookup: state.lookup.updatedForIndices(
+          previousItems: previous,
+          nextItems: next,
+          changedIndices: List.generate(previous.length, (i) => i),
+        ),
+      );
+      expect(state.queuedItems, isEmpty);
+      final restored = ChunkedList<DownloadItem>.from(next).updated({
+        for (final i in [31, 32, 63, 64, 2047, 2048])
+          i: next[i].copyWith(status: DownloadStatus.queued),
+      });
+      state = state.copyWith(
+        items: restored,
+        lookup: state.lookup.updatedForIndices(
+          previousItems: next,
+          nextItems: restored,
+          changedIndices: [2048, 31, 64, 32, 2047, 63],
+        ),
+      );
+      expect(state.queuedItems, [
+        for (final i in [31, 32, 63, 64, 2047, 2048]) restored[i],
+      ]);
+      expect(captured, original);
+    },
+  );
+
+  test('raw and mismatched queue states keep ordinary status filtering', () {
+    final items = [_item(0), _item(1).copyWith(status: DownloadStatus.queued)];
+    final raw = DownloadQueueState(items: items);
+    expect(raw.queuedItems, [items[1]]);
+    final unrelated = DownloadQueueLookup.fromItems([_item(3), _item(4)]);
+    final mismatched = DownloadQueueState(items: items, lookup: unrelated);
+    expect(mismatched.queuedItems, [items[1]]);
+    items[0] = items[0].copyWith(status: DownloadStatus.queued);
+    expect(raw.queuedItems, items);
+    expect(mismatched.queuedItems, items);
+  });
+
+  test(
     'sparse updates preserve snapshots and do not revisit the source list',
     () {
       final source = _CountingList(List.generate(10000, (i) => i));
@@ -100,6 +188,10 @@ void main() {
         expect(state.lookup.finalizingCount, rebuilt.finalizingCount);
         expect(state.lookup.firstDownloading, same(rebuilt.firstDownloading));
         expect(state.lookup.firstFinalizing, same(rebuilt.firstFinalizing));
+        expect(
+          state.queuedItems,
+          state.items.where((item) => item.status == DownloadStatus.queued),
+        );
         expect(state.lookup.notCompletedItemIds, rebuilt.notCompletedItemIds);
         expect(
           old.lookup.byItemId[old.items[index].id],
@@ -119,6 +211,10 @@ void main() {
     'notification candidates follow batch transitions and keep old values',
     () {
       void check(DownloadQueueState state) {
+        expect(
+          state.queuedItems,
+          state.items.where((item) => item.status == DownloadStatus.queued),
+        );
         expect(
           state.lookup.firstDownloading,
           same(

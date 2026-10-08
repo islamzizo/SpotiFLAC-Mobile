@@ -128,6 +128,79 @@ class _QueueItemIds extends ListBase<String> {
       throw UnsupportedError('Immutable queue IDs');
 }
 
+/// One bit per queued position. Sparse status changes copy only the affected
+/// word chunks; progress-only updates share the index. This also skips gaps
+/// between candidates without rescanning DownloadItem objects during launch.
+class _QueuedPositions {
+  const _QueuedPositions.empty() : words = const [], firstWord = -1;
+  _QueuedPositions._(this.words, this.firstWord);
+  final List<int> words;
+  final int firstWord;
+
+  factory _QueuedPositions.fromWords(List<int> words) =>
+      _QueuedPositions._(ChunkedList<int>.from(words), _findFirst(words, 0));
+
+  static int _findFirst(List<int> words, int start) {
+    for (var index = start; index < words.length; index++) {
+      if (words[index] != 0) return index;
+    }
+    return -1;
+  }
+
+  Iterable<int> get indices sync* {
+    if (firstWord < 0) return;
+    for (var index = firstWord; index < words.length; index++) {
+      var remaining = words[index];
+      while (remaining != 0) {
+        final lowestBit = remaining & -remaining;
+        yield (index << 5) + lowestBit.bitLength - 1;
+        remaining ^= lowestBit;
+      }
+    }
+  }
+
+  _QueuedPositions updated(
+    List<DownloadItem> previousItems,
+    List<DownloadItem> nextItems,
+    Set<int> changedIndices,
+  ) {
+    Map<int, int>? changes;
+    for (final index in changedIndices) {
+      final wasQueued = previousItems[index].status == DownloadStatus.queued;
+      final isQueued = nextItems[index].status == DownloadStatus.queued;
+      if (wasQueued == isQueued) continue;
+      changes ??= {};
+      final word = index >> 5;
+      final bit = 1 << (index & 31);
+      final value = changes[word] ?? words[word];
+      changes[word] = isQueued ? value | bit : value & ~bit;
+    }
+    if (changes == null) return this;
+    final next = ChunkedList<int>.from(words).updated(changes);
+    var first = firstWord;
+    for (final entry in changes.entries) {
+      if (entry.value != 0 && (first < 0 || entry.key < first)) {
+        first = entry.key;
+      }
+    }
+    if (first >= 0 && next[first] == 0) first = _findFirst(next, first + 1);
+    return _QueuedPositions._(next, first);
+  }
+
+  _QueuedPositions removing(int index, int nextLength) {
+    final shifted = List<int>.of(words);
+    final first = index >> 5;
+    for (var word = first; word < words.length; word++) {
+      final lowMask = word == first ? (1 << (index & 31)) - 1 : 0;
+      final carry = word + 1 < words.length ? (words[word + 1] & 1) << 31 : 0;
+      shifted[word] =
+          (words[word] & lowMask) | ((words[word] >> 1) & ~lowMask) | carry;
+    }
+    if (shifted.length > ((nextLength + 31) >> 5)) shifted.removeLast();
+    return _QueuedPositions.fromWords(shifted);
+  }
+}
+
 /// Immutable queue state shared by the notifier and read-only UI consumers.
 ///
 /// Keeping this model outside the notifier implementation makes queue state
@@ -206,6 +279,12 @@ class DownloadQueueState {
   int get activeDownloadsCount =>
       items.isEmpty ? 0 : lookup.activeDownloadsCount;
 
+  /// Ordered candidates from this snapshot. Raw/custom states without a
+  /// matching immutable lookup retain the ordinary status-filter behavior.
+  Iterable<DownloadItem> get queuedItems => identical(items, lookup._items)
+      ? lookup._queuedPositions.indices.map((index) => items[index])
+      : items.where((item) => item.status == DownloadStatus.queued);
+
   DownloadQueueState withoutItem(String id) {
     final index = lookup.indexByItemId[id];
     if (lookup.indexByItemId.length != items.length ||
@@ -251,6 +330,7 @@ class DownloadQueueLookup {
   final List<DownloadItem> _items;
   final int? _firstDownloadingIndex;
   final int? _firstFinalizingIndex;
+  final _QueuedPositions _queuedPositions;
   final Map<String, List<int>>? _duplicateTrackPositions;
 
   DownloadItem? get firstDownloading =>
@@ -272,6 +352,7 @@ class DownloadQueueLookup {
       _items = const [],
       _firstDownloadingIndex = null,
       _firstFinalizingIndex = null,
+      _queuedPositions = const _QueuedPositions.empty(),
       _duplicateTrackPositions = null;
 
   DownloadQueueLookup._({
@@ -288,10 +369,12 @@ class DownloadQueueLookup {
     required List<DownloadItem> items,
     required int? firstDownloadingIndex,
     required int? firstFinalizingIndex,
+    required _QueuedPositions queuedPositions,
     Map<String, List<int>>? duplicateTrackPositions,
   }) : _items = items,
        _firstDownloadingIndex = firstDownloadingIndex,
        _firstFinalizingIndex = firstFinalizingIndex,
+       _queuedPositions = queuedPositions,
        _duplicateTrackPositions = duplicateTrackPositions;
 
   static int? _firstAfterRemoval(
@@ -429,6 +512,7 @@ class DownloadQueueLookup {
         finalizingCount,
         nextItems,
       ),
+      queuedPositions: _queuedPositions.removing(index, nextItems.length),
       duplicateTrackPositions: duplicates,
     );
   }
@@ -445,6 +529,7 @@ class DownloadQueueLookup {
     var finalizingCount = 0;
     int? firstDownloadingIndex;
     int? firstFinalizingIndex;
+    final queuedWords = List<int>.filled((items.length + 31) >> 5, 0);
     for (var index = 0; index < items.length; index++) {
       final item = items[index];
       byTrackIndex.putIfAbsent(item.track.id, () => index);
@@ -454,6 +539,9 @@ class DownloadQueueLookup {
         notCompletedItemIds.add(item.id);
       }
       if (_countsAsQueued(item.status)) queuedCount++;
+      if (item.status == DownloadStatus.queued) {
+        queuedWords[index >> 5] |= 1 << (index & 31);
+      }
       if (item.status == DownloadStatus.completed) completedCount++;
       if (item.status == DownloadStatus.failed) failedCount++;
       if (item.status == DownloadStatus.downloading) {
@@ -481,6 +569,7 @@ class DownloadQueueLookup {
       items: snapshot,
       firstDownloadingIndex: firstDownloadingIndex,
       firstFinalizingIndex: firstFinalizingIndex,
+      queuedPositions: _QueuedPositions.fromWords(queuedWords),
     );
   }
 
@@ -601,6 +690,11 @@ class DownloadQueueLookup {
         _firstFinalizingIndex,
         DownloadStatus.finalizing,
         nextFinalizingCount,
+        snapshot,
+        normalizedChanged,
+      ),
+      queuedPositions: _queuedPositions.updated(
+        previousItems,
         snapshot,
         normalizedChanged,
       ),

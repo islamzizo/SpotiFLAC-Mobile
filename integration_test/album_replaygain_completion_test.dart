@@ -324,7 +324,12 @@ registerExtension({
                 next.items
                     .where((item) => item.status == DownloadStatus.finalizing)
                     .firstOrNull,
-              );
+              ) &&
+              orderedEquals(
+                next.items.where(
+                  (item) => item.status == DownloadStatus.queued,
+                ),
+              ).matches(next.queuedItems, {});
           for (final item in next.items) {
             final transitions = states.putIfAbsent(item.track.id, () => []);
             if (transitions.lastOrNull != item.status.name) {

@@ -39,6 +39,10 @@ void _check(DownloadQueueState state) {
   expect(actual.failedCount, expected.failedCount);
   expect(actual.activeDownloadsCount, expected.activeDownloadsCount);
   expect(actual.finalizingCount, expected.finalizingCount);
+  expect(
+    state.queuedItems,
+    state.items.where((item) => item.status == DownloadStatus.queued),
+  );
   for (final entry in {
     DownloadStatus.downloading: actual.firstDownloading,
     DownloadStatus.finalizing: actual.firstFinalizing,
