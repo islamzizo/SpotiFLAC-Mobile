@@ -10,6 +10,7 @@ import 'package:spotiflac_android/models/download_item.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/app_state_database.dart';
 import 'package:spotiflac_android/services/download_queue_persistence.dart';
+import 'package:spotiflac_android/utils/chunked_list.dart';
 
 DownloadItem _item(
   String id, {
@@ -202,6 +203,111 @@ void main() {
       expect([untouched.serializations, changed.serializations], [1, 3]);
     },
   );
+
+  test(
+    'immutable snapshots are retried after failed combined writes',
+    () async {
+      final store = _Store();
+      final track = _CountingTrack('retained');
+      var items = ChunkedList.from([
+        _item('retained').copyWith(track: track),
+        _item('removed'),
+      ]);
+      var rejectWrite = false;
+      final errors = <Object>[];
+      final persistence = DownloadQueuePersistence(
+        currentItems: () => items,
+        onError: errors.add,
+        loadRows: store.load,
+        applyChanges: ({required upserts, required deletedIds}) async {
+          if (rejectWrite) throw StateError('disk unavailable');
+          await store.apply(upserts: upserts, deletedIds: deletedIds);
+        },
+      );
+      addTearDown(persistence.dispose);
+      await persistence.flush();
+      await persistence.flush();
+      expect(track.serializations, 1);
+      expect(store.writes, 1);
+      final original = items;
+      items = ChunkedList.from([
+        items.first.copyWith(playlistName: 'Updated'),
+        _item('added'),
+      ]);
+      rejectWrite = true;
+      await persistence.flush();
+      expect(errors, hasLength(1));
+      expect(store.rows.keys, ['retained', 'removed']);
+      expect(store.writes, 1);
+      rejectWrite = false;
+      await persistence.flush();
+      expect(store.rows.keys, ['retained', 'added']);
+      expect(
+        store.rows['retained']!['item_json'],
+        encodeDownloadQueueItemForPersistence(items.first),
+      );
+      final serialized = track.serializations;
+      await persistence.flush();
+      expect(track.serializations, serialized);
+      expect(store.writes, 2);
+      items = original;
+      await persistence.flush();
+      expect(store.rows.keys, ['retained', 'removed']);
+      expect(
+        store.rows['retained']!['item_json'],
+        encodeDownloadQueueItemForPersistence(original.first),
+      );
+      expect(store.writes, 3);
+    },
+  );
+
+  test(
+    'in-place mutable list edits are never treated as a saved snapshot',
+    () async {
+      final store = _Store();
+      final items = [_item('first'), _item('removed')];
+      final persistence = DownloadQueuePersistence(
+        currentItems: () => items,
+        onError: (error) => fail('$error'),
+        loadRows: store.load,
+        applyChanges: store.apply,
+      );
+      addTearDown(persistence.dispose);
+      await persistence.flush();
+      items[0] = items[0].copyWith(playlistName: 'Updated');
+      items.removeLast();
+      items.add(_item('added'));
+      await persistence.flush();
+      expect(store.rows.keys, ['first', 'added']);
+      expect(
+        store.rows['first']!['item_json'],
+        encodeDownloadQueueItemForPersistence(items.first),
+      );
+      items.clear();
+      await persistence.flush();
+      expect(store.rows, isEmpty);
+      expect(store.writes, 3);
+    },
+  );
+
+  test('restore invalidates the previously saved immutable snapshot', () async {
+    final store = _Store();
+    final items = ChunkedList.from([_item('retained')]);
+    final persistence = DownloadQueuePersistence(
+      currentItems: () => items,
+      onError: (error) => fail('$error'),
+      loadRows: store.load,
+      applyChanges: store.apply,
+    );
+    addTearDown(persistence.dispose);
+    await persistence.flush();
+    store.rows.clear();
+    store.seed(_item('external'));
+    expect((await persistence.restore()).single.id, 'external');
+    await persistence.flush();
+    expect(store.rows.keys, ['retained']);
+    expect(store.writes, 2);
+  });
 
   test(
     'failed writes retry and concurrent flushes retain the latest snapshot',

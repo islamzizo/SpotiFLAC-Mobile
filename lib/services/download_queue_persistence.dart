@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/models/download_item.dart';
 import 'package:spotiflac_android/services/app_state_database.dart';
 import 'package:spotiflac_android/services/download_queue_codec.dart';
+import 'package:spotiflac_android/utils/chunked_list.dart';
 
 export 'package:spotiflac_android/services/download_queue_codec.dart'
     show downloadQueuePersistenceStatus, encodeDownloadQueueItemForPersistence;
@@ -32,6 +33,7 @@ class DownloadQueuePersistence {
   Future<void> _write = Future<void>.value();
   Future<void> _pauseWrite = Future<void>.value();
   Map<String, DownloadQueueSavedItem> _saved = {};
+  List<DownloadItem>? _savedSnapshot;
 
   static Future<List<Map<String, dynamic>>> _loadRows() async {
     final database = AppStateDatabase.instance;
@@ -65,6 +67,7 @@ class DownloadQueuePersistence {
 
   Future<List<DownloadItem>> restore() {
     final restored = _write.then((_) async {
+      _savedSnapshot = null;
       final decoded = await decodeDownloadQueueRows(await loadRows());
       _saved = decoded.saved;
       return decoded.items;
@@ -100,7 +103,11 @@ class DownloadQueuePersistence {
   Future<void> _enqueue(List<DownloadItem> items) {
     return _write = _write
         .then((_) async {
-          final nextSaved = <String, DownloadQueueSavedItem>{};
+          // Queue states use immutable storage. Repeated lifecycle/debounce
+          // flushes of an already committed snapshot need no diff or encoding.
+          if (identical(items, _savedSnapshot)) return;
+          final seenIds = <String>{};
+          final savedUpdates = <String, DownloadQueueSavedItem>{};
           final upserts = <Map<String, dynamic>>[];
           final now = DateTime.now().toIso8601String();
           final changed = <DownloadItem>[];
@@ -112,12 +119,14 @@ class DownloadQueuePersistence {
             final saved = _saved[item.id];
             final cached =
                 identical(saved?.item, item) && saved?.payload != null;
-            nextSaved[item.id] = (
-              item: item,
-              payload: cached ? saved!.payload : null,
-            );
+            seenIds.add(item.id);
             if (!cached) {
+              savedUpdates[item.id] = (item: item, payload: null);
               changed.add(item);
+            } else if (savedUpdates.containsKey(item.id)) {
+              // Preserve the last non-terminal occurrence for malformed input
+              // with repeated request IDs, just as the full snapshot did.
+              savedUpdates[item.id] = saved!;
             }
           }
           final encoded = await encodeDownloadQueueItems(changed);
@@ -125,8 +134,8 @@ class DownloadQueuePersistence {
             final item = changed[index];
             final saved = _saved[item.id];
             final payload = encoded[index];
-            if (identical(nextSaved[item.id]?.item, item)) {
-              nextSaved[item.id] = (item: item, payload: payload);
+            if (identical(savedUpdates[item.id]?.item, item)) {
+              savedUpdates[item.id] = (item: item, payload: payload);
             }
             if (saved?.payload == payload) continue;
             upserts.add({
@@ -138,12 +147,20 @@ class DownloadQueuePersistence {
             });
           }
           final deletedIds = _saved.keys
-              .where((id) => !nextSaved.containsKey(id))
+              .where((id) => !seenIds.contains(id))
               .toList(growable: false);
           if (upserts.isNotEmpty || deletedIds.isNotEmpty) {
             await applyChanges(upserts: upserts, deletedIds: deletedIds);
           }
-          _saved = nextSaved;
+          // Keep the last durable cache intact until the complete write has
+          // succeeded, so failed changes are still retried by the next flush.
+          for (final id in deletedIds) {
+            _saved.remove(id);
+          }
+          _saved.addAll(savedUpdates);
+          // Callers outside the notifier may supply a mutable List. Its
+          // identity alone never proves that its contents stayed unchanged.
+          _savedSnapshot = items is ChunkedList<DownloadItem> ? items : null;
         })
         .catchError(onError);
   }
