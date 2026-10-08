@@ -2,7 +2,7 @@
 part of 'download_queue_provider.dart';
 
 class _AlbumRgTrackEntry {
-  String filePath;
+  final String filePath;
   final String trackId;
   final double integratedLufs;
   final double truePeakLinear;
@@ -19,6 +19,8 @@ class _AlbumRgTrackEntry {
 
 class _AlbumRgAccumulator {
   final List<_AlbumRgTrackEntry> entries = [];
+  int revision = 0;
+  Future<void>? writing;
 }
 
 extension _DownloadQueueReplayGain on DownloadQueueNotifier {
@@ -31,6 +33,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final accumulator = _albumRgData[key];
     if (accumulator == null) return;
     accumulator.entries.removeWhere((e) => e.trackId == track.id);
+    accumulator.revision++;
     if (accumulator.entries.isEmpty) {
       _albumRgData.remove(key);
     }
@@ -60,6 +63,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
         durationSecs: track.duration.toDouble(),
       ),
     );
+    _albumRgData[key]!.revision++;
   }
 
   /// Replace the temp path stored in the accumulator with the final output
@@ -69,9 +73,18 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final key = _albumRgKey(track);
     final accumulator = _albumRgData[key];
     if (accumulator == null) return;
-    for (final entry in accumulator.entries) {
+    for (var i = 0; i < accumulator.entries.length; i++) {
+      final entry = accumulator.entries[i];
       if (entry.trackId == track.id) {
-        entry.filePath = finalPath;
+        if (entry.filePath == finalPath) return;
+        accumulator.entries[i] = _AlbumRgTrackEntry(
+          filePath: finalPath,
+          trackId: entry.trackId,
+          integratedLufs: entry.integratedLufs,
+          truePeakLinear: entry.truePeakLinear,
+          durationSecs: entry.durationSecs,
+        );
+        accumulator.revision++;
         break;
       }
     }
@@ -81,6 +94,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
   /// in the current queue are done.  If so, compute album gain and write it
   /// to every track's file.
   Future<void> _checkAndWriteAlbumReplayGain(Track track) async {
+    if (!ref.mounted) return;
     final settings = ref.read(settingsProvider);
     if (!settings.embedReplayGain) return;
 
@@ -90,12 +104,12 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
 
     if (albumReplayGainBlocked(state.items, key)) return;
 
-    // The accumulator entries represent successfully scanned tracks.  Entries
-    // are only added after a successful ReplayGain scan, removed on retry or
-    // when a non-completed item is removed from the queue, so every entry
-    // here corresponds to a track that completed (or is about to complete)
-    // its download.
-    await _computeAndWriteAlbumRg(key, accumulator);
+    // A tag failure must not turn a durable download back into a failed item.
+    try {
+      await _computeAndWriteAlbumRg(key, accumulator);
+    } catch (e) {
+      _log.w('Album ReplayGain check failed: $e');
+    }
   }
 
   /// Write album ReplayGain tags to a single file.
@@ -140,11 +154,50 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
   Future<void> _computeAndWriteAlbumRg(
     String key,
     _AlbumRgAccumulator accumulator,
+  ) {
+    // Concurrent completions/dismissals can observe the same ready album.
+    // Share the write so they cannot edit the same audio files concurrently.
+    final pending = accumulator.writing;
+    if (pending != null) return pending;
+    late final Future<void> writing;
+    writing = _writeReadyAlbumRg(key, accumulator).whenComplete(() {
+      if (identical(accumulator.writing, writing)) accumulator.writing = null;
+    });
+    accumulator.writing = writing;
+    return writing;
+  }
+
+  Future<void> _writeReadyAlbumRg(
+    String key,
+    _AlbumRgAccumulator accumulator,
+  ) async {
+    while (ref.mounted && identical(_albumRgData[key], accumulator)) {
+      // The caller already checked readiness. Only rescan if the queue changes
+      // during I/O; a bulk retrigger must not become one full scan per album.
+      final queueItems = state.items;
+      final revision = accumulator.revision;
+      await _writeAlbumRgSnapshot(key, accumulator);
+      if (!ref.mounted || !identical(_albumRgData[key], accumulator)) return;
+      // New requests/scans or final-path changes may arrive during tag I/O.
+      // Retain their statistics until those requests complete, then recompute.
+      if (!identical(queueItems, state.items) &&
+          albumReplayGainBlocked(state.items, key)) {
+        return;
+      }
+      if (revision == accumulator.revision) {
+        _albumRgData.remove(key);
+        return;
+      }
+    }
+  }
+
+  Future<void> _writeAlbumRgSnapshot(
+    String key,
+    _AlbumRgAccumulator accumulator,
   ) async {
     final validEntries = accumulator.entries.toList();
     // Single-track albums already have their track gain, so need no write.
     if (validEntries.length <= 1) {
-      _albumRgData.remove(key);
       return;
     }
 
@@ -174,13 +227,12 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     );
 
     for (final entry in validEntries) {
+      if (!ref.mounted || !identical(_albumRgData[key], accumulator)) return;
       try {
         await _writeAlbumReplayGain(entry.filePath, albumGain, albumPeak);
       } catch (e) {
         _log.w('Failed to write album ReplayGain to ${entry.filePath}: $e');
       }
     }
-
-    _albumRgData.remove(key);
   }
 }

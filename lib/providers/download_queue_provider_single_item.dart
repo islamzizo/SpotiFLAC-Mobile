@@ -849,6 +849,22 @@ class _DownloadRun {
 
     final rgPath = filePath;
     stageCompleted('external lyrics');
+    if (wasExisting &&
+        rgPath != null &&
+        !isNetworkDownload &&
+        settings.embedReplayGain) {
+      // A retry after history persistence failed may reuse the finished file.
+      // retryItem purges the old scan, and normal metadata embedding is skipped
+      // for existing files, so recover the measurement for this attempt.
+      try {
+        final scan = await ReplayGainService.scanAndApplyToFile(rgPath);
+        if (scan != null) {
+          n._storeTrackReplayGainForAlbum(trackToDownload, rgPath, scan);
+        }
+      } catch (e) {
+        _log.w('Could not recover ReplayGain for existing download: $e');
+      }
+    }
     // Album ReplayGain: update the accumulator path to the final file
     // location.  For SAF downloads the metadata was embedded on a temp
     // copy, so the stored path still points there.  Replace it with the
@@ -857,17 +873,6 @@ class _DownloadRun {
     if (rgPath != null && !isNetworkDownload) {
       n._updateAlbumRgFilePath(trackToDownload, rgPath);
     }
-    // Album ReplayGain: check if all album tracks are now complete and,
-    // if so, compute and write album gain/peak to every track file.
-    try {
-      if (!isNetworkDownload) {
-        await n._checkAndWriteAlbumReplayGain(trackToDownload);
-      }
-    } catch (e) {
-      _log.w('Album ReplayGain check failed: $e');
-    }
-    stageCompleted('album ReplayGain');
-
     await _persistCompletionAndNotify();
     stageCompleted('quality probe, history and notification');
     return true;
@@ -1694,6 +1699,11 @@ class _DownloadRun {
           );
         },
       );
+      // Only durable completions can unblock an album. Checking while this
+      // item is still finalizing makes the final track block its own album.
+      if (!isNetworkDownload) {
+        await n._checkAndWriteAlbumReplayGain(trackToDownload);
+      }
       try {
         await n._notificationService.showDownloadComplete(
           trackName: item.track.name,

@@ -1597,6 +1597,9 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
         );
       },
     );
+    // Quality-variant renaming may have changed the path since the scan.
+    _updateAlbumRgFilePath(trackToDownload, completedFilePath);
+    await _checkAndWriteAlbumReplayGain(trackToDownload);
     removeItem(item.id);
   }
 
@@ -1623,8 +1626,6 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
         return;
       }
       _storeTrackReplayGainForAlbum(track, filePath, rgResult);
-      _updateAlbumRgFilePath(track, filePath);
-      await _checkAndWriteAlbumReplayGain(track);
       _log.d(
         'Native-worker ReplayGain written: gain=${rgResult.trackGain}, peak=${rgResult.trackPeak}',
       );
