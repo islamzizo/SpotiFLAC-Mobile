@@ -16,8 +16,6 @@ import 'package:spotiflac_android/widgets/app_search_field.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/library_search_results.dart';
 import 'package:spotiflac_android/widgets/library_track_selection_bar.dart';
-import 'package:spotiflac_android/widgets/library_selection_playback_actions.dart';
-import 'package:spotiflac_android/widgets/library_playlist_drag_source.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,7 +25,6 @@ import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/utils/audio_quality_badge_policy.dart';
 import 'package:spotiflac_android/utils/nav_bar_inset.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
-import 'package:spotiflac_android/utils/library_format_filters.dart';
 import 'package:spotiflac_android/utils/ordered_range_selection.dart';
 import 'package:spotiflac_android/models/download_item.dart';
 import 'package:spotiflac_android/models/settings.dart';
@@ -42,7 +39,6 @@ import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/library_database.dart';
-import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
@@ -55,6 +51,7 @@ import 'package:spotiflac_android/services/cover_cache_manager.dart';
 import 'package:spotiflac_android/screens/library_tracks_folder_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
 import 'package:spotiflac_android/screens/mornye_library_screen.dart';
+import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/screens/queue_library_refresh_policy.dart';
 import 'package:spotiflac_android/utils/clickable_metadata.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
@@ -212,7 +209,6 @@ DownloadHistoryItem? _historyItemForCompletionBridge(
 
 class QueueTab extends ConsumerStatefulWidget {
   final String? librarySection;
-  final bool isTabActive;
   final PageController? parentPageController;
   final int parentPageIndex;
   final int? nextPageIndex;
@@ -220,7 +216,6 @@ class QueueTab extends ConsumerStatefulWidget {
   const QueueTab({
     super.key,
     this.librarySection,
-    this.isTabActive = true,
     this.parentPageController,
     this.parentPageIndex = 1,
     this.nextPageIndex,
@@ -244,7 +239,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   final ValueNotifier<int> _embeddedCoverVersion = ValueNotifier<int>(0);
 
   bool _isSelectionMode = false;
-  bool _isDraggingLibraryTrack = false;
   final Set<String> _selectedIds = {};
   String? _selectionAnchorId;
   final SelectionOverlayController _selectionOverlay =
@@ -367,9 +361,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   /// configured, jump the filter pager to it.
   void _applyDefaultLibraryViewOnTabVisible() {
     if (widget.librarySection != null) return;
-    // Route transitions also disable TickerMode. Only a shell tab change
-    // should reset the user's current album/single view.
-    final isVisible = widget.isTabActive;
+    final isVisible = TickerMode.valuesOf(context).enabled;
     final becameVisible = isVisible && !_wasTabVisible;
     _wasTabVisible = isVisible;
     if (!becameVisible) return;
@@ -562,9 +554,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
       if (!mounted) return;
       _invalidateLibraryDataCaches();
       ref.read(downloadHistoryProvider.notifier).reloadFromStorage();
-      if (ref.read(settingsProvider).localLibraryEnabled) {
-        ref.read(localLibraryProvider.notifier).reloadFromStorage();
-      }
+      ref.read(localLibraryProvider.notifier).reloadFromStorage();
       setState(() {});
     });
   }
@@ -730,8 +720,56 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     });
   }
 
-  void _showFilterSheet(BuildContext context) {
+  String _fileExtLower(String filePath) {
+    final dotIndex = filePath.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex == filePath.length - 1) {
+      return '';
+    }
+    return filePath.substring(dotIndex + 1).toLowerCase();
+  }
+
+  String _itemFormatLower(UnifiedLibraryItem item) {
+    final localFormat = normalizeOptionalString(item.localItem?.format);
+    if (localFormat != null) {
+      return localFormat.toLowerCase().replaceAll('-', '_');
+    }
+    final historyFormat = normalizeOptionalString(item.historyItem?.format);
+    if (historyFormat != null) {
+      return historyFormat.toLowerCase().replaceAll('-', '_');
+    }
+    return _fileExtLower(item.filePath);
+  }
+
+  Set<String> _getAvailableFormats(List<UnifiedLibraryItem> items) {
+    final formats = <String>{};
+    for (final item in items) {
+      final ext = _itemFormatLower(item);
+      if ([
+        'flac',
+        'alac',
+        'mp3',
+        'm4a',
+        'aac',
+        'eac3',
+        'ac3',
+        'ac4',
+        'opus',
+        'ogg',
+        'wav',
+        'aiff',
+      ].contains(ext)) {
+        formats.add(ext);
+      }
+    }
+    return formats;
+  }
+
+  void _showFilterSheet(
+    BuildContext context,
+    List<UnifiedLibraryItem> allItems,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
+    final availableFormats = _getAvailableFormats(allItems);
 
     String? tempSource = _filterSource;
     String? tempQuality = _filterQuality;
@@ -871,7 +909,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                           const SizedBox(height: 8),
                           Wrap(
                             spacing: 8,
-                            runSpacing: 8,
                             children: [
                               AppChoiceChip(
                                 label: Text(context.l10n.libraryFilterAll),
@@ -880,13 +917,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                     setSheetState(() => tempFormat = null),
                               ),
                               for (final format
-                                  in libraryFormatFilterAliases.keys)
+                                  in availableFormats.toList()..sort())
                                 AppChoiceChip(
-                                  label: Text(switch (format) {
-                                    'm4a' => 'M4A / MP4',
-                                    'wv' => 'WavPack',
-                                    _ => format.toUpperCase(),
-                                  }),
+                                  label: Text(format.toUpperCase()),
                                   selected: tempFormat == format,
                                   onSelected: (_) =>
                                       setSheetState(() => tempFormat = format),
@@ -1042,43 +1075,11 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                 label: Text(
                                   context
                                       .l10n
-                                      .libraryFilterMetadataHasReplayGain,
-                                ),
-                                selected: tempMetadata == 'has-replaygain',
-                                onSelected: (_) => setSheetState(
-                                  () => tempMetadata = 'has-replaygain',
-                                ),
-                              ),
-                              AppChoiceChip(
-                                label: Text(
-                                  context
-                                      .l10n
                                       .libraryFilterMetadataMissingReplayGain,
                                 ),
                                 selected: tempMetadata == 'missing-replaygain',
                                 onSelected: (_) => setSheetState(
                                   () => tempMetadata = 'missing-replaygain',
-                                ),
-                              ),
-                              AppChoiceChip(
-                                label: Text(
-                                  context.l10n.libraryFilterIncompleteAlbums,
-                                ),
-                                selected: tempMetadata == incompleteAlbumFilter,
-                                onSelected: (_) => setSheetState(
-                                  () => tempMetadata = incompleteAlbumFilter,
-                                ),
-                              ),
-                              AppChoiceChip(
-                                label: Text(
-                                  context.l10n.libraryAlbumCompletenessUnknown,
-                                ),
-                                selected:
-                                    tempMetadata ==
-                                    unknownAlbumCompletenessFilter,
-                                onSelected: (_) => setSheetState(
-                                  () => tempMetadata =
-                                      unknownAlbumCompletenessFilter,
                                 ),
                               ),
                             ],
@@ -1206,12 +1207,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                   _resetLibraryPaging();
                                 });
                                 Navigator.pop(context);
-                                if (widget.librarySection == null &&
-                                    isAlbumCompletenessFilter(tempMetadata)) {
-                                  _animateToFilterPage(
-                                    _filterModes.indexOf('albums'),
-                                  );
-                                }
                               },
                               child: Text(context.l10n.libraryFilterApply),
                             ),
@@ -1242,9 +1237,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     }
     _initializePageController();
     _applyDefaultLibraryViewOnTabVisible();
-    final localLibraryEnabled = ref.watch(
-      settingsProvider.select((s) => s.localLibraryEnabled),
-    );
 
     ref.listen(downloadQueueLookupProvider, (previous, next) {
       if (previous == null) return;
@@ -1291,17 +1283,15 @@ class _QueueTabState extends ConsumerState<QueueTab> {
         if (mounted) setState(() {});
       },
     );
-    if (localLibraryEnabled) {
-      ref.listen<int>(
-        localLibraryProvider.select((state) => state.loadedIndexVersion),
-        (previous, next) {
-          if (previous == null || previous == next) return;
-          // Keep stale rows visible until the refreshed query replaces them.
-          _resetLibraryOffsets();
-          if (mounted) setState(() {});
-        },
-      );
-    }
+    ref.listen<int>(
+      localLibraryProvider.select((state) => state.loadedIndexVersion),
+      (previous, next) {
+        if (previous == null || previous == next) return;
+        // Keep stale rows visible until the refreshed query replaces them.
+        _resetLibraryOffsets();
+        if (mounted) setState(() {});
+      },
+    );
 
     if (widget.librarySection == 'downloads') {
       final ids = ref.watch(
@@ -1342,9 +1332,12 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     final inMemoryHistoryItems = ref.watch(
       downloadHistoryProvider.select((state) => state.items),
     );
-    final localLibraryTotalCount = localLibraryEnabled
-        ? ref.watch(localLibraryProvider.select((state) => state.totalCount))
-        : 0;
+    final localLibraryTotalCount = ref.watch(
+      localLibraryProvider.select((state) => state.totalCount),
+    );
+    final localLibraryEnabled = ref.watch(
+      settingsProvider.select((s) => s.localLibraryEnabled),
+    );
     // Watch with selector on key fields to reduce unnecessary rebuilds.
     // LibraryCollectionsState doesn't implement == so watching without
     // selector rebuilds on every provider notification.
@@ -1383,7 +1376,6 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     );
     final searchingLibrary =
         _searchQuery.isNotEmpty &&
-        !isAlbumCompletenessFilter(_filterMetadata) &&
         !_isSelectionMode &&
         !_isPlaylistSelectionMode;
     final countsValue = searchingLibrary
@@ -1572,6 +1564,34 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                     title: widget.librarySection == 'playlists'
                         ? context.l10n.searchPlaylists
                         : context.l10n.searchSongs,
+                  ),
+
+                if (widget.librarySection == null)
+                  SliverToBoxAdapter(
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 8,
+                      ),
+                      leading: Icon(
+                        Icons.playlist_add,
+                        color: Theme.of(context).colorScheme.primary,
+                        size: 28,
+                      ),
+                      title: const Text(
+                        'Add Spotify playlist',
+                        style: TextStyle(fontSize: 20),
+                      ),
+                      trailing: Icon(
+                        Icons.chevron_right,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => const SpotifyAccountScreen(),
+                        ),
+                      ),
+                    ),
                   ),
 
                 if (shouldShowLibraryControls || hasQueueItems)

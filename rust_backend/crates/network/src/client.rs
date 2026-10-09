@@ -317,7 +317,6 @@ impl NetworkService {
             service: Arc::clone(self),
             permissions: Some(permissions),
             native_media: false,
-            follow_redirects: true,
             timeout,
             cookies: Mutex::default(),
         })
@@ -330,7 +329,6 @@ impl NetworkService {
             service: Arc::clone(self),
             permissions: None,
             native_media: false,
-            follow_redirects: true,
             timeout,
             cookies: Mutex::default(),
         })
@@ -344,7 +342,6 @@ impl NetworkService {
             service: Arc::clone(self),
             permissions: None,
             native_media: true,
-            follow_redirects: true,
             timeout,
             cookies: Mutex::default(),
         })
@@ -477,7 +474,7 @@ impl HttpStream {
     }
 
     /// Release an unwanted body (a range probe or retryable error). A small
-    /// HTTP/1.1 body is finished within 20 ms so its connection can return to
+    /// HTTP/1.1 body is finished within 50 ms so its connection can return to
     /// the pool; HTTP/2, compressed, large or slow bodies are dropped at once.
     pub fn discard(&mut self, check: impl Fn() -> Result<(), String>) {
         let Some(mut body) = self.body.take() else {
@@ -488,7 +485,7 @@ impl HttpStream {
         }
         let _ = self
             .service
-            .run(self.generation, Duration::from_millis(20), &check, async {
+            .run(self.generation, Duration::from_millis(50), &check, async {
                 let mut buffer = [0; 2048];
                 let mut received = 0;
                 loop {
@@ -499,9 +496,15 @@ impl HttpStream {
                         .map_err(|error| error.to_string())?;
                     received += count;
                     if count == 0 || received > 2048 {
-                        return Ok(());
+                        break;
                     }
                 }
+                // Drop the response reader before the drain future completes.
+                // hyper only makes the HTTP/1.1 connection eligible for the
+                // pool once the response body is released; doing this explicitly
+                // avoids the retry racing the pool's body-drop bookkeeping.
+                drop(body);
+                Ok(())
             });
     }
 
@@ -517,25 +520,11 @@ pub struct NetworkSession {
     service: Arc<NetworkService>,
     permissions: Option<NetworkPermissions>,
     native_media: bool,
-    follow_redirects: bool,
     timeout: Duration,
     cookies: Mutex<CookieJar>,
 }
 
 impl NetworkSession {
-    /// Account-owned media must not carry metadata cookies or follow a redirect
-    /// outside its descriptor. Keep the original manifest/DNS/TLS permissions.
-    pub fn direct_media(&self) -> Self {
-        Self {
-            service: Arc::clone(&self.service),
-            permissions: self.permissions.clone(),
-            native_media: true,
-            follow_redirects: false,
-            timeout: self.timeout,
-            cookies: Mutex::default(),
-        }
-    }
-
     pub fn reset_connections(&self) {
         self.service.reset_connections();
     }
@@ -850,9 +839,6 @@ impl NetworkSession {
                     .store(&url, response.headers());
             }
             let status = response.status();
-            if !self.follow_redirects && matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308) {
-                return Err("media redirect blocked: request a fresh descriptor".into());
-            }
             if matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
                 && let Some(location) = response
                     .headers()
@@ -915,7 +901,7 @@ impl NetworkSession {
                             .is_some_and(|length| length <= 2048)
                     {
                         let mut body = response.into_body();
-                        let _ = tokio::time::timeout(Duration::from_millis(20), async {
+                        let _ = tokio::time::timeout(Duration::from_millis(50), async {
                             let mut received = 0;
                             while let Some(Ok(frame)) = body.frame().await {
                                 received += frame.data_ref().map_or(0, Bytes::len);
@@ -1057,90 +1043,6 @@ mod tests {
     use super::*;
     use std::future::poll_fn;
     use std::sync::{atomic::AtomicBool, mpsc};
-
-    #[test]
-    fn direct_media_keeps_manifest_permissions_and_https_requirement() {
-        let service = NetworkService::new().unwrap();
-        let original = service.session(
-            NetworkPermissions {
-                domains: vec!["cdn.example.test".into()],
-                allow_http: false,
-            },
-            Duration::from_secs(30),
-        );
-        let media = original.direct_media();
-        assert!(media.validate_url("https://cdn.example.test/audio").is_ok());
-        assert!(
-            media
-                .validate_url("https://unlisted.example.test/audio")
-                .is_err()
-        );
-        assert!(media.validate_url("http://cdn.example.test/audio").is_err());
-        assert!(!media.follow_redirects);
-        assert!(media.native_media);
-    }
-
-    #[test]
-    fn direct_media_does_not_send_metadata_cookies_or_follow_redirects() {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        let server = std::thread::spawn(move || {
-            for response in [
-                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
-                "HTTP/1.1 302 Found\r\nLocation: /unexpected\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            ] {
-                let (mut stream, _) = listener.accept().unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") {
-                    let mut byte = [0];
-                    stream.read_exact(&mut byte).unwrap();
-                    request.push(byte[0]);
-                    assert!(request.len() < 8192);
-                }
-                assert!(
-                    !String::from_utf8(request)
-                        .unwrap()
-                        .to_lowercase()
-                        .contains("\r\ncookie:")
-                );
-                stream.write_all(response.as_bytes()).unwrap();
-            }
-        });
-        let service = NetworkService::new().unwrap();
-        service.set_allow_private_network(true);
-        let original = service.session(
-            NetworkPermissions {
-                domains: vec!["127.0.0.1".into()],
-                allow_http: true,
-            },
-            Duration::from_secs(3),
-        );
-        let mut cookies = http::HeaderMap::new();
-        cookies.insert(
-            http::header::SET_COOKIE,
-            "metadata=private; Path=/".parse().unwrap(),
-        );
-        original
-            .cookies
-            .lock()
-            .unwrap()
-            .store(&UrlParts::parse(&base).unwrap(), &cookies);
-        let media = original.direct_media();
-        let request =
-            || serde_json::from_value(serde_json::json!({"url":format!("{base}/media")})).unwrap();
-        assert_eq!(media.request(request(), || Ok(())).unwrap().body, b"ok");
-        assert!(
-            media
-                .request(request(), || Ok(()))
-                .unwrap_err()
-                .contains("media redirect blocked")
-        );
-        server.join().unwrap();
-    }
 
     #[test]
     fn cancellation_after_operation_is_pending_drops_it_before_return() {

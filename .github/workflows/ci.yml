@@ -32,7 +32,6 @@ jobs:
           filters: |
             dart:
               - 'third_party/audio_service/**'
-              - 'third_party/spotiflac_discord/**'
               - 'lib/**'
               - 'test/**'
               - 'android/app/src/test/resources/**'
@@ -51,12 +50,6 @@ jobs:
               - '.github/workflows/ci.yml'
             ios:
               - 'third_party/audio_service/**'
-              - 'third_party/spotiflac_discord/**'
-              - 'scripts/setup_discord_sdk.sh'
-              - 'scripts/prepare_discord_sdk.py'
-              - 'scripts/test_prepare_discord_sdk.py'
-              - '.github/actions/discord-sdk/**'
-              - 'third_party/discord/*.zip.gpg'
               - 'ios/**'
               - 'scripts/build_ios.sh'
               - 'scripts/check_backend_ios.py'
@@ -70,12 +63,6 @@ jobs:
               - '.github/workflows/ci.yml'
             android:
               - 'third_party/audio_service/**'
-              - 'third_party/spotiflac_discord/**'
-              - 'scripts/setup_discord_sdk.sh'
-              - 'scripts/prepare_discord_sdk.py'
-              - 'scripts/test_prepare_discord_sdk.py'
-              - '.github/actions/discord-sdk/**'
-              - 'third_party/discord/*.zip.gpg'
               - 'android/**'
               - 'rust_backend/**'
               - 'scripts/build_android.sh'
@@ -159,7 +146,7 @@ jobs:
         run: bash scripts/check_rust_backend.sh
 
       - name: Install Android NDK
-        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;29.0.14206865"'
+        run: $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;29.0.14206865"
 
       - name: Build Android ARM32 and ARM64 libraries
         run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865" bash scripts/build_rust_backend.sh android
@@ -168,9 +155,8 @@ jobs:
     name: Rust iOS libraries & release application
     runs-on: macos-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ios == 'true'
-    env:
-      SPOTIFLAC_DISCORD_SDK: "0"
+    # Keep pull-request validation focused on Android; retain iOS builds for main pushes.
+    if: github.event_name != 'pull_request' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ios == 'true')
 
     steps:
       - name: Checkout repository
@@ -190,12 +176,6 @@ jobs:
           flutter-version-file: .fvmrc
           cache: true
 
-      - name: Prepare pinned Discord SDK
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: ./.github/actions/discord-sdk
-        with:
-          passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
-
       - name: Configure Rust application pods
         run: |
           flutter pub get
@@ -206,10 +186,6 @@ jobs:
         run: |
           python3 -m unittest discover -s scripts -p 'test_check_backend_ios.py'
           flutter build ios --release --no-codesign --target lib/main.dart
-          if [[ "$SPOTIFLAC_DISCORD_SDK" == "1" ]]; then
-            test -f build/ios/iphoneos/Runner.app/Frameworks/discord_partner_sdk.framework/discord_partner_sdk
-            test -f build/ios/iphoneos/Runner.app/Discord-License-Notices.txt
-          fi
           python3 scripts/check_backend_ios.py build/ios/iphoneos/Runner.app \
             --backend rust --archs arm64 --platform ios --release
 
@@ -219,7 +195,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.android == 'true'
     env:
-      SPOTIFLAC_DISCORD_SDK: "0"
+      SPOTIFLAC_KEYSTORE_BASE64: ${{ secrets.SPOTIFLAC_KEYSTORE_BASE64 }}
+      SPOTIFLAC_KEYSTORE_PASSWORD: ${{ secrets.SPOTIFLAC_KEYSTORE_PASSWORD }}
+      SPOTIFLAC_KEY_ALIAS: ${{ secrets.SPOTIFLAC_KEY_ALIAS }}
+      SPOTIFLAC_KEY_PASSWORD: ${{ secrets.SPOTIFLAC_KEY_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -257,24 +236,29 @@ jobs:
             "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
-      - name: Test SDK preparation, release selection and APK audits
+      - name: Test APK audits
         run: |
-          python3 -m unittest discover -s scripts -p 'test_prepare_discord_sdk.py'
-          python3 -m unittest discover -s scripts -p 'test_build_android.py'
           python3 -m unittest discover -s scripts -p 'test_check_backend_apk.py'
-
-      # Fork PRs cannot access repository secrets and exercise the Lite build.
-      - name: Prepare pinned Discord SDK
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: ./.github/actions/discord-sdk
-        with:
-          passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
 
       - name: Get Flutter dependencies
         run: flutter pub get
 
       - name: Configure Flutter SDK for Gradle
         run: echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
+
+      - name: Configure persistent Android release signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in SPOTIFLAC_KEYSTORE_BASE64 SPOTIFLAC_KEYSTORE_PASSWORD SPOTIFLAC_KEY_ALIAS SPOTIFLAC_KEY_PASSWORD; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required GitHub secret: $name"
+              exit 1
+            fi
+          done
+          printf '%s' "$SPOTIFLAC_KEYSTORE_BASE64" | base64 --decode > android/spotiflac-release.jks
+          chmod 600 android/spotiflac-release.jks
+          echo "SPOTIFLAC_KEYSTORE_FILE=$GITHUB_WORKSPACE/android/spotiflac-release.jks" >> "$GITHUB_ENV"
 
       - name: Install Rust application build and media test prerequisites
         run: |
@@ -289,45 +273,63 @@ jobs:
         run: gradle -p android :app:assembleDebug :app:testDebugUnitTest
 
       - name: Build Rust release application
-        run: |
-          if [[ "$SPOTIFLAC_DISCORD_SDK" == "1" ]]; then
-            bash scripts/build_android.sh --production --target lib/main.dart
-          else
-            bash scripts/build_android.sh --lite --target lib/main.dart
-          fi
+        env:
+          SPOTIFLAC_KEYSTORE_FILE: ${{ env.SPOTIFLAC_KEYSTORE_FILE }}
+          SPOTIFLAC_KEYSTORE_PASSWORD: ${{ secrets.SPOTIFLAC_KEYSTORE_PASSWORD }}
+          SPOTIFLAC_KEY_ALIAS: ${{ secrets.SPOTIFLAC_KEY_ALIAS }}
+          SPOTIFLAC_KEY_PASSWORD: ${{ secrets.SPOTIFLAC_KEY_PASSWORD }}
+        run: bash scripts/build_android.sh --target lib/main.dart
 
       - name: Verify Rust release APK payloads
         run: |
-          audit_flags=()
-          if [[ "$SPOTIFLAC_DISCORD_SDK" == "1" ]]; then
-            audit_flags+=(--discord-sdk)
-          fi
           python3 scripts/check_backend_apk.py \
             build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
-            --backend rust --abis arm64-v8a "${audit_flags[@]}"
+            --backend rust --abis arm64-v8a
           python3 scripts/check_backend_apk.py \
             build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
-            --backend rust --abis armeabi-v7a "${audit_flags[@]}"
-          # PR builds use Gradle's test key; production signing stays in Release.
+            --backend rust --abis armeabi-v7a
           for abi in arm64-v8a armeabi-v7a; do
             "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --verbose \
               "build/app/outputs/flutter-apk/app-${abi}-release.apk"
           done
 
-      - name: Record Android symbol provenance
+      - name: Verify distributed APKs use the persistent release certificate
+        shell: bash
         run: |
-          test -s build/symbols/android/app.android-arm64.symbols
-          test -s build/symbols/android/app.android-arm.symbols
-          test -s build/app/outputs/mapping/release/mapping.txt
-          git rev-parse HEAD > build/symbols/android/commit.txt
-          sha256sum build/app/outputs/flutter-apk/*release.apk > build/symbols/android/apk-sha256.txt
+          set -euo pipefail
+          get_cert_digest() {
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$1" 2>&1 |
+              grep -Eio 'certificate SHA-256 digest:[[:space:]]*[0-9a-f:]+' |
+              head -n1 |
+              sed -E 's/.*digest:[[:space:]]*//I'
+          }
 
-      - name: Retain Android debug symbols
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+          expected="$(get_cert_digest build/app/outputs/flutter-apk/app-arm64-v8a-release.apk)"
+          if [[ -z "$expected" ]]; then
+            echo "::error::Could not extract the signer certificate SHA-256 digest from the ARM64 APK."
+            "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs               build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            exit 1
+          fi
+          echo "Expected release certificate SHA-256: $expected"
+
+          for apk in \
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk; do
+            actual="$(get_cert_digest "$apk")"
+            echo "$(basename "$apk"): $actual"
+            if [[ -z "$actual" || "$actual" != "$expected" ]]; then
+              echo "::error::APK certificate mismatch: $(basename "$apk")"
+              exit 1
+            fi
+          done
+          echo "All distributed release APKs use the same persistent release certificate."
+
+      - name: Upload verified Android APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: android-symbols-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: error
-          retention-days: 90
+          name: spotiflac-android-release-apks
           path: |
-            build/symbols/android/
-            build/app/outputs/mapping/release/mapping.txt
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          if-no-files-found: error
+          retention-days: 7

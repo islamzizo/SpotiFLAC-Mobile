@@ -6,8 +6,8 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/library_browse_provider.dart';
 import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
+import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
-import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/utils/nav_bar_inset.dart';
@@ -41,9 +41,9 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   final _search = TextEditingController();
   Timer? _debounce;
   bool _showSearch = false;
-  String? _completeness;
   String _query = '';
   late String _sort;
+  int _limit = 40;
   List<LibraryBrowseEntry> _rows = const [];
   bool _loading = true;
 
@@ -54,8 +54,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     artist: widget.artist,
     search: _query,
     sort: _sort,
-    limit: 40,
-    completeness: _completeness,
+    limit: _limit,
   );
 
   @override
@@ -65,10 +64,8 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     _scroll.addListener(() {
       if (_scroll.position.extentAfter < 500 &&
           !_loading &&
-          !(_overview && _query.isNotEmpty)) {
-        unawaited(
-          ref.read(libraryBrowseProvider(_request).notifier).loadMore(),
-        );
+          _rows.length >= _limit) {
+        setState(() => _limit += 40);
       }
     });
   }
@@ -87,6 +84,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
       if (!mounted || _query == value.trim()) return;
       setState(() {
         _query = value.trim();
+        _limit = 40;
         _rows = const [];
       });
     });
@@ -119,20 +117,17 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
       );
       return;
     }
-    Future<List<LocalLibraryItem>> loadTracks() async {
-      final rows = await LibraryDatabase.instance.getQueueLocalAlbumTracksByKey(
-        entry.key,
-      );
-      return rows.map(LocalLibraryItem.fromJson).toList(growable: false);
-    }
-
+    final rows = await LibraryDatabase.instance.getQueueLocalAlbumTracksByKey(
+      entry.key,
+    );
+    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => LocalAlbumScreen(
           albumName: entry.name,
           artistName: entry.artist,
           coverPath: entry.cover,
-          loadTracks: loadTracks,
+          tracks: rows.map(LocalLibraryItem.fromJson).toList(growable: false),
         ),
       ),
     );
@@ -159,75 +154,10 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     if (!mounted || selected == null || selected == _sort) return;
     setState(() {
       _sort = selected;
+      _limit = 40;
       _rows = const [];
     });
     _scroll.jumpTo(0);
-  }
-
-  Future<void> _chooseCompleteness() async {
-    final selected = await showAppBottomSheet<String>(
-      context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final option in [
-            ('', context.l10n.libraryFilterAll),
-            (incompleteAlbumFilter, context.l10n.libraryFilterIncompleteAlbums),
-            (
-              unknownAlbumCompletenessFilter,
-              context.l10n.libraryAlbumCompletenessUnknown,
-            ),
-          ])
-            ListTile(
-              title: Text(option.$2),
-              trailing: (_completeness ?? '') == option.$1
-                  ? const Icon(Icons.check)
-                  : null,
-              onTap: () => Navigator.pop(context, option.$1),
-            ),
-        ],
-      ),
-    );
-    if (!mounted || selected == null || selected == (_completeness ?? '')) {
-      return;
-    }
-    setState(() {
-      _completeness = selected.isEmpty ? null : selected;
-      _rows = const [];
-    });
-    _scroll.jumpTo(0);
-  }
-
-  Widget _buildCompletenessBadge(AlbumCompleteness completeness) {
-    final colors = Theme.of(context).colorScheme;
-    final expected = completeness.expected;
-    final label = completeness.status == 'unknown'
-        ? context.l10n.libraryAlbumCompletenessUnknown
-        : expected == null
-        ? context.l10n.libraryFilterIncompleteAlbums
-        : context.l10n.libraryAlbumMissingTracks(
-            completeness.present,
-            expected,
-            expected - completeness.present,
-          );
-    return Tooltip(
-      message: label,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: colors.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          completeness.badge,
-          style: TextStyle(
-            color: colors.onSurface,
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
   }
 
   @override
@@ -235,10 +165,10 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     final colors = Theme.of(context).colorScheme;
     final searchingLibrary = _overview && _query.isNotEmpty;
     final result = searchingLibrary
-        ? const AsyncData(LibraryBrowseState([], hasMore: false))
+        ? const AsyncData<List<LibraryBrowseEntry>>([])
         : ref.watch(libraryBrowseProvider(_request));
-    _loading = result.isLoading || (result.value?.isLoadingMore ?? false);
-    if (result.hasValue) _rows = result.requireValue.entries;
+    _loading = result.isLoading;
+    if (result.hasValue) _rows = result.requireValue;
     final title =
         widget.artist ??
         (_overview
@@ -271,21 +201,12 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
             );
           },
         )
-      else if (!_artists) ...[
+      else if (!_artists)
         IconButton(
           tooltip: context.l10n.searchSortTitle,
           icon: const Icon(Icons.sort),
           onPressed: _chooseSort,
         ),
-        IconButton(
-          tooltip: context.l10n.libraryFilterTitle,
-          icon: Badge(
-            isLabelVisible: _completeness != null,
-            child: const Icon(Icons.filter_list),
-          ),
-          onPressed: _chooseCompleteness,
-        ),
-      ],
     ];
     return RefreshIndicator(
       onRefresh: () async {
@@ -335,6 +256,15 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                         Icons.queue_music,
                         context.l10n.searchPlaylists,
                         () => widget.onOpenSection('playlists'),
+                      ),
+                      (
+                        Icons.music_note,
+                        'Spotify Playlists',
+                        () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SpotifyAccountScreen(),
+                          ),
+                        ),
                       ),
                       (
                         Icons.mic_none,
@@ -456,26 +386,11 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                                 children: [
                                   AspectRatio(
                                     aspectRatio: 1,
-                                    child: Stack(
-                                      fit: StackFit.expand,
-                                      children: [
-                                        ClipRRect(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          child: _LibraryBrowseArtwork(
-                                            entry: entry,
-                                          ),
-                                        ),
-                                        if (entry.completeness != null)
-                                          Positioned(
-                                            right: 8,
-                                            bottom: 8,
-                                            child: _buildCompletenessBadge(
-                                              entry.completeness!,
-                                            ),
-                                          ),
-                                      ],
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: _LibraryBrowseArtwork(
+                                        entry: entry,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(height: 8),
@@ -503,7 +418,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                     },
                   ),
                 ),
-            if (result.hasError || result.value?.loadMoreError != null)
+            if (result.hasError)
               SliverToBoxAdapter(
                 child: Center(
                   child: TextButton.icon(

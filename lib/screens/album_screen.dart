@@ -14,6 +14,7 @@ import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/recent_access_provider.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/utils/image_cache_utils.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/utils/cover_art_utils.dart';
@@ -27,7 +28,6 @@ import 'package:spotiflac_android/utils/adaptive_layout.dart';
 import 'package:spotiflac_android/utils/provider_resource_ids.dart';
 import 'package:spotiflac_android/utils/ttl_cache.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
-import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/widgets/playlist_picker_sheet.dart';
 import 'package:spotiflac_android/utils/clickable_metadata.dart';
 import 'package:spotiflac_android/widgets/cross_extension_share_sheet.dart';
@@ -93,6 +93,7 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
   final _historySnapshot = TrackHistorySnapshot();
   List<Track>? _tracks;
   bool _isLoading = false;
+  bool _savingToSpotify = false;
   String? _error;
   String? _artistId;
   String? _albumType;
@@ -614,7 +615,7 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
           ? Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildLoveAllButton(),
+                _buildSpotifySaveButton(),
                 const SizedBox(width: 16),
                 Flexible(
                   child: SizedBox(
@@ -635,7 +636,7 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
           : Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _buildLoveAllButton(),
+                _buildSpotifySaveButton(),
                 const SizedBox(width: 12),
                 Flexible(
                   child: HeaderFilledButton(
@@ -801,22 +802,6 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
         SizedBox(
           width: double.infinity,
           child: SelectionActionButton(
-            icon: Icons.playlist_add,
-            label: barContext.l10n.collectionAddToPlaylist,
-            colorScheme: colorScheme,
-            onPressed: selectedCount == 0
-                ? null
-                : () {
-                    final selected = _selectedTracks(tracks);
-                    exitSelectionMode();
-                    showAddTracksToPlaylistSheet(context, ref, selected);
-                  },
-          ),
-        ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: SelectionActionButton(
             icon: Icons.download_rounded,
             label: '${barContext.l10n.dialogDownload} ($selectedCount)',
             onPressed: selectedCount == 0
@@ -873,29 +858,47 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
     );
   }
 
-  Widget _buildLoveAllButton() {
+  Widget _buildSpotifySaveButton() {
     final tracks = _tracks;
-    return Consumer(
-      builder: (context, ref, _) {
-        ref.watch(libraryCollectionsProvider.select((state) => state.loved));
-        final collectionsState = ref.read(libraryCollectionsProvider);
-        final allLoved =
-            tracks != null &&
-            tracks.isNotEmpty &&
-            tracks.every((t) => collectionsState.isLoved(t));
-        return HeaderCircleButton(
-          icon: allLoved ? Icons.favorite : Icons.favorite_border,
-          tonal: true,
-          iconColor: allLoved ? Theme.of(context).colorScheme.error : null,
-          tooltip: allLoved
-              ? context.l10n.trackOptionRemoveFromLoved
-              : context.l10n.tooltipLoveAll,
-          onPressed: tracks == null || tracks.isEmpty
-              ? null
-              : () => _loveAll(tracks),
-        );
-      },
+    return HeaderCircleButton(
+      icon: Icons.music_note,
+      tonal: true,
+      tooltip: 'Save album to Spotify',
+      iconWidget: _SpotifyLogoIcon(
+        size: 22,
+        muted: _savingToSpotify,
+      ),
+      onPressed: tracks == null || tracks.isEmpty || _savingToSpotify
+          ? null
+          : _saveAlbumToSpotify,
     );
+  }
+
+  Future<void> _saveAlbumToSpotify() async {
+    if (_savingToSpotify) return;
+    final albumId = stripPrefixedResourceId(widget.albumId).trim();
+    if (albumId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('This album has no Spotify ID.')),
+      );
+      return;
+    }
+
+    setState(() => _savingToSpotify = true);
+    try {
+      await SpotifyAccountService.instance.saveAlbumToLibrary(albumId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Saved album to Spotify.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not save album to Spotify: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingToSpotify = false);
+    }
   }
 
   Widget _buildAddToPlaylistButton(BuildContext context) {
@@ -930,6 +933,70 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
     );
   }
 
-  Future<void> _loveAll(List<Track> tracks) =>
-      loveAllTracks(context, ref, tracks);
+
+}
+
+class _SpotifyLogoIcon extends StatelessWidget {
+  const _SpotifyLogoIcon({
+    required this.size,
+    this.muted = false,
+  });
+
+  final double size;
+  final bool muted;
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size.square(size),
+      painter: _SpotifyLogoPainter(
+        color: muted ? Colors.white54 : Colors.white,
+      ),
+    );
+  }
+}
+
+class _SpotifyLogoPainter extends CustomPainter {
+  const _SpotifyLogoPainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.shortestSide / 2;
+    final circlePaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    canvas.drawCircle(center, radius, circlePaint);
+
+    final arcPaint = Paint()
+      ..color = Colors.black
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeWidth = radius * 0.16;
+
+    final rect = Rect.fromCircle(
+      center: center,
+      radius: radius * 0.58,
+    );
+    canvas.drawArc(rect, -2.75, 1.45, false, arcPaint);
+
+    final rect2 = Rect.fromCircle(
+      center: center,
+      radius: radius * 0.43,
+    );
+    canvas.drawArc(rect2, -2.68, 1.32, false, arcPaint);
+
+    final rect3 = Rect.fromCircle(
+      center: center,
+      radius: radius * 0.28,
+    );
+    canvas.drawArc(rect3, -2.55, 1.12, false, arcPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpotifyLogoPainter oldDelegate) =>
+      oldDelegate.color != color;
 }

@@ -33,6 +33,7 @@ class TrackCollectionQuickActions extends ConsumerWidget {
     WidgetRef ref,
     Track track, {
     bool hasLocalPlaybackCandidate = false,
+    BuildContext? navigationContext,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
     if (context.isMornye) {
@@ -41,6 +42,7 @@ class TrackCollectionQuickActions extends ConsumerWidget {
         builder: (_) => _TrackOptionsSheet(
           track: track,
           hasLocalPlaybackCandidate: hasLocalPlaybackCandidate,
+          navigationContext: navigationContext,
         ),
       );
       return;
@@ -73,6 +75,7 @@ class TrackCollectionQuickActions extends ConsumerWidget {
         ref,
         track,
         hasLocalPlaybackCandidate: hasLocalPlaybackCandidate,
+        navigationContext: context,
       ),
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
@@ -83,10 +86,12 @@ class TrackCollectionQuickActions extends ConsumerWidget {
 class _TrackOptionsSheet extends ConsumerWidget {
   final Track track;
   final bool hasLocalPlaybackCandidate;
+  final BuildContext? navigationContext;
 
   const _TrackOptionsSheet({
     required this.track,
     required this.hasLocalPlaybackCandidate,
+    this.navigationContext,
   });
 
   @override
@@ -448,12 +453,12 @@ class _TrackOptionsSheet extends ConsumerWidget {
   }
 
   Future<void> _goToAlbum(BuildContext context) async {
-    final navigationContext = Navigator.of(
-      context,
-      rootNavigator: true,
-    ).context;
+    // The options sheet is presented on the root navigator. Keep the original
+    // Spotify playlist context so album navigation stays on the visible
+    // Spotify-owned navigator instead of the hidden shell navigator.
+    final targetContext = navigationContext ?? context;
     Navigator.pop(context);
-    await navigateToTrackAlbum(navigationContext, track);
+    await navigateToTrackAlbum(targetContext, track);
   }
 
   Future<void> _playLocal(BuildContext context, WidgetRef ref) async {

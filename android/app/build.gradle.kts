@@ -8,18 +8,24 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Flutter reads this when configuring variant tasks, after this build script.
-// Keep release AOT debug data outside libapp.so; explicit paths and size analysis take precedence.
-if (!project.hasProperty("split-debug-info") && !project.hasProperty("code-size-directory")) {
-    project.extensions.extraProperties["split-debug-info"] =
-        rootProject.file("../build/symbols/android").absolutePath
-}
-
 val keystorePropertiesFile = rootProject.file("key.properties")
 val keystoreProperties = Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
+
+// CI release signing is supplied through environment variables so every
+// release APK uses the same persistent keystore without committing secrets.
+val ciKeystoreFile = providers.environmentVariable("SPOTIFLAC_KEYSTORE_FILE").orNull
+val ciKeystorePassword = providers.environmentVariable("SPOTIFLAC_KEYSTORE_PASSWORD").orNull
+val ciKeyAlias = providers.environmentVariable("SPOTIFLAC_KEY_ALIAS").orNull
+val ciKeyPassword = providers.environmentVariable("SPOTIFLAC_KEY_PASSWORD").orNull
+val hasCiSigning = listOf(
+    ciKeystoreFile,
+    ciKeystorePassword,
+    ciKeyAlias,
+    ciKeyPassword,
+).all { !it.isNullOrBlank() }
 
 val rustBackendDir = rootProject.file("../rust_backend")
 val rustAndroidAbis = providers.environmentVariable("SPOTIFLAC_RUST_ANDROID_ABIS")
@@ -27,7 +33,6 @@ val rustAndroidAbis = providers.environmentVariable("SPOTIFLAC_RUST_ANDROID_ABIS
     .get()
     .split(",")
 val supportedRustAndroidAbis = setOf("arm64-v8a", "armeabi-v7a")
-val discordSdkEnabled = providers.environmentVariable("SPOTIFLAC_DISCORD_SDK").orElse("1").get() != "0"
 require(rustAndroidAbis.size == rustAndroidAbis.toSet().size) {
     "SPOTIFLAC_RUST_ANDROID_ABIS must not contain duplicate ABIs"
 }
@@ -42,9 +47,6 @@ android {
 
     buildFeatures {
         buildConfig = true
-    }
-    packaging {
-        if (discordSdkEnabled) jniLibs.pickFirsts += "**/libdiscord_partner_sdk.so"
     }
 
     externalNativeBuild {
@@ -73,17 +75,16 @@ android {
     }
 
     signingConfigs {
-        if (keystorePropertiesFile.exists()) {
+        if (keystorePropertiesFile.exists() || hasCiSigning) {
             create("release") {
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
-                storeFile = file(keystoreProperties.getProperty("storeFile"))
-                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = ciKeyAlias ?: keystoreProperties.getProperty("keyAlias")
+                keyPassword = ciKeyPassword ?: keystoreProperties.getProperty("keyPassword")
+                storeFile = if (ciKeystoreFile != null) file(ciKeystoreFile)
+                    else file(keystoreProperties.getProperty("storeFile"))
+                storePassword = ciKeystorePassword ?: keystoreProperties.getProperty("storePassword")
                 enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
-                // V4 lives in a separate .apk.idsig file used for
-                // `adb install --incremental`; the APK itself is unchanged.
                 enableV4Signing = true
             }
         }
@@ -123,13 +124,12 @@ android {
         }
 
         release {
-            // For local builds: use release signing if key.properties exists
-            // For CI builds: APK is signed by GitHub Action after build
-            signingConfig = if (keystorePropertiesFile.exists()) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // Release builds must use the persistent release key. CI provides
+            // it through secrets; local builds use android/key.properties.
+            require(keystorePropertiesFile.exists() || hasCiSigning) {
+                "Release signing is not configured. Provide android/key.properties locally or the CI signing environment."
             }
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -173,26 +173,11 @@ val buildRustBackend = tasks.register<Exec>("buildRustBackend") {
 }
 tasks.named("preBuild").configure { dependsOn(buildRustBackend) }
 
-// Filter Android's copy only; keep shared bundles and mobile glass shaders intact.
-tasks.withType<org.gradle.api.tasks.Copy>().configureEach {
-    if (name.startsWith("copyFlutterAssets")) {
-        exclude(
-            "flutter_assets/packages/liquid_glass_easy/lib/assets/shaders/liquid_glass_desktop.frag",
-            "flutter_assets/packages/liquid_glass_easy/lib/assets/shaders/metaball_glass_desktop.frag",
-            "flutter_assets/packages/flutter_local_notifications_web/web/notifications_service_worker.js",
-        )
-    }
-}
-
 flutter {
     source = "../.."
 }
 
 dependencies {
-    val discordSdk = file("../../third_party/spotiflac_discord/sdk/discord_partner_sdk.aar")
-    if (discordSdkEnabled && discordSdk.exists()) {
-        implementation(files(discordSdk))
-    }
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("net.java.dev.jna:jna:5.19.1@aar")
 
@@ -202,13 +187,19 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.13.0")
     // NativeDownloadFinalizer imports FFmpegKit APIs directly. The Flutter
     // plugin owns the runtime AAR; compileOnly avoids packaging it twice here.
-    compileOnly("com.antonkarpenko:ffmpeg-kit-audio:2.2.2")
+    compileOnly("com.antonkarpenko:ffmpeg-kit-full:2.2.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20260814")
-    // Keep Flutter integration_test's older runner aligned with native tests.
-    debugImplementation("androidx.test:runner:1.7.0")
-    debugImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test:runner:1.7.0")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
+}
+
+
+tasks.withType<Test>().configureEach {
+    testLogging {
+        events("failed", "standardOut", "standardError")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
 }

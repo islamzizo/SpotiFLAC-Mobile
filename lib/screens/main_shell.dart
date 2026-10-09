@@ -13,7 +13,6 @@ import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/screens/upgrade_intro_screen.dart';
 import 'package:spotiflac_android/services/upgrade_intro_service.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
-import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/providers/playback_notification_provider.dart';
 import 'package:spotiflac_android/providers/repo_provider.dart';
@@ -26,24 +25,21 @@ import 'package:spotiflac_android/screens/queue_tab.dart';
 import 'package:spotiflac_android/screens/settings/settings_tab.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/services/share_intent_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
-import 'package:spotiflac_android/services/listening_statistics.dart';
-import 'package:spotiflac_android/services/discord_presence_service.dart';
+import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/services/update_checker.dart';
 import 'package:spotiflac_android/widgets/app_announcement_dialog.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
-import 'package:spotiflac_android/widgets/download_queue_feedback.dart';
 import 'package:spotiflac_android/widgets/update_dialog.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/mini_player.dart';
-import 'package:spotiflac_android/widgets/lazy_tab_view.dart';
 import 'package:spotiflac_android/widgets/expressive_navigation_bar.dart';
 import 'package:spotiflac_android/widgets/mornye_bottom_bar.dart';
-import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
 import 'package:spotiflac_android/utils/logger.dart';
@@ -62,7 +58,7 @@ class _MainShellState extends ConsumerState<MainShell>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   int _currentIndex = 0;
   final _mornyeChrome = MornyeChromeController();
-  // Preserves the tab view element (and its kept-alive tabs) when the body
+  // Preserves the PageView element (and its kept-alive tabs) when the body
   // structure swaps between rail and bottom-bar layouts on rotation.
   final GlobalKey _pageViewKey = GlobalKey();
   late final PageController _pageController;
@@ -103,19 +99,25 @@ class _MainShellState extends ConsumerState<MainShell>
     super.didChangeDependencies();
     final l10n = context.l10n;
     NotificationService().updateStrings(l10n);
-    final playback = ref.read(musicPlayerRuntimeProvider);
-    playback.updateStrings(
+    updateMusicPlayerStrings(
       unknownTitle: l10n.unknownTitle,
       unknownArtist: l10n.unknownArtist,
     );
-    final settings = ref.read(settingsProvider);
-    playback.configure(settings);
-    unawaited(
-      DiscordPresenceService.instance.setEnabled(
-        settings.discordRichPresenceEnabled,
-      ),
+    setPlaybackNormalizationEnabled(
+      ref.read(settingsProvider).playbackNormalization,
     );
-    listeningRecorder.setEnabled(settings.listeningStatisticsEnabled);
+    setAutoMixEnabled(ref.read(settingsProvider).autoMix);
+    setUsbBitPerfectEnabled(ref.read(settingsProvider).usbBitPerfect);
+    setUsbOutputOptions(
+      direct: ref.read(settingsProvider).usbDirect,
+      allowDop: ref.read(settingsProvider).usbDsdOverPcm,
+      allowFixedVolume: ref.read(settingsProvider).usbAllowFixedVolume,
+      dapExclusive: ref.read(settingsProvider).dapExclusive,
+    );
+    setAutoplayEnabled(
+      ref.read(settingsProvider).autoplay,
+      includeLocal: ref.read(settingsProvider).localLibraryEnabled,
+    );
     // Deezer & co. localize artist/genre names by IP unless told the app's
     // language (issue #480).
     unawaited(
@@ -156,13 +158,19 @@ class _MainShellState extends ConsumerState<MainShell>
       currentTabIndex: _currentIndex,
       showRepoTab: false,
     );
+    // Refresh Spotify once when the app opens. The Spotify screen only
+    // reads the persisted cache, so entering it never clears visible playlists.
+    unawaited(
+      SpotifyAccountService.instance.syncSavedLibraryInBackground(),
+    );
+
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _repairSafAccessIfNeeded(
         knownLost: ref.read(initialSafAccessLostProvider),
       );
       _initialSafRepairComplete = true;
       if (!mounted) return;
-      unawaited(ref.read(musicPlayerRuntimeProvider).restoreSession());
+      unawaited(restorePersistedPlaybackSession());
       await _checkUpgradeIntro();
       if (!mounted) return;
       _setupShareListener();
@@ -200,10 +208,11 @@ class _MainShellState extends ConsumerState<MainShell>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _initialSafRepairComplete) {
       unawaited(_repairSafAccessIfNeeded());
-    } else if (state == AppLifecycleState.paused) {
       unawaited(
-        ref.read(musicPlayerRuntimeProvider).handler?.persistCurrentSession(),
+        SpotifyAccountService.instance.syncSavedLibraryInBackground(),
       );
+    } else if (state == AppLifecycleState.paused) {
+      unawaited(persistCurrentPlaybackSession());
     }
   }
 
@@ -633,6 +642,7 @@ class _MainShellState extends ConsumerState<MainShell>
         // The glass pill owns the tab transition. Sliding/fading the whole
         // page at the same time continuously invalidates its live backdrop.
         _tabJumpTransitionController.value = 1;
+        _pageController.jumpToPage(index);
       } else if (isNonAdjacentJump) {
         _pageController.jumpToPage(index);
         _tabJumpTransitionController.forward(from: 0);
@@ -768,22 +778,40 @@ class _MainShellState extends ConsumerState<MainShell>
       playbackNotificationProvider((
         favorite: context.l10n.trackOptionAddToLoved,
         unfavorite: context.l10n.trackOptionRemoveFromLoved,
-        shuffleOn: context.l10n.nowPlayingShuffleOn,
-        shuffleOff: context.l10n.nowPlayingPlayInOrder,
+        output: context.l10n.nowPlayingAudioOutput,
       )),
     );
-    ref.listen(settingsProvider, (_, settings) {
-      ref.read(musicPlayerRuntimeProvider).configure(settings);
-    });
-    ref.listen(settingsProvider.select((s) => s.discordRichPresenceEnabled), (
+    ref.listen(settingsProvider.select((s) => s.playbackNormalization), (
       _,
       enabled,
     ) {
-      unawaited(DiscordPresenceService.instance.setEnabled(enabled));
+      setPlaybackNormalizationEnabled(enabled);
+    });
+    ref.listen(settingsProvider.select((s) => s.autoMix), (_, enabled) {
+      setAutoMixEnabled(enabled);
+    });
+    ref.listen(settingsProvider.select((s) => s.usbBitPerfect), (_, enabled) {
+      setUsbBitPerfectEnabled(enabled);
     });
     ref.listen(
-      settingsProvider.select((s) => s.listeningStatisticsEnabled),
-      (_, enabled) => listeningRecorder.setEnabled(enabled),
+      settingsProvider.select(
+        (s) => (
+          s.usbDirect,
+          s.usbDsdOverPcm,
+          s.usbAllowFixedVolume,
+          s.dapExclusive,
+        ),
+      ),
+      (_, value) => setUsbOutputOptions(
+        direct: value.$1,
+        allowDop: value.$2,
+        allowFixedVolume: value.$3,
+        dapExclusive: value.$4,
+      ),
+    );
+    ref.listen(
+      settingsProvider.select((s) => (s.autoplay, s.localLibraryEnabled)),
+      (_, value) => setAutoplayEnabled(value.$1, includeLocal: value.$2),
     );
     final queueState = ref.watch(
       downloadQueueProvider.select((s) => s.queuedCount),
@@ -820,10 +848,7 @@ class _MainShellState extends ConsumerState<MainShell>
         navigatorKey: _libraryTabNavigatorKey,
         observers: [_libraryPreviewStopObserver],
         heroAnimationsEnabled: heroAnimationsEnabled,
-        child: _LibraryTabRoot(
-          parentPageController: _pageController,
-          isTabActive: _currentIndex == 1,
-        ),
+        child: _LibraryTabRoot(parentPageController: _pageController),
       ),
       if (showStore)
         _TabNavigator(
@@ -854,19 +879,18 @@ class _MainShellState extends ConsumerState<MainShell>
         label: l10n.navHome,
       ),
       NavigationDestination(
-        icon: context.isMornye
-            ? MornyeNavigationIcon(
-                icon: CupertinoIcons.square_stack_fill,
-                badgeCount: queueState,
-              )
-            : AnimatedBadge(
-                count: queueState,
-                child: Badge(
-                  isLabelVisible: queueState > 0,
-                  label: Text('$queueState'),
-                  child: const Icon(Icons.library_music_outlined),
-                ),
-              ),
+        icon: AnimatedBadge(
+          count: queueState,
+          child: Badge(
+            isLabelVisible: queueState > 0,
+            label: Text('$queueState'),
+            child: Icon(
+              context.isMornye
+                  ? CupertinoIcons.square_stack_fill
+                  : Icons.library_music_outlined,
+            ),
+          ),
+        ),
         selectedIcon: SlidingIcon(
           child: AnimatedBadge(
             count: queueState,
@@ -881,19 +905,18 @@ class _MainShellState extends ConsumerState<MainShell>
       ),
       if (showStore)
         NavigationDestination(
-          icon: context.isMornye
-              ? MornyeNavigationIcon(
-                  icon: CupertinoIcons.square_grid_2x2,
-                  badgeCount: repoUpdatesCount,
-                )
-              : AnimatedBadge(
-                  count: repoUpdatesCount,
-                  child: Badge(
-                    isLabelVisible: repoUpdatesCount > 0,
-                    label: Text('$repoUpdatesCount'),
-                    child: const Icon(Icons.extension_outlined),
-                  ),
-                ),
+          icon: AnimatedBadge(
+            count: repoUpdatesCount,
+            child: Badge(
+              isLabelVisible: repoUpdatesCount > 0,
+              label: Text('$repoUpdatesCount'),
+              child: Icon(
+                context.isMornye
+                    ? CupertinoIcons.square_grid_2x2
+                    : Icons.extension_outlined,
+              ),
+            ),
+          ),
           selectedIcon: BouncingIcon(
             child: AnimatedBadge(
               count: repoUpdatesCount,
@@ -925,9 +948,7 @@ class _MainShellState extends ConsumerState<MainShell>
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           setState(() => _currentIndex = maxIndex);
-          if (_pageController.hasClients) {
-            _pageController.jumpToPage(maxIndex);
-          }
+          _pageController.jumpToPage(maxIndex);
         }
       });
     }
@@ -944,56 +965,41 @@ class _MainShellState extends ConsumerState<MainShell>
         MediaQuery.viewInsetsOf(context).bottom == 0 &&
         MediaQuery.textScalerOf(context).scale(15) <= 20;
 
-    Widget observeScroll(Widget child, int index) =>
-        NotificationListener<ScrollNotification>(
-          onNotification: (notification) {
-            if (canMinimizeChrome && index == _currentIndex) {
-              return _mornyeChrome.handleScroll(notification);
-            }
-            return false;
-          },
-          child: child,
-        );
-
     final pageView = KeyedSubtree(
       key: _pageViewKey,
-      child: context.isMornye
-          ? LazyTabView(
-              index: selectedDestination,
-              preloadKeys: {const ValueKey('tab-search')},
-              children: [
-                for (var index = 0; index < tabs.length; index++)
-                  KeyedSubtree(
-                    key: tabs[index].key,
-                    child: observeScroll(tabs[index], index),
-                  ),
-              ],
-            )
-          : FadeTransition(
-              opacity: _tabJumpOpacity,
-              child: ScaleTransition(
-                scale: _tabJumpScale,
-                child: PageView.builder(
-                  controller: _pageController,
-                  itemCount: tabs.length,
-                  onPageChanged: _onPageChanged,
-                  physics: const NeverScrollableScrollPhysics(),
-                  // TickerMode mutes animations and lets visibility-aware widgets
-                  // (e.g. MotionHeaderBanner) pause when their tab is hidden —
-                  // kept-alive pages otherwise keep running offscreen.
-                  itemBuilder: (context, index) => _KeepAliveTabPage(
-                    key: ValueKey('page-$index'),
-                    child: TickerMode(
-                      enabled: index == _currentIndex,
-                      child: observeScroll(tabs[index], index),
-                    ),
-                  ),
+      child: FadeTransition(
+        opacity: _tabJumpOpacity,
+        child: ScaleTransition(
+          scale: _tabJumpScale,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: tabs.length,
+            onPageChanged: _onPageChanged,
+            physics: const NeverScrollableScrollPhysics(),
+            // TickerMode mutes animations and lets visibility-aware widgets
+            // (e.g. MotionHeaderBanner) pause when their tab is hidden —
+            // kept-alive pages otherwise keep running offscreen.
+            itemBuilder: (context, index) => _KeepAliveTabPage(
+              key: ValueKey('page-$index'),
+              child: TickerMode(
+                enabled: index == _currentIndex,
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (canMinimizeChrome && index == _currentIndex) {
+                      return _mornyeChrome.handleScroll(notification);
+                    }
+                    return false;
+                  },
+                  child: tabs[index],
                 ),
               ),
             ),
+          ),
+        ),
+      ),
     );
 
-    final shell = SelectionOverlayHost(
+    return SelectionOverlayHost(
       child: BackButtonListener(
         onBackButtonPressed: () async {
           await _handleBackPress();
@@ -1001,8 +1007,9 @@ class _MainShellState extends ConsumerState<MainShell>
         },
         child: Scaffold(
           extendBody: true,
-          // The tab view keeps one element across the rail<->bar structure
-          // swap via _pageViewKey so rotation doesn't remount tab navigators.
+          // The page view keeps one element across the rail<->bar structure
+          // swap via _pageViewKey; without it a rotation past the 600dp
+          // breakpoint remounts the PageView and snaps back to the first tab.
           body: useNavigationRail
               ? Row(
                   children: [
@@ -1136,7 +1143,6 @@ class _MainShellState extends ConsumerState<MainShell>
         ),
       ),
     );
-    return DownloadQueueFeedback(child: shell);
   }
 }
 
@@ -1212,12 +1218,8 @@ class _PreviewStopNavigatorObserver extends NavigatorObserver {
 
 class _LibraryTabRoot extends ConsumerWidget {
   final PageController parentPageController;
-  final bool isTabActive;
 
-  const _LibraryTabRoot({
-    required this.parentPageController,
-    required this.isTabActive,
-  });
+  const _LibraryTabRoot({required this.parentPageController});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -1225,7 +1227,6 @@ class _LibraryTabRoot extends ConsumerWidget {
       settingsProvider.select((s) => s.showExtensionStore),
     );
     return QueueTab(
-      isTabActive: isTabActive,
       parentPageController: parentPageController,
       parentPageIndex: 1,
       nextPageIndex: showStore ? 2 : 3,

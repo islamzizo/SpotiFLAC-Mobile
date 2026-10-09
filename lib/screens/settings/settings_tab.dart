@@ -3,11 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/providers/user_profile_provider.dart';
-import 'package:spotiflac_android/screens/settings/profile_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/about_page.dart';
 import 'package:spotiflac_android/screens/settings/app_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/appearance_settings_page.dart';
@@ -18,13 +15,13 @@ import 'package:spotiflac_android/screens/settings/download_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/extensions_page.dart';
 import 'package:spotiflac_android/screens/settings/files_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/library_settings_page.dart';
-import 'package:spotiflac_android/screens/network_storage_screen.dart';
 import 'package:spotiflac_android/screens/settings/log_screen.dart';
 import 'package:spotiflac_android/screens/settings/lyrics_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/metadata_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/playback_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/settings_search_catalog.dart';
-import 'package:spotiflac_android/services/app_remote_config_service.dart';
+import 'package:spotiflac_android/screens/spotify_account_screen.dart';
+import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -33,7 +30,6 @@ import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/app_search_field.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
-import 'package:spotiflac_android/widgets/profile_avatar.dart';
 
 /// One entry on the Settings tab.
 class _Destination {
@@ -45,7 +41,6 @@ class _Destination {
     required this.pageBuilder,
     this.keywords = const [],
     this.searchEntries = const [],
-    this.showDonationProgress = false,
   });
 
   final IconData icon;
@@ -53,7 +48,6 @@ class _Destination {
   final String title;
   final String subtitle;
   final Widget Function() pageBuilder;
-  final bool showDonationProgress;
 
   /// Extra search terms for things the title does not spell out (e.g. "SAF"
   /// for the Files page), so a user can find a page by what it does.
@@ -80,10 +74,9 @@ class _Group {
 }
 
 class SettingsTab extends ConsumerStatefulWidget {
-  const SettingsTab({super.key, this.asPage = false, this.remoteConfigService});
+  const SettingsTab({super.key, this.asPage = false});
 
   final bool asPage;
-  final AppRemoteConfigService? remoteConfigService;
 
   @override
   ConsumerState<SettingsTab> createState() => _SettingsTabState();
@@ -95,43 +88,59 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   AppLocalizations? _cachedLocalizations;
   List<_Group>? _cachedGroups;
   String _query = '';
-  bool _hasRequestedDonationGoal = false;
-  MonthlyDonationGoal? _monthlyGoal;
-  String? _activeDonationJson;
-  late final AppRemoteConfigService _remoteConfigService =
-      widget.remoteConfigService ?? AppRemoteConfigService();
+  SpotifyAccountProfile? _spotifyProfile;
+  bool _spotifySignedIn = false;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_hasRequestedDonationGoal) return;
-    _hasRequestedDonationGoal = true;
-    unawaited(_loadDonationGoal());
-  }
-
-  Future<void> _loadDonationGoal({bool refresh = true}) async {
-    final locale = Localizations.localeOf(context).toLanguageTag();
-    final cached = await _remoteConfigService.readCachedConfig();
-    if (!mounted) return;
-    if (cached != null) _applyDonationGoal(cached);
-    if (!refresh) return;
-    final refreshed = await _remoteConfigService.fetchConfigSnapshot(
-      locale: locale,
+  void initState() {
+    super.initState();
+    SpotifyAccountService.instance.profileNotifier.addListener(
+      _onSpotifyProfileChanged,
     );
-    if (!mounted || refreshed == null) return;
-    _applyDonationGoal(refreshed);
+    _loadSpotifyProfile();
   }
 
-  void _applyDonationGoal(RemoteConfigSnapshot snapshot) {
-    if (_activeDonationJson == snapshot.rawJson) return;
+  void _onSpotifyProfileChanged() {
+    if (!mounted) return;
     setState(() {
-      _activeDonationJson = snapshot.rawJson;
-      _monthlyGoal = snapshot.config.donate.monthlyGoal;
+      _spotifyProfile = SpotifyAccountService.instance.profileNotifier.value;
+      _spotifySignedIn = _spotifyProfile != null;
     });
+  }
+
+  Future<void> _loadSpotifyProfile() async {
+    final service = SpotifyAccountService.instance;
+    final signedIn = await service.isSignedIn();
+    if (!signedIn) {
+      if (!mounted) return;
+      setState(() {
+        _spotifySignedIn = false;
+        _spotifyProfile = null;
+      });
+      return;
+    }
+
+    // Settings should render from the persisted Spotify identity immediately.
+    // The home avatar owns the background refresh, so reopening Settings does
+    // not start a network request that can disturb navigation/focus state.
+    final cachedProfile = await service.getProfile();
+    if (!mounted) return;
+    setState(() {
+      _spotifySignedIn = true;
+      _spotifyProfile = cachedProfile;
+    });
+    if (cachedProfile == null) {
+      final profile = await service.syncProfile();
+      if (!mounted) return;
+      setState(() => _spotifyProfile = profile);
+    }
   }
 
   @override
   void dispose() {
+    SpotifyAccountService.instance.profileNotifier.removeListener(
+      _onSpotifyProfileChanged,
+    );
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -153,6 +162,14 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       _Group(
         destinations: [
           _Destination(
+            icon: Icons.music_note_outlined,
+            iconColor: Colors.green,
+            title: 'Spotify Account',
+            subtitle: 'Log in to Spotify and sync your playlists',
+            keywords: const ['spotify', 'login', 'log in', 'account', 'playlist', 'liked songs'],
+            pageBuilder: () => const SpotifyAccountScreen(),
+          ),
+          _Destination(
             icon: Icons.extension_outlined,
             iconColor: Colors.teal,
             title: l10n.settingsExtensions,
@@ -160,16 +177,6 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             keywords: const ['plugin', 'provider', 'priority', 'store'],
             searchEntries: searchCatalog.extensions,
             pageBuilder: () => const ExtensionsPage(),
-          ),
-          _Destination(
-            icon: Icons.favorite_outline,
-            iconColor: Colors.pink,
-            title: l10n.settingsDonate,
-            subtitle: l10n.settingsDonateSubtitle,
-            keywords: const ['support', 'ko-fi', 'sponsor'],
-            pageBuilder: () =>
-                DonatePage(remoteConfigService: _remoteConfigService),
-            showDonationProgress: true,
           ),
           _Destination(
             icon: Icons.palette_outlined,
@@ -202,21 +209,6 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             keywords: const ['scan', 'local', 'duplicate'],
             searchEntries: searchCatalog.library,
             pageBuilder: () => const LibrarySettingsPage(),
-          ),
-          _Destination(
-            icon: Icons.dns_outlined,
-            iconColor: Colors.blueGrey,
-            title: l10n.networkStorage,
-            subtitle: 'SMB · WebDAV · HTTP / HTTPS',
-            keywords: const [
-              'nas',
-              'server',
-              'network',
-              'smb',
-              'webdav',
-              'http',
-            ],
-            pageBuilder: () => const NetworkStorageScreen(),
           ),
           _Destination(
             icon: Icons.sell_outlined,
@@ -313,10 +305,6 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             searchEntries: searchCatalog.backup,
             pageBuilder: () => const BackupRestorePage(),
           ),
-        ],
-      ),
-      _Group(
-        destinations: [
           _Destination(
             icon: Icons.article_outlined,
             iconColor: Colors.brown,
@@ -325,6 +313,18 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             keywords: const ['debug', 'error', 'report'],
             searchEntries: searchCatalog.logs,
             pageBuilder: () => const LogScreen(),
+          ),
+        ],
+      ),
+      _Group(
+        destinations: [
+          _Destination(
+            icon: Icons.favorite_outline,
+            iconColor: Colors.pink,
+            title: l10n.settingsDonate,
+            subtitle: l10n.settingsDonateSubtitle,
+            keywords: const ['support', 'ko-fi', 'sponsor'],
+            pageBuilder: () => const DonatePage(),
           ),
           _Destination(
             icon: Icons.info_outline,
@@ -359,19 +359,15 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     ).push(slidePageRoute<void>(page: MornyeSettingsTheme(child: destination)));
     if (!mounted) return;
 
-    if (page is DonatePage) {
-      unawaited(_loadDonationGoal(refresh: false));
-    }
-
-    // A route's focus scope remembers its previously focused child. Keep the
-    // search field out of that restoration cycle while the child page is open,
-    // then re-enable it without requesting focus when Settings becomes active.
+    // A route's focus scope can restore the previously focused search field
+    // while the child route is being popped. Clear that focus immediately
+    // before any asynchronous Spotify profile refresh can rebuild Settings.
     FocusManager.instance.primaryFocus?.unfocus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _searchFocusNode.canRequestFocus = true;
-      _searchFocusNode.unfocus();
-    });
+    _searchFocusNode.canRequestFocus = true;
+    _searchFocusNode.unfocus();
+
+    // Refresh the visible Spotify identity without delaying the focus reset.
+    unawaited(_loadSpotifyProfile());
   }
 
   Color _iconColorFor(_Destination destination) => context.isMornye
@@ -381,16 +377,12 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       : Theme.of(context).colorScheme.onSurfaceVariant;
 
   Widget _itemFor(_Destination destination, {required bool showDivider}) {
-    final goal = _monthlyGoal;
     return SettingsItem(
       icon: destination.icon,
       iconColor: _iconColorFor(destination),
       showIconInMornye: true,
       title: destination.title,
       subtitle: context.isMornye ? null : destination.subtitle,
-      footer: destination.showDonationProgress && goal?.isVisible == true
-          ? _DonationGoalProgress(goal: goal!)
-          : null,
       showDivider: showDivider,
       onTap: () => _navigateTo(context, destination.pageBuilder()),
     );
@@ -517,46 +509,58 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             ),
           ),
           SliverToBoxAdapter(
-            child: Consumer(
-              builder: (context, ref, _) {
-                final profile = ref.watch(userProfileProvider).value;
-                return SettingsGroup(
-                  margin: margin,
-                  children: [
-                    ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 16,
-                      ),
-                      leading: ProfileAvatar(
-                        name: profile?.name ?? '',
-                        photoPath: profile?.photoPath,
-                        size: 64,
-                      ),
-                      title: Text(
-                        profile?.name.isNotEmpty == true
-                            ? profile!.name
-                            : context.l10n.profileSetUp,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      subtitle:
-                          profile?.name.isNotEmpty == true ||
-                              profile?.photoPath?.isNotEmpty == true
-                          ? null
-                          : Text(context.l10n.profileEdit),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: profile == null
-                          ? null
-                          : () => _navigateTo(
-                              context,
-                              ProfileSettingsPage(profile: profile),
+            child: SettingsGroup(
+              margin: margin,
+              children: [
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
+                  leading: _spotifyProfile?.imageUrl?.isNotEmpty == true
+                      ? ClipOval(
+                          child: Image.network(
+                            _spotifyProfile!.imageUrl!,
+                            width: 64,
+                            height: 64,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => const CircleAvatar(
+                              radius: 32,
+                              child: Icon(Icons.person),
                             ),
-                    ),
-                  ],
-                );
-              },
+                          ),
+                        )
+                      : CircleAvatar(
+                          radius: 32,
+                          child: Icon(
+                            Icons.person,
+                            color: _spotifySignedIn
+                                ? Colors.green
+                                : Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                  title: Text(
+                    _spotifyProfile?.displayName.isNotEmpty == true
+                        ? _spotifyProfile!.displayName
+                        : 'Spotify Account',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  subtitle: Text(
+                    _spotifyProfile?.username?.isNotEmpty == true
+                        ? '@${_spotifyProfile!.username}'
+                        : _spotifySignedIn
+                            ? 'Spotify account connected'
+                            : 'Connect your Spotify account',
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _navigateTo(
+                    context,
+                    const SpotifyAccountScreen(),
+                  ),
+                ),
+              ],
             ),
           ),
           ...body,
@@ -564,42 +568,6 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
           const SliverFillRemaining(hasScrollBody: false, child: SizedBox()),
         ],
       ),
-    );
-  }
-}
-
-class _DonationGoalProgress extends StatelessWidget {
-  const _DonationGoalProgress({required this.goal});
-
-  final MonthlyDonationGoal goal;
-
-  @override
-  Widget build(BuildContext context) {
-    final locale = Localizations.localeOf(context).toLanguageTag();
-    final percentage =
-        '${NumberFormat('0.#', locale).format(goal.progressPercent)}%';
-    return Row(
-      children: [
-        Expanded(
-          child: LinearProgressIndicator(
-            value: goal.progressRatio,
-            minHeight: 4,
-            borderRadius: BorderRadius.circular(2),
-            semanticsLabel: goal.title,
-            semanticsValue: goal.showPercentage ? percentage : null,
-          ),
-        ),
-        if (goal.showPercentage) ...[
-          const SizedBox(width: 8),
-          Text(
-            percentage,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.primary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ],
     );
   }
 }

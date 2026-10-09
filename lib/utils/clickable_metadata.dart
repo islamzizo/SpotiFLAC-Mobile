@@ -13,7 +13,7 @@ import 'package:spotiflac_android/screens/home_tab.dart'
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 import 'package:spotiflac_android/utils/logger.dart';
-import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
+import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 
 final _log = AppLogger('ClickableMetadata');
 
@@ -127,42 +127,6 @@ bool _canSearchMetadataProvider(
   );
 }
 
-Future<void> navigateToArtistCredits(
-  BuildContext context, {
-  required String artistNames,
-  String? artistIds,
-  String? extensionId,
-}) async {
-  final artists = _buildArtistTapTargets(artistNames, artistIds);
-  if (artists.isEmpty) return;
-  final selected = artists.length == 1
-      ? artists.single
-      : await showAppBottomSheet<_ArtistTapTarget>(
-          context: context,
-          useRootNavigator: true,
-          title: context.l10n.mornyeGoToArtist,
-          maxHeightFactor: 0.6,
-          builder: (context) => ListView(
-            shrinkWrap: true,
-            children: [
-              for (final artist in artists)
-                AppSheetOption(
-                  leading: const Icon(Icons.person_outline),
-                  title: Text(artist.name),
-                  onTap: () => Navigator.pop(context, artist),
-                ),
-            ],
-          ),
-        );
-  if (!context.mounted || selected == null) return;
-  await navigateToArtist(
-    context,
-    artistName: selected.name,
-    artistId: selected.artistId,
-    extensionId: extensionId,
-  );
-}
-
 Future<void> navigateToArtist(
   BuildContext context, {
   required String artistName,
@@ -226,7 +190,9 @@ Future<void> navigateToArtist(
       return;
     }
 
-    if (!context.mounted) return;
+    if (!context.mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return;
+    }
     _pushArtistScreen(
       context,
       artistId: resolvedId,
@@ -304,7 +270,9 @@ Future<void> navigateToAlbum(
       return;
     }
 
-    if (!context.mounted) return;
+    if (!context.mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return;
+    }
     _pushAlbumScreen(
       context,
       albumId: resolvedId,
@@ -467,7 +435,17 @@ void _pushAlbumScreen(
 /// is immediately visible instead of being hidden behind it.
 void pushViaPreferredNavigator(BuildContext context, WidgetBuilder builder) {
   final currentNavigator = Navigator.of(context);
+  final spotifyNavigation = SpotifyNavigationScope.maybeOf(context);
   final rootNavigator = Navigator.of(context, rootNavigator: true);
+
+  // Spotify playlists live on the root GoRouter route rather than inside the
+  // MainShell tab navigators. Keep their album/artist pages on the current
+  // stack so they are visible immediately instead of being pushed underneath
+  // the Spotify screen.
+  if (spotifyNavigation != null) {
+    spotifyNavigation.push(builder);
+    return;
+  }
   final activeTabNavigator = ShellNavigationService.activeTabNavigator();
 
   final shouldRouteToTabNavigator =
@@ -673,11 +651,7 @@ List<_ArtistTapTarget> _buildArtistTapTargets(
   String rawArtistNames,
   String? rawArtistIds,
 ) {
-  final parsedIds = _parseArtistIds(rawArtistIds);
-  final parsedNames = splitArtistNames(
-    rawArtistNames,
-    creditedArtistCount: parsedIds.length,
-  );
+  final parsedNames = splitArtistNames(rawArtistNames);
   if (parsedNames.isEmpty) return const [];
 
   final uniqueNames = <String>[];
@@ -698,6 +672,7 @@ List<_ArtistTapTarget> _buildArtistTapTargets(
     ];
   }
 
+  final parsedIds = _parseArtistIds(rawArtistIds);
   if (parsedIds.isEmpty || !parsedIds.any((id) => id != null)) {
     return uniqueNames
         .map((name) => _ArtistTapTarget(name: name))

@@ -147,17 +147,41 @@ class NativeFlacConversionTest {
                             execute(arguments).also { result ->
                                 if (mode == "corrupt-remux" && "copy" in arguments && result.first) {
                                     val bytes = output.readBytes()
-                                    for (index in bytes.size - 50 until bytes.size - 34) {
-                                        bytes[index] = (bytes[index].toInt() xor 0x55).toByte()
+                                    // FLAC metadata (including the cover picture) has variable size.
+                                    // Locate the first audio frame instead of assuming audio lives
+                                    // at a fixed offset from the end of the file.
+                                    var offset = 4 // "fLaC" marker
+                                    var lastMetadataBlock = false
+                                    while (!lastMetadataBlock && offset + 4 <= bytes.size) {
+                                        val header = bytes[offset].toInt() and 0xff
+                                        lastMetadataBlock = (header and 0x80) != 0
+                                        val blockLength =
+                                            ((bytes[offset + 1].toInt() and 0xff) shl 16) or
+                                            ((bytes[offset + 2].toInt() and 0xff) shl 8) or
+                                            (bytes[offset + 3].toInt() and 0xff)
+                                        offset += 4 + blockLength
                                     }
+                                    check(lastMetadataBlock && offset < bytes.size) {
+                                        "FLAC output has no audio frame to corrupt"
+                                    }
+                                    check(bytes.size - offset > 32) {
+                                        "FLAC audio payload is unexpectedly short"
+                                    }
+                                    // Break the first frame's sync code so the validation decoder
+                                    // must reject the remux instead of relying on version-specific
+                                    // handling of damaged compressed sample data.
+                                    bytes[offset] = (bytes[offset].toInt() xor 0xff).toByte()
                                     output.writeBytes(bytes)
                                 }
                             }
                         }
                     }, {})
-                    assertEquals(mode != "remux", encoded)
-                    assertEquals(sourceHash, run("-v", "error", "-i", output.path, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-"))
-                    assertEquals(coverHash, run("-v", "error", "-i", output.path, "-map", "0:v:0", "-f", "hash", "-hash", "sha256", "-"))
+                    assertEquals("unexpected encoder fallback for $sampleRate Hz ($mode)", mode != "remux", encoded)
+                    val outputHash = run("-v", "error", "-i", output.path, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "hash", "-hash", "sha256", "-")
+                    println("FLAC fixture $sampleRate Hz ($mode): encoded=$encoded sourcePCM=$sourceHash outputPCM=$outputHash")
+                    assertEquals("decoded PCM changed for $sampleRate Hz ($mode): source=$sourceHash output=$outputHash", sourceHash, outputHash)
+                    val outputCoverHash = run("-v", "error", "-i", output.path, "-map", "0:v:0", "-f", "hash", "-hash", "sha256", "-")
+                    assertEquals("artwork changed for $sampleRate Hz ($mode)", coverHash, outputCoverHash)
                     assertTrue(input.exists())
                 }
             }

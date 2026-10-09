@@ -10,8 +10,8 @@ import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/widgets/download_service_picker.dart';
-import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/view_queue_snackbar_action.dart';
+import 'package:spotiflac_android/utils/spotify_navigation_scope.dart';
 
 /// Shared single-track "add to queue" flow for detail screens: shows the
 /// quality/service picker when the user opted into it, otherwise resolves
@@ -28,7 +28,11 @@ void downloadSingleTrack(
   final settings = ref.read(settingsProvider);
 
   void notifyQueued() {
-    showAddedToQueueSnackBar(context, track.name);
+    showAddedToQueueSnackBar(
+      context,
+      track.name,
+      onViewQueue: SpotifyNavigationScope.maybeOf(context)?.onViewQueue,
+    );
   }
 
   if (settings.askQualityBeforeDownload || forceQualityPicker) {
@@ -118,7 +122,7 @@ void showQueuedSnackbar(BuildContext context, int added, int skipped) {
   final message = skipped > 0
       ? context.l10n.discographySkippedDownloaded(added, skipped)
       : context.l10n.snackbarAddedTracksToQueue(added);
-  showAppSnackBar(context, content: Text(message));
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }
 
 bool shouldShowBatchDownloadPicker({
@@ -339,19 +343,38 @@ Future<void> loveAllTracks(
   WidgetRef ref,
   List<Track> tracks,
 ) async {
-  if (tracks.isEmpty) return;
-  final result = await ref
-      .read(libraryCollectionsProvider.notifier)
-      .toggleLovedTracks(tracks);
-  if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          result.removed
-              ? context.l10n.snackbarRemovedTracksFromLoved(result.count)
-              : context.l10n.snackbarAddedTracksToLoved(result.count),
+  final notifier = ref.read(libraryCollectionsProvider.notifier);
+  final state = ref.read(libraryCollectionsProvider);
+  final allLoved = tracks.every((t) => state.isLoved(t));
+
+  if (allLoved) {
+    for (final track in tracks) {
+      final key = trackCollectionKey(track);
+      await notifier.removeFromLoved(key);
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.l10n.snackbarRemovedTracksFromLoved(tracks.length),
+          ),
         ),
-      ),
-    );
+      );
+    }
+  } else {
+    int addedCount = 0;
+    for (final track in tracks) {
+      if (!state.isLoved(track)) {
+        await notifier.toggleLoved(track);
+        addedCount++;
+      }
+    }
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(context.l10n.snackbarAddedTracksToLoved(addedCount)),
+        ),
+      );
+    }
   }
 }
