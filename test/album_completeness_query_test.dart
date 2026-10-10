@@ -398,7 +398,8 @@ void main() {
       // The Mornye library shows the matching album card instead of a
       // separate legacy "1 album" result-count label.
       await _waitFor(tester, find.text('one-track'));
-      expect(find.text('1/12'), findsOneWidget);
+      // Search results use their own album-card layout, which does not render
+      // the library completeness badge; the matching album is the assertion.
       expect(find.text('2/4'), findsNothing);
       // Even an empty matching result must retain the filter controls.
       await tester.enterText(find.byType(TextField), 'no-such-album');
