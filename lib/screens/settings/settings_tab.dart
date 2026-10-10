@@ -20,6 +20,7 @@ import 'package:spotiflac_android/screens/settings/lyrics_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/metadata_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/playback_settings_page.dart';
 import 'package:spotiflac_android/screens/settings/settings_search_catalog.dart';
+import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/services/spotify_account_service.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
@@ -74,9 +75,10 @@ class _Group {
 }
 
 class SettingsTab extends ConsumerStatefulWidget {
-  const SettingsTab({super.key, this.asPage = false});
+  const SettingsTab({super.key, this.asPage = false, this.remoteConfigService});
 
   final bool asPage;
+  final AppRemoteConfigService? remoteConfigService;
 
   @override
   ConsumerState<SettingsTab> createState() => _SettingsTabState();
@@ -324,7 +326,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             title: l10n.settingsDonate,
             subtitle: l10n.settingsDonateSubtitle,
             keywords: const ['support', 'ko-fi', 'sponsor'],
-            pageBuilder: () => const DonatePage(),
+            pageBuilder: () => DonatePage(remoteConfigService: widget.remoteConfigService),
           ),
           _Destination(
             icon: Icons.info_outline,
