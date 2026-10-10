@@ -1266,6 +1266,15 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                   _filterFormat = tempFormat;
                                   _filterMetadata = tempMetadata;
                                   _sortMode = tempSortMode;
+                                  // Album completeness filters describe albums, not
+                                  // individual tracks. Switch to Albums so results
+                                  // and their present/expected-track badges are visible.
+                                  if (tempMetadata == incompleteAlbumFilter ||
+                                      tempMetadata == unknownAlbumCompletenessFilter) {
+                                    ref
+                                        .read(settingsProvider.notifier)
+                                        .setHistoryFilterMode('albums');
+                                  }
                                   _resetLibraryPaging();
                                 });
                                 Navigator.pop(context);
