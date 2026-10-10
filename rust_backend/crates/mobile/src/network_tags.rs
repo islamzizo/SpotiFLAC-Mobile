@@ -311,7 +311,7 @@ pub(crate) fn promote_cover(
 
 struct RangeReader<'a> {
     url: String,
-    session: NetworkSession,
+    session: Arc<NetworkSession>,
     check: &'a dyn Fn() -> Result<(), String>,
     started: Instant,
     size: u64,
