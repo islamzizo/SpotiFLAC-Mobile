@@ -55,6 +55,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     search: _query,
     sort: _sort,
     limit: _limit,
+    completeness: null,
   );
 
   @override
@@ -164,7 +165,7 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final searchingLibrary = _overview && _query.isNotEmpty;
-    final result = searchingLibrary
+    final AsyncValue<List<LibraryBrowseEntry>> result = searchingLibrary
         ? const AsyncData<List<LibraryBrowseEntry>>([])
         : ref.watch(libraryBrowseProvider(_request));
     _loading = result.isLoading;
