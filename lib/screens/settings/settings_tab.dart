@@ -42,6 +42,7 @@ class _Destination {
     required this.pageBuilder,
     this.keywords = const [],
     this.searchEntries = const [],
+    this.showDonationGoal = false,
   });
 
   final IconData icon;
@@ -54,6 +55,7 @@ class _Destination {
   /// for the Files page), so a user can find a page by what it does.
   final List<String> keywords;
   final List<SettingsSearchEntry> searchEntries;
+  final bool showDonationGoal;
 
   bool matches(SettingsSearchQuery query) {
     return query.matches([title, subtitle, ...keywords]);
@@ -123,7 +125,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     BuildContext context,
     _Destination destination,
   ) {
-    if (destination.title != context.l10n.settingsDonate) return null;
+    if (!destination.showDonationGoal) return null;
     final goal = _remoteConfigSnapshot?.config.donate.monthlyGoal;
     if (goal == null || !goal.isVisible) return null;
     return Column(
@@ -363,6 +365,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             title: l10n.settingsDonate,
             subtitle: l10n.settingsDonateSubtitle,
             keywords: const ['support', 'ko-fi', 'sponsor'],
+            showDonationGoal: true,
             pageBuilder: () => DonatePage(remoteConfigService: _remoteConfigService),
           ),
           _Destination(

@@ -123,7 +123,7 @@ void showQueuedSnackbar(BuildContext context, int added, int skipped) {
   final message = skipped > 0
       ? context.l10n.discographySkippedDownloaded(added, skipped)
       : context.l10n.snackbarAddedTracksToQueue(added);
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  showAppSnackBar(context, content: Text(message));
 }
 
 bool shouldShowBatchDownloadPicker({

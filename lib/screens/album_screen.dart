@@ -12,6 +12,7 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
+import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/providers/recent_access_provider.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/spotify_account_service.dart';
@@ -615,6 +616,8 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
           ? Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                _buildLoveAllButton(),
+                const SizedBox(width: 16),
                 _buildSpotifySaveButton(),
                 const SizedBox(width: 16),
                 Flexible(
@@ -636,6 +639,8 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
           : Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                _buildLoveAllButton(),
+                const SizedBox(width: 12),
                 _buildSpotifySaveButton(),
                 const SizedBox(width: 12),
                 Flexible(
@@ -855,6 +860,29 @@ class _AlbumScreenState extends ConsumerState<AlbumScreen>
       tracks,
       artistNameForPicker: widget.albumName,
       recommendedService: _recommendedDownloadService(),
+    );
+  }
+
+  Widget _buildLoveAllButton() {
+    return Consumer(
+      builder: (context, ref, _) {
+        ref.watch(libraryCollectionsProvider.select((state) => state.loved));
+        final collectionsState = ref.read(libraryCollectionsProvider);
+        final tracks = _tracks ?? const <Track>[];
+        final allLoved =
+            tracks.isNotEmpty && tracks.every((track) => collectionsState.isLoved(track));
+        return HeaderCircleButton(
+          icon: allLoved ? Icons.favorite : Icons.favorite_border,
+          tonal: true,
+          iconColor: allLoved ? Theme.of(context).colorScheme.error : null,
+          tooltip: allLoved
+              ? context.l10n.trackOptionRemoveFromLoved
+              : context.l10n.tooltipLoveAll,
+          onPressed: tracks.isEmpty
+              ? null
+              : () => loveAllTracks(context, ref, tracks),
+        );
+      },
     );
   }
 

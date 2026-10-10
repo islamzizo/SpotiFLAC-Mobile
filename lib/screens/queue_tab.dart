@@ -560,7 +560,11 @@ class _QueueTabState extends ConsumerState<QueueTab> {
       if (!mounted) return;
       _invalidateLibraryDataCaches();
       ref.read(downloadHistoryProvider.notifier).reloadFromStorage();
-      ref.read(localLibraryProvider.notifier).reloadFromStorage();
+      // Keep the local library lazy while it is disabled; repairing download
+      // history must not instantiate or scan the local library as a side effect.
+      if (ref.read(settingsProvider).localLibraryEnabled) {
+        ref.read(localLibraryProvider.notifier).reloadFromStorage();
+      }
       setState(() {});
     });
   }
@@ -1110,6 +1114,15 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                 selected: tempMetadata == 'missing-replaygain',
                                 onSelected: (_) => setSheetState(
                                   () => tempMetadata = 'missing-replaygain',
+                                ),
+                              ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context.l10n.libraryFilterMetadataHasReplayGain,
+                                ),
+                                selected: tempMetadata == 'has-replaygain',
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata = 'has-replaygain',
                                 ),
                               ),
                             ],
