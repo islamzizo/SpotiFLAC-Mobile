@@ -99,10 +99,6 @@ class _MainShellState extends ConsumerState<MainShell>
     super.didChangeDependencies();
     final l10n = context.l10n;
     NotificationService().updateStrings(l10n);
-    updateMusicPlayerStrings(
-      unknownTitle: l10n.unknownTitle,
-      unknownArtist: l10n.unknownArtist,
-    );
     setPlaybackNormalizationEnabled(
       ref.read(settingsProvider).playbackNormalization,
     );
@@ -212,7 +208,7 @@ class _MainShellState extends ConsumerState<MainShell>
         SpotifyAccountService.instance.syncSavedLibraryInBackground(),
       );
     } else if (state == AppLifecycleState.paused) {
-      unawaited(persistCurrentPlaybackSession());
+      unawaited(musicPlayerRuntime.handler?.persistCurrentSession() ?? Future<void>.value());
     }
   }
 
@@ -778,7 +774,8 @@ class _MainShellState extends ConsumerState<MainShell>
       playbackNotificationProvider((
         favorite: context.l10n.trackOptionAddToLoved,
         unfavorite: context.l10n.trackOptionRemoveFromLoved,
-        output: context.l10n.nowPlayingAudioOutput,
+        shuffleOn: context.l10n.nowPlayingShuffleOn,
+        shuffleOff: context.l10n.nowPlayingShuffleOff,
       )),
     );
     ref.listen(settingsProvider.select((s) => s.playbackNormalization), (
