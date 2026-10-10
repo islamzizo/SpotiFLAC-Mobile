@@ -49,7 +49,7 @@ class TrackListTile extends ConsumerWidget {
 
     final queueItem = ref.watch(
       downloadQueueLookupProvider.select(
-        (lookup) => lookup.byTrackId[track.id],
+        (lookup) => lookup.byTrackId.containsKey(track.id),
       ),
     );
 
@@ -70,7 +70,7 @@ class TrackListTile extends ConsumerWidget {
           )
         : false;
 
-    final isQueued = queueItem != null;
+    final isQueued = queueItem;
 
     return TrackCard(
       style: TrackCardStyle.flat,

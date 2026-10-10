@@ -90,16 +90,53 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   AppLocalizations? _cachedLocalizations;
   List<_Group>? _cachedGroups;
   String _query = '';
+  late final AppRemoteConfigService _remoteConfigService;
+  RemoteConfigSnapshot? _remoteConfigSnapshot;
   SpotifyAccountProfile? _spotifyProfile;
   bool _spotifySignedIn = false;
 
   @override
   void initState() {
     super.initState();
+    _remoteConfigService =
+        widget.remoteConfigService ?? AppRemoteConfigService();
     SpotifyAccountService.instance.profileNotifier.addListener(
       _onSpotifyProfileChanged,
     );
     _loadSpotifyProfile();
+    _loadDonationGoal();
+  }
+
+  Future<void> _loadDonationGoal() async {
+    final cached = await _remoteConfigService.readCachedConfig();
+    if (!mounted) return;
+    if (cached != null) {
+      setState(() => _remoteConfigSnapshot = cached);
+    }
+
+    final refreshed = await _remoteConfigService.fetchConfigSnapshot();
+    if (!mounted || refreshed == null) return;
+    setState(() => _remoteConfigSnapshot = refreshed);
+  }
+
+  Widget? _donationGoalFooter(
+    BuildContext context,
+    _Destination destination,
+  ) {
+    if (destination.title != context.l10n.settingsDonate) return null;
+    final goal = _remoteConfigSnapshot?.config.donate.monthlyGoal;
+    if (goal == null || !goal.isVisible) return null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (goal.showPercentage)
+          Text(
+            '${goal.progressPercent.round()}%',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        LinearProgressIndicator(value: goal.progressRatio),
+      ],
+    );
   }
 
   void _onSpotifyProfileChanged() {
@@ -326,7 +363,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
             title: l10n.settingsDonate,
             subtitle: l10n.settingsDonateSubtitle,
             keywords: const ['support', 'ko-fi', 'sponsor'],
-            pageBuilder: () => DonatePage(remoteConfigService: widget.remoteConfigService),
+            pageBuilder: () => DonatePage(remoteConfigService: _remoteConfigService),
           ),
           _Destination(
             icon: Icons.info_outline,
@@ -385,6 +422,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       showIconInMornye: true,
       title: destination.title,
       subtitle: context.isMornye ? null : destination.subtitle,
+      footer: _donationGoalFooter(context, destination),
       showDivider: showDivider,
       onTap: () => _navigateTo(context, destination.pageBuilder()),
     );

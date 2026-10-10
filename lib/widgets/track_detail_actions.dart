@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
@@ -343,38 +344,18 @@ Future<void> loveAllTracks(
   WidgetRef ref,
   List<Track> tracks,
 ) async {
-  final notifier = ref.read(libraryCollectionsProvider.notifier);
-  final state = ref.read(libraryCollectionsProvider);
-  final allLoved = tracks.every((t) => state.isLoved(t));
+  if (tracks.isEmpty || !context.mounted) return;
+  final result = await ref
+      .read(libraryCollectionsProvider.notifier)
+      .toggleLovedTracks(tracks);
+  if (!context.mounted) return;
 
-  if (allLoved) {
-    for (final track in tracks) {
-      final key = trackCollectionKey(track);
-      await notifier.removeFromLoved(key);
-    }
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            context.l10n.snackbarRemovedTracksFromLoved(tracks.length),
-          ),
-        ),
-      );
-    }
-  } else {
-    int addedCount = 0;
-    for (final track in tracks) {
-      if (!state.isLoved(track)) {
-        await notifier.toggleLoved(track);
-        addedCount++;
-      }
-    }
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.snackbarAddedTracksToLoved(addedCount)),
-        ),
-      );
-    }
-  }
+  showAppSnackBar(
+    context,
+    content: Text(
+      result.removed
+          ? context.l10n.snackbarRemovedTracksFromLoved(result.count)
+          : context.l10n.snackbarAddedTracksToLoved(result.count),
+    ),
+  );
 }

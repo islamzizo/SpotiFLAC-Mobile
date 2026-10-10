@@ -3202,7 +3202,7 @@
   "@tutorialLibraryTip1": {
     "description": "Tutorial library tip 1"
   },
-  "tutorialLibraryTip2": "Ketuk lagu untuk memutarnya dengan pemutar built-in",
+  "tutorialLibraryTip2": "Ketuk lagu untuk memutarnya dengan pemutar bawaan",
   "@tutorialLibraryTip2": {
     "description": "Tutorial library tip 2"
   },

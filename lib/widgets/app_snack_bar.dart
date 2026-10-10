@@ -123,7 +123,7 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(
               builder: (context, constraints) {
                 final actionBelow =
                     action != null &&
-                    (constraints.maxWidth < 280 ||
+                    (constraints.maxWidth < 340 ||
                         MediaQuery.textScalerOf(context).scale(14) > 18);
                 final message = Row(
                   children: [

@@ -735,19 +735,34 @@ class _QueueTabState extends ConsumerState<QueueTab> {
   }
 
   String _itemFormatLower(UnifiedLibraryItem item) {
+    String normalize(String value) {
+      final format = value.toLowerCase().replaceAll('-', '_');
+      // M4A and MP4 are the same container family for this filter.
+      return format == 'mp4' ? 'm4a' : format;
+    }
+
     final localFormat = normalizeOptionalString(item.localItem?.format);
-    if (localFormat != null) {
-      return localFormat.toLowerCase().replaceAll('-', '_');
-    }
+    if (localFormat != null) return normalize(localFormat);
     final historyFormat = normalizeOptionalString(item.historyItem?.format);
-    if (historyFormat != null) {
-      return historyFormat.toLowerCase().replaceAll('-', '_');
-    }
-    return _fileExtLower(item.filePath);
+    if (historyFormat != null) return normalize(historyFormat);
+    return normalize(_fileExtLower(item.filePath));
   }
 
   Set<String> _getAvailableFormats(List<UnifiedLibraryItem> items) {
-    final formats = <String>{};
+    // Keep common formats selectable even when the current page only contains
+    // one format; otherwise users cannot filter for another format.
+    final formats = <String>{
+      'm4a',
+      'aac',
+      'alac',
+      'opus',
+      'ogg',
+      'wav',
+      'aiff',
+      'wv',
+      'dsf',
+      'dff',
+    };
     for (final item in items) {
       final ext = _itemFormatLower(item);
       if ([
@@ -763,12 +778,21 @@ class _QueueTabState extends ConsumerState<QueueTab> {
         'ogg',
         'wav',
         'aiff',
+        'wv',
+        'dsf',
+        'dff',
       ].contains(ext)) {
         formats.add(ext);
       }
     }
     return formats;
   }
+
+  String _formatLabel(String format) => switch (format) {
+    'm4a' => 'M4A / MP4',
+    'wv' => 'WavPack',
+    _ => format.toUpperCase(),
+  };
 
   void _showFilterSheet(
     BuildContext context, [
@@ -925,7 +949,7 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                               for (final format
                                   in availableFormats.toList()..sort())
                                 AppChoiceChip(
-                                  label: Text(format.toUpperCase()),
+                                  label: Text(_formatLabel(format)),
                                   selected: tempFormat == format,
                                   onSelected: (_) =>
                                       setSheetState(() => tempFormat = format),
@@ -1289,15 +1313,20 @@ class _QueueTabState extends ConsumerState<QueueTab> {
         if (mounted) setState(() {});
       },
     );
-    ref.listen<int>(
-      localLibraryProvider.select((state) => state.loadedIndexVersion),
-      (previous, next) {
-        if (previous == null || previous == next) return;
-        // Keep stale rows visible until the refreshed query replaces them.
-        _resetLibraryOffsets();
-        if (mounted) setState(() {});
-      },
+    final localLibraryEnabled = ref.watch(
+      settingsProvider.select((s) => s.localLibraryEnabled),
     );
+    if (localLibraryEnabled) {
+      ref.listen<int>(
+        localLibraryProvider.select((state) => state.loadedIndexVersion),
+        (previous, next) {
+          if (previous == null || previous == next) return;
+          // Keep stale rows visible until the refreshed query replaces them.
+          _resetLibraryOffsets();
+          if (mounted) setState(() {});
+        },
+      );
+    }
 
     if (widget.librarySection == 'downloads') {
       final ids = ref.watch(
@@ -1338,12 +1367,9 @@ class _QueueTabState extends ConsumerState<QueueTab> {
     final inMemoryHistoryItems = ref.watch(
       downloadHistoryProvider.select((state) => state.items),
     );
-    final localLibraryTotalCount = ref.watch(
-      localLibraryProvider.select((state) => state.totalCount),
-    );
-    final localLibraryEnabled = ref.watch(
-      settingsProvider.select((s) => s.localLibraryEnabled),
-    );
+    final localLibraryTotalCount = localLibraryEnabled
+        ? ref.watch(localLibraryProvider.select((state) => state.totalCount))
+        : 0;
     // Watch with selector on key fields to reduce unnecessary rebuilds.
     // LibraryCollectionsState doesn't implement == so watching without
     // selector rebuilds on every provider notification.

@@ -492,6 +492,20 @@ class SettingsSearchCatalog {
       ],
       files = [
         SettingsSearchEntry(
+          icon: Icons.folder_shared_outlined,
+          title: l10n.networkStorage,
+          subtitle: l10n.networkStorageDescription,
+          keywords: const [
+            'smb',
+            'webdav',
+            'nas',
+            'network storage',
+            'network protocols',
+            'file sharing',
+          ],
+          targetLabel: l10n.networkStorage,
+        ),
+        SettingsSearchEntry(
           icon: Icons.folder_outlined,
           title: l10n.downloadDirectory,
           keywords: const ['download folder', 'saf', 'storage path'],

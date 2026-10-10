@@ -8,6 +8,7 @@ import 'package:spotiflac_android/providers/library_browse_provider.dart';
 import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
 import 'package:spotiflac_android/screens/spotify_account_screen.dart';
 import 'package:spotiflac_android/screens/local_album_screen.dart';
+import 'package:spotiflac_android/services/album_completeness.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/utils/nav_bar_inset.dart';
@@ -43,7 +44,8 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   bool _showSearch = false;
   String _query = '';
   late String _sort;
-  int _limit = 40;
+  static const int _pageSize = 40;
+  String? _completeness;
   List<LibraryBrowseEntry> _rows = const [];
   bool _loading = true;
 
@@ -54,21 +56,29 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     artist: widget.artist,
     search: _query,
     sort: _sort,
-    limit: _limit,
-    completeness: null,
+    limit: _pageSize,
+    completeness: _completeness,
   );
 
   @override
   void initState() {
     super.initState();
     _sort = _overview ? 'latest' : 'a-z';
-    _scroll.addListener(() {
-      if (_scroll.position.extentAfter < 500 &&
-          !_loading &&
-          _rows.length >= _limit) {
-        setState(() => _limit += 40);
-      }
-    });
+    _scroll.addListener(_loadMore);
+  }
+
+  void _loadMore() {
+    if (!mounted ||
+        !_scroll.hasClients ||
+        _scroll.position.extentAfter >= 500) {
+      return;
+    }
+    final request = _request;
+    final current = ref.read(libraryBrowseProvider(request));
+    if (!current.hasValue) return;
+    final state = current.requireValue;
+    if (!state.hasMore || state.isLoadingMore) return;
+    unawaited(ref.read(libraryBrowseProvider(request).notifier).loadMore());
   }
 
   @override
@@ -85,7 +95,6 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
       if (!mounted || _query == value.trim()) return;
       setState(() {
         _query = value.trim();
-        _limit = 40;
         _rows = const [];
       });
     });
@@ -134,6 +143,43 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     );
   }
 
+  Future<void> _chooseCompleteness() async {
+    final selected = await showAppBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text(sheetContext.l10n.libraryFilterAll),
+            trailing: _completeness == null ? const Icon(Icons.check) : null,
+            onTap: () => Navigator.pop(sheetContext, 'all'),
+          ),
+          ListTile(
+            title: Text(sheetContext.l10n.libraryFilterIncompleteAlbums),
+            trailing: _completeness == incompleteAlbumFilter
+                ? const Icon(Icons.check)
+                : null,
+            onTap: () => Navigator.pop(sheetContext, incompleteAlbumFilter),
+          ),
+          ListTile(
+            title: Text(sheetContext.l10n.libraryAlbumCompletenessUnknown),
+            trailing: _completeness == unknownAlbumCompletenessFilter
+                ? const Icon(Icons.check)
+                : null,
+            onTap: () =>
+                Navigator.pop(sheetContext, unknownAlbumCompletenessFilter),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    setState(() {
+      _completeness = selected == 'all' ? null : selected;
+      _rows = const [];
+    });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
   Future<void> _chooseSort() async {
     final selected = await showAppBottomSheet<String>(
       context: context,
@@ -155,7 +201,6 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
     if (!mounted || selected == null || selected == _sort) return;
     setState(() {
       _sort = selected;
-      _limit = 40;
       _rows = const [];
     });
     _scroll.jumpTo(0);
@@ -204,12 +249,18 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
             );
           },
         )
-      else if (!_artists)
+      else if (!_artists) ...[
+        IconButton(
+          tooltip: context.l10n.libraryFilterTitle,
+          icon: const Icon(Icons.filter_list),
+          onPressed: _chooseCompleteness,
+        ),
         IconButton(
           tooltip: context.l10n.searchSortTitle,
           icon: const Icon(Icons.sort),
           onPressed: _chooseSort,
         ),
+      ],
     ];
     return RefreshIndicator(
       onRefresh: () async {
@@ -379,6 +430,9 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                         itemCount: _rows.length,
                         itemBuilder: (context, index) {
                           final entry = _rows[index];
+                          final completeness = _completeness == null
+                              ? null
+                              : entry.completeness;
                           return Semantics(
                             button: true,
                             child: GestureDetector(
@@ -412,6 +466,29 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
                                       color: colors.onSurfaceVariant,
                                     ),
                                   ),
+                                  if (completeness != null) ...[
+                                    const SizedBox(height: 4),
+                                    Tooltip(
+                                      message: completeness.status == 'unknown' ||
+                                              completeness.expected == null
+                                          ? context.l10n.libraryAlbumCompletenessUnknown
+                                          : context.l10n.libraryAlbumMissingTracks(
+                                              completeness.present,
+                                              completeness.expected!,
+                                              (completeness.expected! -
+                                                      completeness.present)
+                                                  .clamp(0, completeness.expected!)
+                                                  .toInt(),
+                                            ),
+                                      child: Text(
+                                        completeness.badge,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colors.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ],
                               ),
                             ),

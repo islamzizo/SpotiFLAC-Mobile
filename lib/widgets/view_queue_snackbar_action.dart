@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/services/shell_navigation_service.dart';
 
 SnackBarAction buildViewQueueSnackBarAction(
@@ -21,13 +22,12 @@ void showAddedToQueueSnackBar(
   VoidCallback? onViewQueue,
 }) {
   if (!context.mounted) return;
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(context.l10n.snackbarAddedToQueue(trackName)),
-      action: buildViewQueueSnackBarAction(
-        context,
-        onViewQueue: onViewQueue,
-      ),
+  showAppSnackBar(
+    context,
+    content: Text(context.l10n.snackbarAddedToQueue(trackName)),
+    action: buildViewQueueSnackBarAction(
+      context,
+      onViewQueue: onViewQueue,
     ),
   );
 }
