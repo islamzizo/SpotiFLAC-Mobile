@@ -525,6 +525,19 @@ pub struct NetworkSession {
 }
 
 impl NetworkSession {
+    /// Creates an unrestricted native-media transport after the caller has
+    /// validated the URL against the extension session's permissions.
+    /// This is used only for explicitly opted-in direct media transfers.
+    pub fn direct_media(&self) -> Arc<NetworkSession> {
+        Arc::new(NetworkSession {
+            service: Arc::clone(&self.service),
+            permissions: None,
+            native_media: true,
+            timeout: self.timeout,
+            cookies: Mutex::default(),
+        })
+    }
+
     pub fn reset_connections(&self) {
         self.service.reset_connections();
     }
