@@ -1274,6 +1274,15 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                     ref
                                         .read(settingsProvider.notifier)
                                         .setHistoryFilterMode('albums');
+                                    final albumsPage = _filterModes.indexOf(
+                                      'albums',
+                                    );
+                                    final pageController = _filterPageController;
+                                    if (albumsPage >= 0 &&
+                                        pageController != null &&
+                                        pageController.hasClients) {
+                                      pageController.jumpToPage(albumsPage);
+                                    }
                                   }
                                   _resetLibraryPaging();
                                 });
