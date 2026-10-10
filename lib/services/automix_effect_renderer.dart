@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_audio/return_code.dart';
+import 'package:ffmpeg_kit_flutter_new_full/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_full/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/services/audio_analysis_jobs.dart';
