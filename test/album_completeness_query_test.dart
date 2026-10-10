@@ -395,7 +395,9 @@ void main() {
 
       await tester.enterText(find.byType(TextField), 'one-track');
       await tester.pump(const Duration(milliseconds: 400));
-      await _waitFor(tester, find.text('1 album'));
+      // The Mornye library shows the matching album card instead of a
+      // separate legacy "1 album" result-count label.
+      await _waitFor(tester, find.text('one-track'));
       expect(find.text('1/12'), findsOneWidget);
       expect(find.text('2/4'), findsNothing);
       // Even an empty matching result must retain the filter controls.
