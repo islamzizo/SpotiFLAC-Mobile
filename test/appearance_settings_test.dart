@@ -109,6 +109,10 @@ void main() {
       final context = tester.element(slider);
       expect(MornyeTheme.glassClarityOf(context), 1);
       expect(
+        find.byKey(const ValueKey('mornye-glass-clear-performance')),
+        findsOneWidget,
+      );
+      expect(
         MornyeTheme.fromContext(
           context,
           brightness: Brightness.dark,
@@ -124,6 +128,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.widget<Slider>(slider).value, 0);
       expect(prefs.getDouble(kMornyeGlassClarityKey), 0);
+      expect(
+        find.byKey(const ValueKey('mornye-glass-clear-performance')),
+        findsNothing,
+      );
       expect(tester.takeException(), isNull);
     });
 
@@ -143,6 +151,10 @@ void main() {
       await tester.ensureVisible(slider);
       await tester.pumpAndSettle();
       expect(tester.widget<Slider>(slider).onChanged, isNull);
+      expect(
+        find.byKey(const ValueKey('mornye-glass-clear-performance')),
+        findsNothing,
+      );
       expect(
         tester.widget<Text>(hint).data,
         'Glass is opaque on this device. Turn on '

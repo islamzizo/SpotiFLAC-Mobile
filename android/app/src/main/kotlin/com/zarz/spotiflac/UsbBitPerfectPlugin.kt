@@ -43,11 +43,6 @@ class UsbBitPerfectPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Even
         methods.setMethodCallHandler(this)
         events.setStreamHandler(this)
         appContext = binding.applicationContext
-        if (Build.VERSION.SDK_INT >= 34) {
-            engine = UsbPcmPlayback(binding.applicationContext) { event ->
-                main.post { sink?.success(event) }
-            }
-        }
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -64,6 +59,9 @@ class UsbBitPerfectPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, Even
                 direct = UsbDirectPlayback(appContext) { event ->
                     main.post { sink?.success(event) }
                 }
+            }
+            if (!useHiRes && !useDirect && Build.VERSION.SDK_INT >= 34 && engine == null) {
+                engine = UsbPcmPlayback(appContext) { event -> main.post { sink?.success(event) } }
             }
         }
         if (useHiRes) {
@@ -147,6 +145,7 @@ private class UsbPcmPlayback(context: Context, private val emit: (Map<String, An
     private var invalidRoute = false
     private var nextRouteCheck = 0L
     private var pending: ByteBuffer? = null
+    private var converted: ByteBuffer? = null
     private val info = MediaCodec.BufferInfo()
     private val rawBuffer = ByteBuffer.allocateDirect(256 * 1024)
     @Volatile private var revision = 0
@@ -308,7 +307,8 @@ private class UsbPcmPlayback(context: Context, private val emit: (Map<String, An
             positionBaseUs = timeUs + skipped * 1000000 / rate
             needTimestamp = false
         }
-        pending = BitPerfectPcm.convert(input, inputBits, sourceBits, outputBits, floatInput)
+        pending = BitPerfectPcm.convert(input, inputBits, sourceBits, outputBits, floatInput, converted)
+            .also { converted = it }
     }
 
     private fun decode() {
@@ -482,6 +482,7 @@ private class UsbPcmPlayback(context: Context, private val emit: (Map<String, An
         revision++
         worker.post {
             closeSource()
+            converted = null
             manager.removeOnPreferredMixerAttributesChangedListener(mixerListener)
             thread.quitSafely()
         }

@@ -14,6 +14,9 @@
 
 use super::fft::Radix2Fft;
 
+mod streaming;
+pub(super) use streaming::{IntegerEvidence, StftAccumulator, StftPlan};
+
 pub const CONFIDENCE_CERTAIN: &str = "certain";
 pub const CONFIDENCE_LIKELY: &str = "likely";
 
@@ -83,6 +86,7 @@ pub struct StftStats {
 /// Averaged channel spectrum with a periodic Hann window and hop n_fft/4.
 /// Only complete frames are used: padding a cropped segment with zeros
 /// introduces an artificial discontinuity and broadband spectral leakage.
+#[cfg(test)]
 pub fn analyze_stft(
     y: &[f32],
     n_fft: usize,
@@ -337,6 +341,7 @@ pub fn detect_imaging(
 /// every sample repeated (sample-and-hold) or the in-between samples on a
 /// straight line (linear interpolation). `samples` is one channel,
 /// right-justified; `or_bits` is the OR over the whole window.
+#[cfg(test)]
 pub fn detect_integer_upsampling(samples: &[i32], or_bits: u32, sample_rate: u32) -> &'static str {
     if or_bits == 0 || samples.len() < 4 {
         return "";
@@ -362,6 +367,7 @@ pub fn detect_integer_upsampling(samples: &[i32], or_bits: u32, sample_rate: u32
     ""
 }
 
+#[cfg(test)]
 fn integer_upsampling_at_phase(
     samples: &[i32],
     unused: u32,

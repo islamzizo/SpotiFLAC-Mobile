@@ -1,5 +1,6 @@
 import Flutter
 import Foundation
+import UIKit
 import WidgetKit
 
 @MainActor
@@ -9,10 +10,19 @@ final class PlayerWidgetBridge {
     private var ready = false
     private var pending: [(UUID, String, CheckedContinuation<Bool, Never>)] = []
     private let writer = DispatchQueue(label: "com.zarz.spotiflac.player-widget", qos: .utility)
+    private var installedWidgetCount: Int?
+    private var foregroundObserver: NSObjectProtocol?
 
     func attach(_ messenger: FlutterBinaryMessenger) {
         let channel = FlutterMethodChannel(name: "com.zarz.spotiflac/player_widget", binaryMessenger: messenger)
         self.channel = channel
+        if foregroundObserver == nil {
+            foregroundObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.refreshInstalledWidgetCount() }
+            }
+        }
         channel.setMethodCallHandler { [weak self] call, result in
             guard let self else { result(nil); return }
             switch call.method {
@@ -20,15 +30,20 @@ final class PlayerWidgetBridge {
                 self.ready = true
                 result(nil)
                 self.flush()
+                self.refreshInstalledWidgetCount()
+            case "getInstalledWidgetCount":
+                self.refreshInstalledWidgetCount(result)
             case "update":
                 guard let values = call.arguments as? [String: Any] else {
                     result(FlutterError(code: "bad_state", message: "Missing widget state", details: nil))
                     return
                 }
+                let hasWidgets = (self.installedWidgetCount ?? 1) > 0
+                let presentation = hasWidgets ? values : values.filter { $0.key != "artwork" }
                 self.writer.async {
                     do {
-                        try Self.write(values)
-                        WidgetCenter.shared.reloadTimelines(ofKind: PlayerWidgetState.kind)
+                        try Self.write(presentation)
+                        if hasWidgets { WidgetCenter.shared.reloadTimelines(ofKind: PlayerWidgetState.kind) }
                         DispatchQueue.main.async { result(nil) }
                     } catch {
                         DispatchQueue.main.async {
@@ -38,6 +53,25 @@ final class PlayerWidgetBridge {
                 }
             default:
                 result(FlutterMethodNotImplemented)
+            }
+        }
+    }
+
+    private func refreshInstalledWidgetCount(_ result: FlutterResult? = nil) {
+        WidgetCenter.shared.getCurrentConfigurations { [weak self] configurations in
+            Task { @MainActor in
+                guard let self else { result?(0); return }
+                switch configurations {
+                case .success(let widgets):
+                    let count = widgets.filter { $0.kind == PlayerWidgetState.kind }.count
+                    if count != self.installedWidgetCount {
+                        self.installedWidgetCount = count
+                        if self.ready { self.channel?.invokeMethod("installedWidgetCountChanged", arguments: count) }
+                    }
+                    result?(count)
+                case .failure(let error):
+                    result?(FlutterError(code: "widget_count", message: error.localizedDescription, details: nil))
+                }
             }
         }
     }
@@ -91,7 +125,8 @@ final class PlayerWidgetBridge {
         state.background = (values["background"] as? NSNumber)?.uint32Value ?? state.background
         state.artworkKey = values["artworkKey"] as? String ?? ""
         if !state.artworkKey.isEmpty {
-            if state.artworkKey == previous.artworkKey, previous.artworkURL != nil {
+            if state.artworkKey == previous.artworkKey, let previousURL = previous.artworkURL,
+               FileManager.default.fileExists(atPath: previousURL.path) {
                 state.artworkName = previous.artworkName
             } else if let artwork = values["artwork"] as? FlutterStandardTypedData {
                 state.artworkName = "cover-\(UUID().uuidString).png"

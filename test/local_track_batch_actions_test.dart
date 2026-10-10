@@ -49,6 +49,58 @@ class _BatchLibrary extends LocalLibraryNotifier {
 
 void main() {
   test(
+    'lyrics-only batch retains provider identity without metadata lookups',
+    () async {
+      final requests = <Map<String, dynamic>>[];
+      final runner = BatchReEnrichRunner(
+        beginPhase: () async => const AppSettings(embedLyrics: true),
+        sourceTrackIds: {'1': 'provider-a:track-1'},
+        reEnrich: (request) async {
+          requests.add(request);
+          return request['preview_only'] == true
+              ? {
+                  'method': 'preview',
+                  'enriched_metadata': {
+                    'spotify_id': request['spotify_id'],
+                    'duration_ms': request['duration_ms'],
+                  },
+                }
+              : {'method': 'native', 'lyrics_status': 'updated'};
+        },
+        writeSidecar:
+            ({required audioFilePath, required reEnrichResult}) async {},
+      );
+      final previews = await runner.preview(
+        [item('1')],
+        const ReEnrichFieldSelection(
+          mode: ReEnrichBatchMode.selectedFields,
+          fields: [ReEnrichFields.lyrics],
+        ),
+        shouldStop: running,
+        onProgress: progress,
+      );
+      expect(previews.single.updateFields, ['lyrics']);
+      expect(
+        await runner.apply(previews, shouldStop: running, onProgress: progress),
+        1,
+      );
+      expect(requests, hasLength(2));
+      expect(
+        requests.map((request) => request['spotify_id']),
+        everyElement('provider-a:track-1'),
+      );
+      expect(
+        requests.map((request) => request['search_online']),
+        everyElement(false),
+      );
+      expect(
+        requests.map((request) => request['track_name']),
+        everyElement('Song 1'),
+      );
+    },
+  );
+
+  test(
     'lookup/apply each capture settings once, dispatch native/ffmpeg, and retain partial success',
     () async {
       var phaseCount = 0;
@@ -305,10 +357,19 @@ void main() {
         await tester.tap(find.text('Apply changes'));
         await tester.pumpAndSettle();
         expect(library._refreshStarted, isTrue);
+        // The result is visible even while an entire-library scan is blocked.
+        expect(
+          find.text('Metadata re-enriched successfully (2/2)'),
+          findsOneWidget,
+        );
         expect(settings.phases.length, 2);
         active = !leaveDuringRefresh;
         library.refreshed.complete();
         await tester.pumpAndSettle();
+        if (!leaveDuringRefresh) {
+          await tester.tap(find.text('OK'));
+          await tester.pumpAndSettle();
+        }
         await action;
         expect(events, leaveDuringRefresh ? ['hide'] : ['hide', 'complete']);
         expect(tester.takeException(), isNull);

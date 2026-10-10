@@ -50,6 +50,8 @@ jobs:
   build-android:
     runs-on: ubuntu-latest
     needs: get-version
+    env:
+      SPOTIFLAC_DISCORD_SDK: "1"
 
     steps:
       - name: Free disk space
@@ -67,6 +69,11 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Prepare pinned Discord SDK
+        uses: ./.github/actions/discord-sdk
+        with:
+          passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
 
       - name: Setup Java
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -142,7 +149,7 @@ jobs:
 
       - name: Build release APKs
         run: |
-          bash scripts/build_android.sh --target lib/main.dart
+          bash scripts/build_android.sh --production --target lib/main.dart
           ls -la build/app/outputs/flutter-apk/
 
       - name: Sign and verify release APKs (V1/V2/V3/V4)
@@ -212,13 +219,31 @@ jobs:
         run: |
           apk_dir=build/app/outputs/flutter-apk
           python3 scripts/check_backend_apk.py "$apk_dir/SpotiFLAC-${VERSION}-arm64.apk" \
-            --backend rust --abis arm64-v8a
+            --backend rust --abis arm64-v8a --discord-sdk
           python3 scripts/check_backend_apk.py "$apk_dir/SpotiFLAC-${VERSION}-arm32.apk" \
-            --backend rust --abis armeabi-v7a
+            --backend rust --abis armeabi-v7a --discord-sdk
           for abi in arm64 arm32; do
             "$ANDROID_HOME/build-tools/37.0.0/zipalign" -c -P 16 4 \
               "$apk_dir/SpotiFLAC-${VERSION}-${abi}.apk"
           done
+
+      - name: Record Android symbol provenance
+        run: |
+          test -s build/symbols/android/app.android-arm64.symbols
+          test -s build/symbols/android/app.android-arm.symbols
+          test -s build/app/outputs/mapping/release/mapping.txt
+          git rev-parse HEAD > build/symbols/android/commit.txt
+          sha256sum build/app/outputs/flutter-apk/SpotiFLAC-*.apk > build/symbols/android/apk-sha256.txt
+
+      - name: Retain Android debug symbols
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: android-symbols-${{ needs.get-version.outputs.version }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            build/symbols/android/
+            build/app/outputs/mapping/release/mapping.txt
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -231,10 +256,17 @@ jobs:
   build-ios:
     runs-on: macos-15
     needs: get-version # Only depends on version, NOT android build!
+    env:
+      SPOTIFLAC_DISCORD_SDK: "1"
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Prepare pinned Discord SDK
+        uses: ./.github/actions/discord-sdk
+        with:
+          passphrase: ${{ secrets.DISCORD_MOBILE_SDK_PASSPHRASE }}
 
       - name: Select Xcode 26.1.1
         run: |
@@ -271,7 +303,7 @@ jobs:
 
       - name: Normalize ffmpeg plugin shell scripts (strip CRLF)
         run: |
-          find "$HOME/.pub-cache/hosted" -path "*ffmpeg_kit_flutter_new_full*/scripts/*.sh" -type f -print0 |
+          find "$HOME/.pub-cache/hosted" -path "*ffmpeg_kit_flutter_new_audio*/scripts/*.sh" -type f -print0 |
             while IFS= read -r -d '' f; do
               perl -pi -e 's/\r$//' "$f"
               chmod +x "$f"
@@ -283,7 +315,13 @@ jobs:
 
       - name: Configure Rust application pods
         working-directory: ios
-        run: pod install
+        run: |
+          test -f ../third_party/spotiflac_discord/ios/Frameworks/discord_partner_sdk.xcframework/Info.plist || {
+            echo "Production requires the official Discord SDK. Run scripts/setup_discord_sdk.sh in the build environment first." >&2
+            exit 1
+          }
+          test -f ../third_party/spotiflac_discord/ios/Frameworks/Discord-License-Notices.txt
+          pod install
 
       - name: Build iOS (unsigned)
         run: |
@@ -307,6 +345,8 @@ jobs:
 
       - name: Audit Rust iOS archive before packaging
         run: |
+          test -f ios/build/Runner.xcarchive/Products/Applications/Runner.app/Frameworks/discord_partner_sdk.framework/discord_partner_sdk
+          test -f ios/build/Runner.xcarchive/Products/Applications/Runner.app/Discord-License-Notices.txt
           python3 -m unittest discover -s scripts -p 'test_check_backend_ios.py'
           python3 scripts/check_backend_ios.py \
             ios/build/Runner.xcarchive/Products/Applications/Runner.app \
@@ -322,7 +362,7 @@ jobs:
           mkdir Payload
           cp -r Runner.app Payload/
           # Use absolute path to avoid relative path issues
-          zip -r $GITHUB_WORKSPACE/build/ios/ipa/SpotiFLAC-${VERSION}-ios-unsigned.ipa Payload
+          zip -r "$GITHUB_WORKSPACE/build/ios/ipa/SpotiFLAC-${VERSION}-ios-unsigned.ipa" Payload
           rm -rf Payload
 
       - name: Verify IPA created
@@ -505,8 +545,12 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add apps.json
-          git diff --cached --quiet && echo "No changes to commit" || \
-            (git commit -m "chore: update AltStore source to ${VERSION}" && git push)
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update AltStore source to ${VERSION}"
+            git push
+          fi
 
   notify-telegram:
     runs-on: ubuntu-latest

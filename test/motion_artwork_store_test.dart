@@ -154,7 +154,9 @@ void main() {
         );
         expect(initial, isNull);
         expect(container.exists(extensionProvider), isFalse);
-        expect(container.exists(settingsProvider), isFalse);
+        // Playback reads the motion-artwork preference without loading an
+        // extension or fetching any artwork.
+        expect(container.exists(settingsProvider), isTrue);
         if (legacy != null) {
           expect(await legacy.readAsBytes(), [1]);
         } else {

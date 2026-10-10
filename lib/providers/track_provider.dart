@@ -161,15 +161,17 @@ class TrackNotifier extends Notifier<TrackState> {
     return const TrackState();
   }
 
-  bool _isRequestValid(int requestId) => requestId == _currentRequestId;
+  bool _isRequestValid(int requestId) =>
+      ref.mounted && requestId == _currentRequestId;
 
-  Future<void> fetchFromUrl(String url, {bool useDeezerFallback = true}) async {
+  Future<void> fetchFromUrl(String url) async {
     final requestId = ++_currentRequestId;
 
     state = TrackState(isLoading: true, hasSearchText: state.hasSearchText);
 
     try {
       var extensionHandler = await PlatformBridge.findURLHandler(url);
+      if (!_isRequestValid(requestId)) return;
       if (extensionHandler == null) {
         final extensionState = ref.read(extensionProvider);
         if (!extensionState.isInitialized && extensionState.isLoading) {
@@ -181,6 +183,7 @@ class TrackNotifier extends Notifier<TrackState> {
               .waitForInitialization(timeout: _extensionInitRetryTimeout);
           if (!_isRequestValid(requestId)) return;
           extensionHandler = await PlatformBridge.findURLHandler(url);
+          if (!_isRequestValid(requestId)) return;
         }
       }
 
@@ -217,6 +220,7 @@ class TrackNotifier extends Notifier<TrackState> {
 
         if (attempt < 3) {
           await Future<void>.delayed(const Duration(milliseconds: 500));
+          if (!_isRequestValid(requestId)) return;
         }
       }
 
@@ -547,6 +551,7 @@ class TrackNotifier extends Notifier<TrackState> {
   }
 
   void clear() {
+    _currentRequestId++;
     state = const TrackState();
   }
 

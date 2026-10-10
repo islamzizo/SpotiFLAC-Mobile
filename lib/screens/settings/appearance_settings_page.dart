@@ -531,9 +531,16 @@ class _MornyeGlassClaritySlider extends ConsumerWidget {
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      theme.colorScheme.primary,
-                      const Color(0xff277f94),
-                      const Color(0xffc69756),
+                      for (final color in [
+                        theme.colorScheme.primary,
+                        const Color(0xff277f94),
+                        const Color(0xffc69756),
+                      ])
+                        // Preview light glass over a light backdrop, as in the
+                        // app. Dense sample colors make white glass look gray.
+                        theme.brightness == Brightness.light
+                            ? Color.lerp(Colors.white, color, 0.4)!
+                            : color,
                     ],
                   ),
                 ),
@@ -589,6 +596,16 @@ class _MornyeGlassClaritySlider extends ConsumerWidget {
               Text(l10n.appearanceGlassClear, style: theme.textTheme.bodySmall),
             ],
           ),
+          if (adjustable && clarity >= 0.9) ...[
+            const SizedBox(height: 8),
+            Text(
+              l10n.appearanceGlassClearPerformance,
+              key: const ValueKey('mornye-glass-clear-performance'),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
         ],
       ),
     );

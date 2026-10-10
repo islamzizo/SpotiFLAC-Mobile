@@ -40,6 +40,12 @@ pub(crate) fn register<'js>(
                             |object| object.get(key).map_err(|error| error.to_string()),
                         )
                     };
+                    let direct_network = if value("directMedia")?.as_bool() == Some(true) {
+                        Some(network.direct_media())
+                    } else {
+                        None
+                    };
+                    let network = direct_network.as_ref().unwrap_or(network.as_ref());
                     let chunked = value("chunked")?;
                     let chunk_size = if chunked.as_bool() == Some(true) {
                         Some(1 << 20)

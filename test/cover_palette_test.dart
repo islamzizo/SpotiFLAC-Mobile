@@ -6,6 +6,71 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/theme/cover_palette.dart';
 
 void main() {
+  testWidgets(
+    'same-path cover replacement refreshes palette and decoded image',
+    (tester) async {
+      await tester.runAsync(() async {
+        final directory = await Directory.systemTemp.createTemp(
+          'palette-replace-',
+        );
+        final file = File('${directory.path}/cover.png');
+        final cache = PaintingBinding.instance.imageCache;
+        Future<void> write(Color color) async {
+          final recorder = ui.PictureRecorder();
+          Canvas(
+            recorder,
+          ).drawRect(const Rect.fromLTWH(0, 0, 32, 32), Paint()..color = color);
+          final picture = recorder.endRecording();
+          final image = await picture.toImage(32, 32);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          image.dispose();
+          picture.dispose();
+          await file.writeAsBytes(bytes!.buffer.asUint8List());
+        }
+
+        try {
+          await write(Colors.blue);
+          final first = await CoverPalette.resolve(file.path, Brightness.light);
+          expect(first, isNotNull);
+          final oldKey = await CoverPalette.cacheKeyFor(
+            file.path,
+            Brightness.light,
+          );
+          // The small source-key lookup may evict a file while Flutter still
+          // retains its decoded image. A later edit must stay fresh too.
+          for (var index = 0; index < 33; index++) {
+            await CoverPalette.resolve(
+              '${directory.path}/missing-$index.png',
+              Brightness.light,
+            );
+          }
+          expect(CoverPalette.peek(file.path, Brightness.light), isNull);
+          await write(Colors.red);
+          await file.setLastModified(
+            DateTime.now().add(const Duration(seconds: 1)),
+          );
+          expect(
+            await CoverPalette.cacheKeyFor(file.path, Brightness.light),
+            isNot(oldKey),
+          );
+          final second = await CoverPalette.resolve(
+            file.path,
+            Brightness.light,
+          );
+          expect(second, isNot(same(first)));
+          expect(
+            CoverPalette.sourceColor(file.path, Brightness.light)?.toARGB32(),
+            Colors.red.toARGB32(),
+          );
+        } finally {
+          cache.clear();
+          cache.clearLiveImages();
+          await directory.delete(recursive: true);
+        }
+      });
+    },
+  );
+
   testWidgets('palette requests share a small aspect-preserving decode', (
     tester,
   ) async {

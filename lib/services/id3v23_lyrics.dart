@@ -1,6 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
+
+import 'package:flutter/services.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 
 /// Minimal ID3v2.3 USLT writer used after FFmpeg metadata embedding.
 ///
@@ -16,6 +20,23 @@ class Id3v23Lyrics {
   /// Replaces lyrics while streaming the audio tail to a sibling temporary
   /// file. The original is replaced only after all output has been flushed.
   static Future<bool> writeUnsyncedLyricsToFile(
+    File file,
+    String lyrics,
+  ) async {
+    try {
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'write_id3v23_lyrics',
+        'file_path': file.path,
+        'lyrics': lyrics,
+      });
+      return result['updated'] == true;
+    } on MissingPluginException {
+      final path = file.path;
+      return Isolate.run(() => _writeUnsyncedLyricsToFile(File(path), lyrics));
+    }
+  }
+
+  static Future<bool> _writeUnsyncedLyricsToFile(
     File file,
     String lyrics,
   ) async {

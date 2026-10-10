@@ -4,6 +4,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 
 void main() {
+  test(
+    'network session retains opaque source and artwork rather than temporary URLs',
+    () {
+      const remote = PlayableMedia(
+        id: 'network://nas/song.flac',
+        source: 'network://nas/song.flac',
+        title: 'Song',
+        artist: 'NAS',
+        artUri: 'http://127.0.0.1:1234/temporary',
+        networkArtworkSource: 'network://nas/cover.jpg',
+      );
+      final json = remote.toJson();
+      expect(json.containsKey('artUri'), false);
+      final restored = PlayableMedia.fromJson(json)!;
+      expect(restored.isNetwork, true);
+      expect(restored.networkArtworkSource, 'network://nas/cover.jpg');
+      expect(restored.artUri, isNull);
+      expect(
+        restored
+            .toMediaItem(resolvedArtwork: 'http://127.0.0.1:4321/new')
+            .artUri,
+        Uri.parse('http://127.0.0.1:4321/new'),
+      );
+    },
+  );
   const media = PlayableMedia(
     id: 'track-1',
     source: '/music/track.flac',

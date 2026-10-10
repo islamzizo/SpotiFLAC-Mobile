@@ -48,6 +48,17 @@ void main() {
         yield LicenseEntryWithLineBreaks(const [
           'Inter',
         ], await rootBundle.loadString('assets/fonts/Inter-LICENSE.txt'));
+        yield LicenseEntryWithLineBreaks(const [
+          'libsmb2',
+        ], await rootBundle.loadString('assets/licenses/libsmb2.txt'));
+        yield LicenseEntryWithLineBreaks(const [
+          'Material Color Utilities (native palette)',
+          'Dart SDK (native Random compatibility)',
+        ], await rootBundle.loadString('assets/licenses/native_palette.txt'));
+        yield LicenseEntryWithLineBreaks(const [
+          'rusqlite',
+          'roxmltree',
+        ], await rootBundle.loadString('assets/licenses/native_data_jobs.txt'));
         if (Platform.isAndroid) {
           yield LicenseEntryWithLineBreaks(const [
             'libusb',
@@ -76,6 +87,7 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       await _prepareAndroidInstallationState(prefs);
       final bootstrapSettings = loadBootstrapSettings(prefs);
+      musicPlayerRuntime.configure(bootstrapSettings);
       final bootstrapTheme = loadBootstrapThemeSettings(prefs);
       final initialSafAccessLost = await _detectInitialSafAccessLoss(
         bootstrapSettings,
@@ -120,7 +132,11 @@ void main() {
               final navigator =
                   AppNavigationService.rootNavigatorKey.currentState;
               if (navigator != null && handler.mediaItem.value != null) {
-                unawaited(navigator.push<void>(NowPlayingRoute()));
+                unawaited(
+                  navigator.push<void>(
+                    NowPlayingRoute(child: const NowPlayingScreen()),
+                  ),
+                );
               }
             } else {
               await PlayerWidgetService.control(handler, command);
@@ -425,7 +441,12 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
       // any debounced download-queue persistence reaches disk.
       if (ref.exists(downloadQueueProvider)) {
         unawaited(
-          ref.read(downloadQueueProvider.notifier).flushQueuePersistence(),
+          ref
+              .read(downloadQueueProvider.notifier)
+              .flushQueuePersistence()
+              .catchError((Object error) {
+                _log.e('Failed to flush background download queue: $error');
+              }),
         );
       }
       // Backgrounded: release idle native runtimes and connections.
@@ -480,6 +501,10 @@ class _EagerInitializationState extends ConsumerState<EagerInitialization>
     _localLibraryWarmupTimer = _scheduleProviderWarmup(
       const Duration(milliseconds: 1600),
       () {
+        if (!ref.read(settingsProvider).localLibraryEnabled) {
+          _localLibraryWarmupScheduled = false;
+          return;
+        }
         ref.read(localLibraryProvider);
         if (!_autoScanTriggeredOnLaunch) {
           _autoScanTriggeredOnLaunch = true;

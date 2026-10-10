@@ -118,9 +118,9 @@ class _LibraryTracksFolderScreenState
         return;
       }
 
-      final file = await M3uPlaylistService.writeExportFile(
+      final file = await M3uPlaylistService.writeExportEntries(
         title,
-        M3uPlaylistService.buildM3u8Content(exportEntries),
+        exportEntries,
       );
       messenger.showSnackBar(
         SnackBar(
@@ -165,20 +165,21 @@ class _LibraryTracksFolderScreenState
     final count = keysToRemove.length;
     final notifier = ref.read(libraryCollectionsProvider.notifier);
 
-    for (final key in keysToRemove) {
-      switch (widget.mode) {
-        case LibraryTracksFolderMode.wishlist:
-          await notifier.removeFromWishlist(key);
-          break;
-        case LibraryTracksFolderMode.loved:
-          await notifier.removeFromLoved(key);
-          break;
-        case LibraryTracksFolderMode.playlist:
-          if (widget.playlistId != null) {
-            await notifier.removeTrackFromPlaylist(widget.playlistId!, key);
-          }
-          break;
-      }
+    switch (widget.mode) {
+      case LibraryTracksFolderMode.wishlist:
+        await notifier.removeWishlistTracks(keysToRemove);
+        break;
+      case LibraryTracksFolderMode.loved:
+        await notifier.removeLovedTracks(keysToRemove);
+        break;
+      case LibraryTracksFolderMode.playlist:
+        if (widget.playlistId != null) {
+          await notifier.removeTracksFromPlaylist(
+            widget.playlistId!,
+            keysToRemove,
+          );
+        }
+        break;
     }
 
     exitSelectionMode();
@@ -219,13 +220,12 @@ class _LibraryTracksFolderScreenState
       return;
     }
     final queueNotifier = ref.read(downloadQueueProvider.notifier);
-    var count = 0;
-
-    for (final entry in entries) {
-      if (!selectedIds.contains(entry.key)) continue;
-      queueNotifier.addToQueue(entry.track, service);
-      count++;
-    }
+    final tracks = entries
+        .where((entry) => selectedIds.contains(entry.key))
+        .map((entry) => entry.track)
+        .toList(growable: false);
+    queueNotifier.addIndividualTracksToQueue(tracks, service);
+    final count = tracks.length;
 
     exitSelectionMode();
 

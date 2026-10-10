@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:spotiflac_android/models/settings.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/secure_storage_options.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 import 'package:spotiflac_android/utils/audio_format_utils.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
@@ -56,6 +58,8 @@ AppSettings loadBootstrapSettings(SharedPreferences prefs) {
 AppSettings resetInstallationBoundSettings(AppSettings settings) {
   return settings.copyWith(
     downloadDirectory: '',
+    networkDownloadFolder: '',
+    networkDownloadLabel: '',
     downloadDirectoryBookmark: '',
     storageMode: 'app',
     downloadTreeUri: '',
@@ -89,6 +93,9 @@ Future<void> resetRestoredInstallationSettings(SharedPreferences prefs) async {
 }
 
 class SettingsNotifier extends Notifier<AppSettings> {
+  SettingsNotifier({Future<SharedPreferences> Function()? preferences})
+    : _loadPreferences = preferences ?? SharedPreferences.getInstance;
+
   static final RegExp _isoRegionPattern = RegExp(r'^[A-Z]{2}$');
   static const Set<String> _searchTabValues = {
     'all',
@@ -116,9 +123,12 @@ class SettingsNotifier extends Notifier<AppSettings> {
     2000,
   };
 
-  Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-  bool _isSavingSettings = false;
+  final Future<SharedPreferences> Function() _loadPreferences;
+  Future<SharedPreferences> get _prefs => _loadPreferences();
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage(
+    aOptions: secureStorageAndroidOptions,
+  );
+  Future<void>? _saveSettingsFuture;
   bool _saveQueued = false;
   String? _pendingSettingsJson;
   Future<void>? _loadSettingsFuture;
@@ -299,15 +309,22 @@ class SettingsNotifier extends Notifier<AppSettings> {
     }
   }
 
-  Future<void> _saveSettings() async {
+  Future<void> _saveSettings() {
     _pendingSettingsJson = jsonEncode(state.toJson());
 
-    if (_isSavingSettings) {
+    final activeSave = _saveSettingsFuture;
+    if (activeSave != null) {
       _saveQueued = true;
-      return;
+      return activeSave;
     }
 
-    _isSavingSettings = true;
+    final saved = Completer<void>();
+    _saveSettingsFuture = saved.future;
+    unawaited(_drainSettingsSave(saved));
+    return saved.future;
+  }
+
+  Future<void> _drainSettingsSave(Completer<void> saved) async {
     try {
       final prefs = await _prefs;
       do {
@@ -320,7 +337,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
     } catch (e) {
       _log.e('Failed to save settings: $e');
     } finally {
-      _isSavingSettings = false;
+      _saveSettingsFuture = null;
+      saved.complete();
     }
   }
 
@@ -345,6 +363,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
       // Preserve this device's storage location; the backup's values point at
       // the original device and would not resolve here.
       downloadDirectory: current.downloadDirectory,
+      networkDownloadFolder: current.networkDownloadFolder,
+      networkDownloadLabel: current.networkDownloadLabel,
       downloadDirectoryBookmark: current.downloadDirectoryBookmark,
       storageMode: current.storageMode,
       downloadTreeUri: current.downloadTreeUri,
@@ -491,6 +511,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   void setDownloadDirectory(String directory, {String? iosBookmark}) {
     state = state.copyWith(
+      networkDownloadFolder: '',
+      networkDownloadLabel: '',
       downloadDirectory: directory,
       downloadDirectoryBookmark: iosBookmark ?? '',
     );
@@ -501,6 +523,14 @@ class SettingsNotifier extends Notifier<AppSettings> {
     final normalized = mode == 'saf' ? 'saf' : 'app';
     state = state.copyWith(storageMode: normalized);
     _saveSettings();
+  }
+
+  Future<void> setNetworkDownloadFolder(String source, String label) async {
+    state = state.copyWith(
+      networkDownloadFolder: source,
+      networkDownloadLabel: label,
+    );
+    await _saveSettings();
   }
 
   /// Atomically leaves SAF and persists a writable app-managed destination.
@@ -521,6 +551,8 @@ class SettingsNotifier extends Notifier<AppSettings> {
   void setDownloadTreeUri(String uri, {String? displayName}) {
     final nextDisplay = displayName ?? state.downloadDirectory;
     state = state.copyWith(
+      networkDownloadFolder: '',
+      networkDownloadLabel: '',
       downloadTreeUri: uri,
       storageMode: uri.isNotEmpty ? 'saf' : state.storageMode,
       downloadDirectory: nextDisplay,
@@ -551,8 +583,58 @@ class SettingsNotifier extends Notifier<AppSettings> {
     _saveSettings();
   }
 
+  void setPauseOnMute(bool enabled) {
+    state = state.copyWith(pauseOnMute: enabled);
+    _saveSettings();
+  }
+
+  void setPlayOnHeadphonesConnected(bool enabled) {
+    state = state.copyWith(playOnHeadphonesConnected: enabled);
+    _saveSettings();
+  }
+
   void setAutoMix(bool enabled) {
     state = state.copyWith(autoMix: enabled);
+    _saveSettings();
+  }
+
+  void setAutoMixDuration(int seconds) {
+    state = state.copyWith(autoMixDuration: autoMixDurationFromJson(seconds));
+    _saveSettings();
+  }
+
+  void setAutoMixEffect(AutoMixEffect effect) {
+    state = state.copyWith(
+      autoMixEffect: effect,
+      autoMixPitch: effect == AutoMixEffect.pitch && state.autoMixPitch == 0
+          ? 2
+          : state.autoMixPitch,
+    );
+    _saveSettings();
+  }
+
+  void setAutoMixSpeed(double speed) {
+    state = state.copyWith(autoMixSpeed: autoMixSpeedFromJson(speed));
+    _saveSettings();
+  }
+
+  void setAutoMixPitch(double semitones) {
+    state = state.copyWith(autoMixPitch: autoMixPitchFromJson(semitones));
+    _saveSettings();
+  }
+
+  void setAutoMixEcho(bool enabled) {
+    state = state.copyWith(autoMixEcho: enabled);
+    _saveSettings();
+  }
+
+  void setAutoMixLowPass(bool enabled) {
+    state = state.copyWith(autoMixLowPass: enabled);
+    _saveSettings();
+  }
+
+  void setDiscordRichPresenceEnabled(bool enabled) {
+    state = state.copyWith(discordRichPresenceEnabled: enabled);
     _saveSettings();
   }
 
@@ -615,6 +697,16 @@ class SettingsNotifier extends Notifier<AppSettings> {
 
   void setKeepScreenOnLyrics(bool enabled) {
     state = state.copyWith(keepScreenOnLyrics: enabled);
+    _saveSettings();
+  }
+
+  void setMotionArtworkEnabled(bool enabled) {
+    state = state.copyWith(motionArtworkEnabled: enabled);
+    _saveSettings();
+  }
+
+  void setListeningStatisticsEnabled(bool enabled) {
+    state = state.copyWith(listeningStatisticsEnabled: enabled);
     _saveSettings();
   }
 

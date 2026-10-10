@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
@@ -42,9 +44,11 @@ import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/screens/selection_mode_mixin.dart';
 import 'package:spotiflac_android/utils/clickable_metadata.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
+import 'package:spotiflac_android/widgets/playlist_picker_sheet.dart';
 import 'package:spotiflac_android/widgets/motion_header_banner.dart';
 import 'package:spotiflac_android/widgets/cross_extension_share_sheet.dart';
 import 'package:spotiflac_android/widgets/view_queue_snackbar_action.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/downloadable_cover.dart';
 
 part 'artist_screen_widgets.dart';
@@ -170,6 +174,7 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
   int _popularCurrentPage = 0;
 
   bool _isFetchingDiscography = false;
+  int _discographyFetchGeneration = 0;
   List<ArtistAlbum>? _albumBucketSource;
   List<ArtistAlbum> _albumsOnlyBucket = const [];
   List<ArtistAlbum> _singlesBucket = const [];
@@ -849,6 +854,25 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
           ? context.l10n.tracksCount(totalTracks)
           : context.l10n.discographySelectAlbumsSubtitle,
       children: [
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: selectedCount > 0 && !_isFetchingDiscography
+                ? () {
+                    exitSelectionMode();
+                    _fetchAndQueueAlbums(
+                      selectedAlbums,
+                      ref.read(settingsProvider).defaultService,
+                      null,
+                      addToPlaylist: true,
+                    );
+                  }
+                : null,
+            icon: const Icon(Icons.playlist_add),
+            label: Text(context.l10n.collectionAddToPlaylist),
+          ),
+        ),
+        const SizedBox(height: 8),
         Row(
           children: [
             Expanded(
@@ -1045,29 +1069,36 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
   Future<void> _fetchAndQueueAlbums(
     List<ArtistAlbum> albums,
     String service,
-    String? qualityOverride,
-  ) async {
-    if (_isFetchingDiscography) return;
+    String? qualityOverride, {
+    bool addToPlaylist = false,
+  }) async {
+    if (!mounted || _isFetchingDiscography) return;
 
+    final generation = ++_discographyFetchGeneration;
     setState(() => _isFetchingDiscography = true);
 
-    if (!mounted) {
-      setState(() => _isFetchingDiscography = false);
-      return;
-    }
-
     final progressDialogKey = GlobalKey<_FetchingProgressDialogState>();
-    showAppDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => _FetchingProgressDialog(
-        key: progressDialogKey,
-        totalAlbums: albums.length,
-        onCancel: () {
+    unawaited(
+      showAppDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => _FetchingProgressDialog(
+          key: progressDialogKey,
+          totalAlbums: albums.length,
+          onCancel: () {
+            _discographyFetchGeneration++;
+            setState(() => _isFetchingDiscography = false);
+            Navigator.pop(ctx);
+          },
+        ),
+      ).whenComplete(() {
+        if (mounted &&
+            generation == _discographyFetchGeneration &&
+            _isFetchingDiscography) {
+          _discographyFetchGeneration++;
           setState(() => _isFetchingDiscography = false);
-          Navigator.pop(ctx);
-        },
-      ),
+        }
+      }),
     );
 
     final allTracks = <Track>[];
@@ -1075,14 +1106,20 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
     int failedCount = 0;
 
     for (final album in albums) {
-      if (!_isFetchingDiscography) break;
+      if (!mounted ||
+          generation != _discographyFetchGeneration ||
+          !_isFetchingDiscography) {
+        break;
+      }
 
       try {
         final tracks = await _fetchAlbumTracks(album);
+        if (!mounted || generation != _discographyFetchGeneration) return;
         allTracks.addAll(tracks);
       } catch (e) {
         failedCount++;
       }
+      if (!mounted || generation != _discographyFetchGeneration) return;
 
       fetchedCount++;
 
@@ -1094,7 +1131,10 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
       }
     }
 
+    if (!mounted || generation != _discographyFetchGeneration) return;
+    final cancelled = !_isFetchingDiscography;
     setState(() => _isFetchingDiscography = false);
+    if (cancelled) return;
 
     if (mounted) {
       Navigator.of(context, rootNavigator: true).pop();
@@ -1112,6 +1152,11 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
           SnackBar(content: Text(context.l10n.discographyNoAlbums)),
         );
       }
+      return;
+    }
+
+    if (addToPlaylist) {
+      await showAddTracksToPlaylistSheet(context, ref, allTracks);
       return;
     }
 
@@ -1173,11 +1218,10 @@ class _ArtistScreenState extends ConsumerState<ArtistScreen>
             )
           : context.l10n.discographyAddedToQueue(tracksToQueue.length);
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          action: buildViewQueueSnackBarAction(context),
-        ),
+      showAppSnackBar(
+        context,
+        content: Text(message),
+        action: buildViewQueueSnackBarAction(context),
       );
     }
   }

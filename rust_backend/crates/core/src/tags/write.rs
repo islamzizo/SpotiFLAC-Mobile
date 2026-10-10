@@ -655,10 +655,11 @@ fn primary_artist_mode(mode: &str) -> bool {
 
 /// The first credited artist, or the trimmed value when nothing separates it.
 /// Dart and Kotlin share this exact separator set so every writer agrees;
-/// Go-parity split mode keeps its own `split_artists` pattern.
+/// Vorbis split mode also recognizes these featured-credit variants.
 fn primary_artist(value: &str) -> String {
     static SEPARATOR: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\s*[,;&]\s*|\s+x\s+|\s+(?:feat(?:uring)?|ft|with)\.?(?:\s+|$)").unwrap()
+        Regex::new(r"(?i)\s*[,;&]\s*|\s+x\s+|\s+(?:feat(?:uring|ured|ure)?|ft|with)\.?(?:\s+|$)")
+            .unwrap()
     });
     let value = value.trim();
     SEPARATOR
@@ -691,7 +692,10 @@ fn artist_mode_fields(fields: &Fields) -> Cow<'_, Fields> {
 
 fn split_artists(value: &str) -> Vec<String> {
     static SPLIT: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?-u:\s*(?:,|&|\bx\b)\s*|\s+\b(?:feat(?:uring)?|ft|with)\.?\s*)").unwrap()
+        Regex::new(
+            r"(?i)\s*(?:,|;|&|\bx\b)\s*|\s+\b(?:feat(?:uring|ured|ure)?|ft|with)\.?(?:\s+|$)",
+        )
+        .unwrap()
     });
     let value = value.trim();
     if value.is_empty() {
@@ -830,6 +834,23 @@ mod tests {
 
     /// Shared with the Dart and Kotlin primary-artist tests; keep in sync.
     #[test]
+    fn split_artist_credits_recognize_variants_without_splitting_band_words() {
+        assert_eq!(
+            split_artists("One Featured Two; Three"),
+            vec!["One", "Two", "Three"]
+        );
+        assert_eq!(split_artists("One feature Two"), vec!["One", "Two"]);
+        assert_eq!(
+            split_artists("Florence and the Machine"),
+            vec!["Florence and the Machine"]
+        );
+        assert_eq!(
+            split_artists("Artist Without Fear"),
+            vec!["Artist Without Fear"]
+        );
+    }
+
+    #[test]
     fn primary_artist_uses_the_shared_separator_set() {
         for (input, expected) in [
             ("Calle 24, Chino Pacas", "Calle 24"),
@@ -839,6 +860,8 @@ mod tests {
             ("Artist A Feat Artist B", "Artist A"),
             ("Artist A ft. Artist B", "Artist A"),
             ("Artist A featuring Artist B", "Artist A"),
+            ("Artist A featured Artist B", "Artist A"),
+            ("Artist A feature Artist B", "Artist A"),
             ("Artist A with Artist B", "Artist A"),
             ("Artist A x Artist B", "Artist A"),
             ("Artist A X Artist B", "Artist A"),

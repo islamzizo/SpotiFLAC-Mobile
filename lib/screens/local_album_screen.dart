@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math';
+import 'package:spotiflac_android/services/deleted_library_files.dart';
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
@@ -15,6 +16,7 @@ import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/image_cache_utils.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/batch_track_actions.dart';
+import 'package:spotiflac_android/models/album_track_order.dart';
 import 'package:spotiflac_android/models/unified_library_item.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
@@ -23,6 +25,7 @@ import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/player_motion_artwork_provider.dart';
 import 'package:spotiflac_android/screens/collapsing_header_scroll_mixin.dart';
 import 'package:spotiflac_android/screens/selection_mode_mixin.dart';
+import 'package:spotiflac_android/screens/track_metadata_screen.dart';
 import 'package:spotiflac_android/widgets/collection_scaffold.dart';
 import 'package:spotiflac_android/widgets/album_track_tile.dart';
 import 'package:spotiflac_android/widgets/animation_utils.dart';
@@ -30,6 +33,7 @@ import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/destructive_selection_button.dart';
 import 'package:spotiflac_android/widgets/selection_action_button.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
+import 'package:spotiflac_android/widgets/library_selection_playback_actions.dart';
 import 'package:spotiflac_android/widgets/disc_separator_chip.dart';
 import 'package:spotiflac_android/widgets/album_detail_header.dart';
 import 'package:spotiflac_android/widgets/mornye_artist_header.dart';
@@ -40,13 +44,15 @@ class LocalAlbumScreen extends ConsumerStatefulWidget {
   final String artistName;
   final String? coverPath;
   final List<LocalLibraryItem> tracks;
+  final Future<List<LocalLibraryItem>> Function()? loadTracks;
 
   const LocalAlbumScreen({
     super.key,
     required this.albumName,
     required this.artistName,
     this.coverPath,
-    required this.tracks,
+    this.tracks = const [],
+    this.loadTracks,
   });
 
   @override
@@ -57,8 +63,14 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
     with
         SelectionModeMixin<LocalAlbumScreen>,
         CollapsingHeaderScrollMixin<LocalAlbumScreen> {
-  late List<LocalLibraryItem> _sortedTracksCache;
-  late Map<int, List<LocalLibraryItem>> _discGroupsCache;
+  late AlbumTrackOrder<LocalLibraryItem> _trackOrder;
+  List<LocalLibraryItem> get _sortedTracksCache => _trackOrder.tracks;
+  Map<int, List<LocalLibraryItem>> get _discGroupsCache =>
+      _trackOrder.discGroups;
+  List<LocalLibraryItem>? _loadedTracks;
+  bool _loadingTracks = false;
+  Object? _loadError;
+  int _loadGeneration = 0;
 
   void _showCueVirtualTrackSnackBar() {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -66,8 +78,8 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
     );
   }
 
-  late List<int> _sortedDiscNumbersCache;
-  late bool _hasMultipleDiscsCache;
+  List<int> get _sortedDiscNumbersCache => _trackOrder.discNumbers;
+  bool get _hasMultipleDiscsCache => _trackOrder.discGroups.length > 1;
   String? _commonQualityCache;
   String? _commonQualityModeCache;
 
@@ -75,49 +87,51 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
   void initState() {
     super.initState();
     _rebuildTrackCaches();
+    _loadTracks();
+  }
+
+  Future<void> _loadTracks() async {
+    final loader = widget.loadTracks;
+    if (loader == null) return;
+    final generation = ++_loadGeneration;
+    _loadingTracks = true;
+    _loadError = null;
+    try {
+      final tracks = await loader();
+      if (!mounted || generation != _loadGeneration) return;
+      _loadedTracks = tracks;
+    } catch (error) {
+      if (!mounted || generation != _loadGeneration) return;
+      _loadError = error;
+    }
+    _loadingTracks = false;
+    setState(_rebuildTrackCaches);
   }
 
   @override
   void didUpdateWidget(covariant LocalAlbumScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.tracks, widget.tracks) ||
-        oldWidget.tracks.length != widget.tracks.length) {
+        oldWidget.tracks.length != widget.tracks.length ||
+        oldWidget.loadTracks != widget.loadTracks) {
+      _loadGeneration++;
+      _loadedTracks = null;
+      _loadingTracks = false;
+      _loadError = null;
       _rebuildTrackCaches();
+      _loadTracks();
     }
-  }
-
-  List<LocalLibraryItem> _buildSortedTracks() {
-    final tracks = List<LocalLibraryItem>.from(widget.tracks);
-    tracks.sort((a, b) {
-      final aDisc = a.discNumber ?? 1;
-      final bDisc = b.discNumber ?? 1;
-      if (aDisc != bDisc) return aDisc.compareTo(bDisc);
-      final aNum = a.trackNumber ?? 999;
-      final bNum = b.trackNumber ?? 999;
-      if (aNum != bNum) return aNum.compareTo(bNum);
-      return a.trackName.compareTo(b.trackName);
-    });
-    return tracks;
   }
 
   void _rebuildTrackCaches() {
-    _sortedTracksCache = _buildSortedTracks();
-    _discGroupsCache = _groupTracksByDisc(_sortedTracksCache);
-    _sortedDiscNumbersCache = _discGroupsCache.keys.toList()..sort();
-    _hasMultipleDiscsCache = _discGroupsCache.length > 1;
+    _trackOrder = AlbumTrackOrder(
+      _loadedTracks ?? widget.tracks,
+      discNumber: (track) => track.discNumber,
+      trackNumber: (track) => track.trackNumber,
+      trackName: (track) => track.trackName,
+    );
     _commonQualityCache = null;
     _commonQualityModeCache = null;
-  }
-
-  Map<int, List<LocalLibraryItem>> _groupTracksByDisc(
-    List<LocalLibraryItem> tracks,
-  ) {
-    final discMap = <int, List<LocalLibraryItem>>{};
-    for (final track in tracks) {
-      final discNumber = track.discNumber ?? 1;
-      discMap.putIfAbsent(discNumber, () => []).add(track);
-    }
-    return discMap;
   }
 
   Future<void> _deleteSelected(List<LocalLibraryItem> currentTracks) async {
@@ -136,7 +150,20 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
         }
         return true;
       },
-      persistDeletedItems: libraryNotifier.removeItems,
+      persistDeletedItems: (ids) async {
+        final items = ids.map((id) => tracksById[id]!);
+        await removeDeletedLibraryFileEntries(
+          ref,
+          items
+              .where((item) => !isCueVirtualPath(item.filePath))
+              .map((item) => item.filePath),
+        );
+        await libraryNotifier.removeItems(
+          items
+              .where((item) => isCueVirtualPath(item.filePath))
+              .map((item) => item.id),
+        );
+      },
       onExitSelectionMode: exitSelectionMode,
     );
 
@@ -157,6 +184,19 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
     } catch (e) {
       if (mounted) showCannotOpenFileSnackBar(context, e);
     }
+  }
+
+  Future<void> _openMetadata(LocalLibraryItem track) async {
+    final tracks = _sortedTracksCache;
+    await Navigator.of(context).push(
+      slidePageRoute<void>(
+        page: TrackMetadataScreen(
+          localItem: track,
+          localNavigationItems: tracks,
+          navigationIndex: tracks.indexWhere((item) => item.id == track.id),
+        ),
+      ),
+    );
   }
 
   @override
@@ -181,7 +221,7 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
         : 0.0;
     final tracks = _sortedTracksCache;
 
-    if (tracks.isEmpty) {
+    if (tracks.isEmpty && !_loadingTracks && _loadError == null) {
       return Scaffold(
         appBar: AppBar(title: Text(widget.albumName)),
         body: Center(child: Text(context.l10n.noTracksFoundForAlbum)),
@@ -195,7 +235,26 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
       isSelectionMode: isSelectionMode,
       onExitSelectionMode: exitSelectionMode,
       appBar: _buildAppBar(context, colorScheme, qualityLabelMode),
-      slivers: [_buildTrackList(context, colorScheme, tracks)],
+      slivers: [
+        if (_loadError != null)
+          SliverToBoxAdapter(
+            child: Center(
+              child: TextButton.icon(
+                onPressed: () => setState(() {
+                  _loadTracks();
+                }),
+                icon: const Icon(Icons.refresh),
+                label: Text(context.l10n.dialogRetry),
+              ),
+            ),
+          )
+        else if (_loadingTracks)
+          const SliverToBoxAdapter(
+            child: RepaintBoundary(child: AlbumTrackListSkeleton(itemCount: 8)),
+          )
+        else
+          _buildTrackList(context, colorScheme, tracks),
+      ],
       selectionBar: _buildSelectionBottomBar(
         context,
         colorScheme,
@@ -216,7 +275,9 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
               .watch(
                 playerMotionArtworkProvider((
                   album: widget.albumName,
-                  artist: _sortedTracksCache.first.artistName,
+                  artist:
+                      _sortedTracksCache.firstOrNull?.artistName ??
+                      widget.artistName,
                 )),
               )
               .value
@@ -388,6 +449,7 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
               key: ValueKey(track.id),
               child: StaggeredListItem(
                 index: index,
+                animate: widget.loadTracks == null,
                 child: _buildTrackItem(context, colorScheme, track),
               ),
             );
@@ -442,7 +504,7 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
       isSelected: selectedIds.contains(track.id),
       colorScheme: colorScheme,
       onToggleSelection: () => toggleSelection(track.id),
-      onOpen: () => _openFile(track),
+      onOpen: () => _openMetadata(track),
       onEnterSelectionMode: () => enterSelectionMode(track.id),
       onPlay: () => _openFile(track),
     );
@@ -519,6 +581,14 @@ class _LocalAlbumScreenState extends ConsumerState<LocalAlbumScreen>
       },
       bottomPadding: bottomPadding,
       children: [
+        LibrarySelectionPlaybackActions(
+          items: _selectedUnifiedItems(tracks),
+          onClose: exitSelectionMode,
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(context.l10n.trackEditMetadata),
+        ),
         LayoutBuilder(
           builder: (context, constraints) {
             const spacing = 8.0;

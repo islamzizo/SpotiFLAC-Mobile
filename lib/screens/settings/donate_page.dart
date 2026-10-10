@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:spotiflac_android/services/app_remote_config_service.dart';
 import 'package:spotiflac_android/utils/adaptive_layout.dart';
@@ -57,6 +58,7 @@ class _DonatePageState extends State<DonatePage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final monthlyGoal = _config.monthlyGoal;
 
     return Scaffold(
       body: CustomScrollView(
@@ -72,12 +74,13 @@ class _DonatePageState extends State<DonatePage> {
               ),
               child: Column(
                 children: [
+                  if (monthlyGoal != null && monthlyGoal.isVisible) ...[
+                    _MonthlyDonationGoalCard(goal: monthlyGoal),
+                    const SizedBox(height: 16),
+                  ],
                   _DonateLinksCard(colorScheme: colorScheme, config: _config),
-                  const SizedBox(height: 24),
-                  _RecentDonorsCard(
-                    colorScheme: colorScheme,
-                    supporters: _config.supporters,
-                  ),
+                  const SizedBox(height: 16),
+                  _RecentSupportersCard(supporters: _config.supporters),
                   const SizedBox(height: 16),
                   _DonateNoticeCard(
                     colorScheme: colorScheme,
@@ -88,6 +91,148 @@ class _DonatePageState extends State<DonatePage> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MonthlyDonationGoalCard extends StatelessWidget {
+  final MonthlyDonationGoal goal;
+
+  const _MonthlyDonationGoalCard({required this.goal});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final locale = Localizations.localeOf(context).toLanguageTag();
+    final numberFormat = NumberFormat('0.#', locale);
+    final currencyFormat = NumberFormat.simpleCurrency(
+      name: goal.currency,
+      locale: locale,
+    );
+    var period = goal.period;
+    if (RegExp(r'^\d{4}-(0[1-9]|1[0-2])$').hasMatch(period)) {
+      period = DateFormat.yMMMM(locale).format(DateTime.parse('$period-01'));
+    }
+    final isDark = theme.brightness == Brightness.dark;
+    final cardColor = Color.alphaBlend(
+      (isDark ? Colors.white : Colors.black).withValues(
+        alpha: isDark ? 0.08 : 0.04,
+      ),
+      colorScheme.surface,
+    );
+
+    return Card(
+      elevation: 0,
+      color: cardColor,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              goal.title,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            if (period.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                period,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            if (goal.description.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                goal.description,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            if (goal.showPercentage) ...[
+              Text(
+                '${numberFormat.format(goal.progressPercent)}%',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            LinearProgressIndicator(
+              value: goal.progressRatio,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(4),
+              semanticsLabel: goal.title,
+              semanticsValue: goal.showPercentage
+                  ? '${numberFormat.format(goal.progressPercent)}%'
+                  : null,
+            ),
+            if (goal.goalReached) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 20,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Goal reached',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+            if (goal.showAmounts &&
+                goal.raisedAmount != null &&
+                goal.targetAmount != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                '${currencyFormat.format(goal.raisedAmount)} / '
+                '${currencyFormat.format(goal.targetAmount)}',
+                style: theme.textTheme.bodyMedium,
+              ),
+            ],
+            if (goal.showSourceBreakdown && goal.sources.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              for (final entry in goal.sources.entries)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    [
+                      switch (entry.key) {
+                        'kofi' => 'Ko-fi',
+                        'patreon' => 'Patreon',
+                        'manual' => 'Manual',
+                        _ => entry.key,
+                      },
+                      if (goal.showAmounts && entry.value.amount != null)
+                        currencyFormat.format(entry.value.amount),
+                    ].join(' · '),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -122,33 +267,12 @@ class _DonateLinksCard extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        config.title,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.w700,
-                              color: colorScheme.onSurface,
-                            ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        config.message,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+            child: Text(
+              config.title,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
             ),
           ),
           Divider(
@@ -187,31 +311,25 @@ class _DonateLinksCard extends StatelessWidget {
   }
 }
 
-class _RecentDonorsCard extends StatelessWidget {
-  final ColorScheme colorScheme;
-  final List<String> supporters;
+class _RecentSupportersCard extends StatelessWidget {
+  const _RecentSupportersCard({required this.supporters});
 
-  const _RecentDonorsCard({
-    required this.colorScheme,
-    required this.supporters,
-  });
+  final List<String> supporters;
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final cardColor = isDark
-        ? Color.alphaBlend(
-            Colors.white.withValues(alpha: 0.08),
-            colorScheme.surface,
-          )
-        : Color.alphaBlend(
-            Colors.black.withValues(alpha: 0.04),
-            colorScheme.surface,
-          );
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
     return Card(
       elevation: 0,
-      color: cardColor,
+      color: Color.alphaBlend(
+        (isDark ? Colors.white : Colors.black).withValues(
+          alpha: isDark ? 0.08 : 0.04,
+        ),
+        colorScheme.surface,
+      ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: Padding(
         padding: const EdgeInsets.all(20),
@@ -222,11 +340,13 @@ class _RecentDonorsCard extends StatelessWidget {
               children: [
                 Icon(Icons.star_rounded, size: 20, color: colorScheme.primary),
                 const SizedBox(width: 8),
-                Text(
-                  'Recent Supporters',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: colorScheme.onSurface,
+                Expanded(
+                  child: Text(
+                    'Recent Supporters',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: colorScheme.onSurface,
+                    ),
                   ),
                 ),
               ],
@@ -234,47 +354,52 @@ class _RecentDonorsCard extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               'Thank you for your generosity!',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              style: theme.textTheme.bodySmall?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 16),
             if (supporters.isEmpty)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.emoji_events_outlined,
-                        size: 32,
-                        color: colorScheme.onSurfaceVariant.withValues(
-                          alpha: 0.4,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'No supporters yet - be the first!',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant.withValues(
-                            alpha: 0.6,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+              Text(
+                'No recent supporters to show.',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
                 ),
               )
             else
               Wrap(
                 spacing: 8,
                 runSpacing: 8,
-                children: supporters
-                    .map(
-                      (name) =>
-                          _SupporterChip(name: name, colorScheme: colorScheme),
-                    )
-                    .toList(),
+                children: [
+                  for (final name in supporters)
+                    Chip(
+                      backgroundColor: colorScheme.secondaryContainer,
+                      side: BorderSide.none,
+                      shape: const StadiumBorder(),
+                      avatar: CircleAvatar(
+                        backgroundColor: colorScheme.primary.withValues(
+                          alpha: 0.2,
+                        ),
+                        child: Text(
+                          name.isEmpty
+                              ? '?'
+                              : name.characters.first.toUpperCase(),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      label: Text(
+                        name,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: colorScheme.onSecondaryContainer,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                ],
               ),
           ],
         ),
@@ -417,49 +542,6 @@ class _DonateMethodItem extends StatelessWidget {
     if (uri == null) return;
 
     await launchUrl(uri, mode: LaunchMode.externalApplication);
-  }
-}
-
-class _SupporterChip extends StatelessWidget {
-  final String name;
-  final ColorScheme colorScheme;
-
-  const _SupporterChip({required this.name, required this.colorScheme});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: colorScheme.secondaryContainer,
-      borderRadius: BorderRadius.circular(20),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 10,
-              backgroundColor: colorScheme.primary.withValues(alpha: 0.2),
-              child: Text(
-                name.isNotEmpty ? name[0].toUpperCase() : '?',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(
-              name,
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                color: colorScheme.onSecondaryContainer,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 }
 

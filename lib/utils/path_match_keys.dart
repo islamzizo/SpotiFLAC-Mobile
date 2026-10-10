@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 const _androidStoragePathAliases = <String>[
@@ -83,6 +84,14 @@ Set<String> _buildPathMatchKeys(
   final keys = <String>{};
   final visited = <String>{};
 
+  // A DocumentsProvider document can be reached through an album tree, its
+  // parent tree, or a direct document URI. Keep that identity independent of
+  // the selected tree, without guessing from a filename or lowercasing the
+  // provider's opaque document ID. Parse only the original URI: decoding it
+  // repeatedly would change IDs containing literal percent escapes.
+  final documentKey = _androidDocumentMatchKey(Uri.tryParse(cleaned));
+  if (documentKey != null) keys.add(documentKey);
+
   void addNormalized(String value) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return;
@@ -166,6 +175,24 @@ Set<String> _buildPathMatchKeys(
     _pathMatchKeyCache.remove(_pathMatchKeyCache.keys.first);
   }
   return result;
+}
+
+String? _androidDocumentMatchKey(Uri? uri) {
+  if (uri == null || uri.scheme != 'content' || uri.authority.isEmpty) {
+    return null;
+  }
+  final segments = uri.pathSegments;
+  final isDirect = segments.length == 2 && segments[0] == 'document';
+  final isTreeDocument =
+      segments.length == 4 &&
+      segments[0] == 'tree' &&
+      segments[1].isNotEmpty &&
+      segments[2] == 'document';
+  if ((!isDirect && !isTreeDocument) || segments.last.isEmpty) return null;
+  // Encode only the authority so the separator cannot be ambiguous. The ID
+  // stays verbatim and keeps its extension for track/conversion match keys.
+  final authority = base64Url.encode(utf8.encode(uri.authority.toLowerCase()));
+  return 'saf-document:$authority:${segments.last}';
 }
 
 Iterable<String> _androidExternalStorageDocumentPaths(Uri uri) {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -11,6 +12,29 @@ import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
+import 'package:spotiflac_android/services/automix_effect_renderer.dart';
+import 'package:spotiflac_android/services/automix_status.dart';
+import 'package:spotiflac_android/services/system_volume_service.dart';
+
+class _EffectRenderer extends AutoMixEffectRenderer {
+  final tails = <RenderedMixTail>[];
+  bool fail = false;
+
+  @override
+  Future<RenderedMixTail?> render(
+    String path, {
+    required Duration start,
+    required Duration duration,
+    required AutoMixOptions options,
+  }) async {
+    if (fail) return null;
+    final work = await Directory.systemTemp.createTemp('fake-mix-tail-');
+    final tail = RenderedMixTail(work, '${work.path}/tail.wav');
+    tails.add(tail);
+    return tail;
+  }
+}
 
 class _Analyzer extends AutoMixAnalyzer {
   final calls = <String>[];
@@ -44,6 +68,7 @@ class _AudioNative {
   final sources = <String, String>{};
   final sourceGates = <String, Completer<void>>{};
   final resumedSources = <String>[];
+  Completer<void>? resumeGate;
   bool emitsDuration = true;
 
   void install() {
@@ -80,6 +105,7 @@ class _AudioNative {
             positions[id] = args['position']! as int;
             unawaited(event(id, 'audio.onSeekComplete'));
           case 'resume':
+            await resumeGate?.future;
             playing.add(id);
             resumedSources.add(sources[id]!);
           case 'pause' || 'stop':
@@ -142,18 +168,27 @@ void main() {
   SharedPreferences.setMockInitialValues({});
   late _AudioNative native;
   late _Analyzer analyzer;
+  late _EffectRenderer effectRenderer;
   late MusicPlayerHandler handler;
   late AutoplayLibraryLoader autoplayLoader;
 
   setUp(() {
+    setPlaybackAutomationOptions(
+      enabled: true,
+      pauseOnMute: false,
+      playOnHeadphonesConnected: false,
+    );
     setAutoMixEnabled(false);
+    setAutoMixOptions(const AutoMixOptions());
     setUsbBitPerfectEnabled(false);
     setAutoplayEnabled(false);
     native = _AudioNative()..install();
     analyzer = _Analyzer();
+    effectRenderer = _EffectRenderer();
     autoplayLoader = (_) async => _tracks;
     handler = MusicPlayerHandler(
       autoMixAnalyzer: analyzer,
+      autoMixEffectRenderer: effectRenderer,
       autoplayLibraryLoader: (seed) => autoplayLoader(seed),
     );
   });
@@ -162,7 +197,7 @@ void main() {
     await handler.dispose();
     configurePlaybackNotification(
       presentation: const PlaybackNotification(),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     analyzer.pending?.complete(null);
     setAutoMixEnabled(false);
@@ -171,6 +206,10 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 30));
     expect(native.live, isEmpty);
     expect(native.playing, isEmpty);
+    expect(autoMixStatus.value, AutoMixStatus.idle);
+    for (final tail in effectRenderer.tails) {
+      expect(await tail.directory.exists(), isFalse);
+    }
   });
 
   test(
@@ -223,6 +262,144 @@ void main() {
       expect(analyzer.calls, isEmpty);
     },
   );
+
+  group('automatic playback on system volume', () {
+    const events = MethodChannel(
+      'com.kurenai7968.volume_controller.volume_listener_event',
+    );
+    late List<String> volumeCalls;
+
+    Future<void> volume(double value) => native.messenger.handlePlatformMessage(
+      events.name,
+      const StandardMethodCodec().encodeSuccessEnvelope(value),
+      (_) {},
+    );
+
+    setUp(() {
+      volumeCalls = [];
+      native.messenger.setMockMethodCallHandler(events, (call) async {
+        volumeCalls.add(call.method);
+        return null;
+      });
+    });
+
+    tearDown(() async {
+      setPlaybackAutomationOptions(
+        enabled: true,
+        pauseOnMute: false,
+        playOnHeadphonesConnected: false,
+      );
+      await Future<void>.delayed(Duration.zero);
+      native.messenger.setMockMethodCallHandler(events, null);
+    });
+
+    Future<void> enable() async {
+      await handler.setQueueAndPlay(_tracks);
+      setPlaybackAutomationOptions(
+        enabled: true,
+        pauseOnMute: true,
+        playOnHeadphonesConnected: false,
+      );
+      await _until(() => volumeCalls.contains('listen'));
+      await volume(0.5);
+    }
+
+    test(
+      'mute pauses the real transport and unmute resumes the same song',
+      () async {
+        await enable();
+        await volume(0);
+        await _until(() => !handler.playbackState.value.playing);
+        expect(native.playing, isEmpty);
+        final current = handler.mediaItem.value!.id;
+        await volume(0.5);
+        await _until(() => handler.playbackState.value.playing);
+        expect(native.playing, {'music-player'});
+        expect(handler.mediaItem.value!.id, current);
+      },
+    );
+
+    test('manual pause cancels automatic resume in the handler', () async {
+      await enable();
+      await volume(0);
+      await _until(() => !handler.playbackState.value.playing);
+      await handler.pause();
+      await volume(0.5);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(handler.playbackState.value.playing, isFalse);
+      expect(native.playing, isEmpty);
+    });
+
+    test('manual pause wins while unmute resume is awaiting native', () async {
+      await enable();
+      await volume(0);
+      await _until(() => !handler.playbackState.value.playing);
+      final resumeCount = native.calls
+          .where((call) => call.$2 == 'resume')
+          .length;
+      native.resumeGate = Completer<void>();
+      await volume(0.5);
+      await _until(
+        () =>
+            native.calls.where((call) => call.$2 == 'resume').length >
+            resumeCount,
+      );
+      final paused = handler.pause();
+      native.resumeGate!.complete();
+      await paused;
+      expect(handler.playbackState.value.playing, isFalse);
+      expect(native.playing, isEmpty);
+    });
+
+    test(
+      'changing song during unmute cannot pause the replacement song',
+      () async {
+        await enable();
+        await volume(0);
+        await _until(() => !handler.playbackState.value.playing);
+        final resumeCount = native.calls
+            .where((call) => call.$2 == 'resume')
+            .length;
+        native.resumeGate = Completer<void>();
+        await volume(0.5);
+        await _until(
+          () =>
+              native.calls.where((call) => call.$2 == 'resume').length >
+              resumeCount,
+        );
+        final changed = handler.skipToNext();
+        native.resumeGate!.complete();
+        await changed;
+        expect(handler.mediaItem.value!.id, 'two');
+        expect(handler.playbackState.value.playing, isTrue);
+        expect(native.playing, {'music-player'});
+      },
+    );
+
+    test(
+      'opening and closing a volume slider preserves the background listener',
+      () async {
+        await enable();
+        final slider = SystemVolumeService.instance.changes.listen((_) {});
+        await Future<void>.delayed(Duration.zero);
+        await slider.cancel();
+        expect(volumeCalls.where((method) => method == 'listen'), hasLength(1));
+        expect(volumeCalls, isNot(contains('cancel')));
+        await volume(0);
+        await _until(() => !handler.playbackState.value.playing);
+        expect(native.playing, isEmpty);
+      },
+    );
+
+    test('USB output bypasses system mute automation', () async {
+      await enable();
+      setUsbBitPerfectEnabled(true);
+      await _until(() => volumeCalls.contains('cancel'));
+      await volume(0);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(handler.playbackState.value.playing, isTrue);
+    });
+  });
 
   group('USB playback transport', () {
     const methods = MethodChannel('com.zarz.spotiflac/usb_pcm');
@@ -806,7 +983,7 @@ void main() {
         source: '/one.flac',
         loved: true,
       ),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     final state = handler.playbackState.value;
     expect(state.playing, isFalse);
@@ -819,11 +996,15 @@ void main() {
       MediaAction.custom,
     ]);
     expect(state.controls.first.androidIcon, contains('star_filled'));
+    expect(
+      state.controls.last.customAction?.name,
+      PlaybackNotification.shuffleAction,
+    );
     expect(state.androidCompactActionIndices, [1, 2, 3]);
 
     configurePlaybackNotification(
       presentation: const PlaybackNotification(),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     expect(handler.playbackState.value.controls, [
       MediaControl.skipToPrevious,
@@ -842,7 +1023,7 @@ void main() {
     );
     configurePlaybackNotification(
       presentation: const PlaybackNotification(mornye: true),
-      toggleFavorite: (_) async {},
+      toggleFavorite: (_) async => false,
     );
     expect(
       handler.playbackState.value.updatePosition.inMilliseconds,
@@ -850,6 +1031,55 @@ void main() {
       reason: 'Changing icons must not reset the live playback position',
     );
   });
+
+  test(
+    'notification shuffle toggles queue order without restarting audio',
+    () async {
+      configurePlaybackNotification(
+        presentation: const PlaybackNotification(mornye: true),
+        toggleFavorite: (_) async => false,
+      );
+      await handler.setQueueAndPlay(_tracks, initialIndex: 1);
+      final resumed = List.of(native.resumedSources);
+
+      await handler.customAction(PlaybackNotification.shuffleAction);
+      expect(
+        handler.playbackState.value.shuffleMode,
+        AudioServiceShuffleMode.all,
+      );
+      expect(handler.queue.value.first.id, 'two');
+      expect(handler.queue.value.map((item) => item.id).toSet(), {
+        'one',
+        'two',
+        'three',
+      });
+      expect(handler.mediaItem.value?.id, 'two');
+      expect(
+        handler.playbackState.value.controls.last.androidIcon,
+        endsWith('shuffle_on'),
+      );
+      expect(handler.playbackState.value.controls.last.label, 'Shuffle on');
+
+      await handler.customAction(PlaybackNotification.shuffleAction);
+      expect(
+        handler.playbackState.value.shuffleMode,
+        AudioServiceShuffleMode.none,
+      );
+      expect(handler.queue.value.map((item) => item.id), [
+        'one',
+        'two',
+        'three',
+      ]);
+      expect(handler.mediaItem.value?.id, 'two');
+      expect(
+        handler.playbackState.value.controls.last.androidIcon,
+        endsWith('shuffle'),
+      );
+      expect(handler.playbackState.value.controls.last.label, 'Shuffle off');
+      expect(handler.playbackState.value.playing, isTrue);
+      expect(native.resumedSources, resumed);
+    },
+  );
 
   test(
     'shuffle plays the published queue and off restores the original order',
@@ -1034,6 +1264,7 @@ void main() {
         toggleFavorite: (item) async {
           selected.add(item.id);
           await save.future;
+          return true;
         },
       );
       handler.mediaItem.add(_tracks.first.toMediaItem());
@@ -1043,10 +1274,72 @@ void main() {
       expect(selected, ['one']);
       save.complete();
       await first;
+      expect(
+        handler.playbackState.value.controls.first.androidIcon,
+        endsWith('ic_notification_star'),
+        reason:
+            'Completing a favorite for the old track must not star the next one',
+      );
       await handler.customAction(PlaybackNotification.favoriteAction);
       expect(selected, ['one', 'three']);
+      expect(
+        handler.playbackState.value.controls.first.androidIcon,
+        endsWith('ic_notification_star_filled'),
+      );
     },
   );
+
+  test('notification favorite refreshes without a UI rebuild', () async {
+    var loved = false;
+    configurePlaybackNotification(
+      presentation: const PlaybackNotification(
+        mornye: true,
+        favoriteLabel: 'Add to Loved',
+        unfavoriteLabel: 'Remove from Loved',
+      ),
+      toggleFavorite: (_) async => loved = !loved,
+    );
+    await handler.restoreSession(
+      items: _tracks,
+      index: 0,
+      position: const Duration(seconds: 12),
+      shuffle: false,
+    );
+    await handler.customAction(PlaybackNotification.favoriteAction);
+    expect(
+      handler.playbackState.value.controls.first.androidIcon,
+      endsWith('ic_notification_star_filled'),
+    );
+    expect(
+      handler.playbackState.value.controls.first.label,
+      'Remove from Loved',
+    );
+    expect(
+      handler.playbackState.value.updatePosition,
+      const Duration(seconds: 12),
+    );
+
+    await handler.customAction(PlaybackNotification.favoriteAction);
+    expect(
+      handler.playbackState.value.controls.first.androidIcon,
+      endsWith('ic_notification_star'),
+    );
+    expect(handler.playbackState.value.controls.first.label, 'Add to Loved');
+    expect(native.resumedSources, isEmpty);
+  });
+
+  test('failed favorite save leaves the notification icon unchanged', () async {
+    configurePlaybackNotification(
+      presentation: const PlaybackNotification(mornye: true),
+      toggleFavorite: (_) async => throw StateError('Save failed'),
+    );
+    handler.mediaItem.add(_tracks.first.toMediaItem());
+    await handler.customAction(PlaybackNotification.favoriteAction);
+    expect(
+      handler.playbackState.value.controls.first.androidIcon,
+      endsWith('ic_notification_star'),
+    );
+  });
 
   Future<void> prepare() async {
     setAutoMixEnabled(true);
@@ -1111,6 +1404,7 @@ void main() {
     'pause during overlap stops both decks and restores incoming gain',
     () async {
       final incoming = await startMix();
+      expect(autoMixStatus.value, AutoMixStatus.crossfading);
       await handler.pause();
       expect(native.live, {incoming});
       expect(native.playing, isEmpty);
@@ -1124,8 +1418,10 @@ void main() {
     () async {
       analyzer.matchBeats = true;
       final incoming = await startMix(startPosition: 55670);
+      expect(autoMixStatus.value, AutoMixStatus.mixing);
       expect(handler.playbackState.value.speed, closeTo(120 / 124, 0.0001));
       await Future<void>.delayed(const Duration(milliseconds: 4200));
+      expect(autoMixStatus.value, AutoMixStatus.idle);
       expect(native.live, {incoming});
       expect(native.lastVolume(incoming), closeTo(1, 0.0001));
       await Future<void>.delayed(const Duration(seconds: 8));
@@ -1150,6 +1446,39 @@ void main() {
       expect(native.lastVolume(incoming), 1);
     },
   );
+
+  test(
+    'rendered effect replaces outgoing deck and pause removes its temporary tail',
+    () async {
+      setAutoMixOptions(const AutoMixOptions(effect: AutoMixEffect.echo));
+      await prepare();
+      await _until(() => native.live.length == 3);
+      final incoming = native.sources.entries
+          .singleWhere((entry) => entry.value == '/two.flac')
+          .key;
+      final effect = native.sources.entries
+          .singleWhere((entry) => entry.value.endsWith('/tail.wav'))
+          .key;
+      native.positions['music-player'] = 55000;
+      await _until(() => handler.mediaItem.value?.id == 'two');
+      await _until(() => !native.live.contains('music-player'));
+      expect(native.playing, {incoming, effect});
+      expect(autoMixStatus.value, AutoMixStatus.crossfading);
+      await handler.pause();
+      expect(native.live, {incoming});
+      expect(await effectRenderer.tails.single.directory.exists(), isFalse);
+    },
+  );
+
+  test('effect rendering failure retains ordinary crossfade', () async {
+    effectRenderer.fail = true;
+    setAutoMixOptions(
+      const AutoMixOptions(effect: AutoMixEffect.pitch, pitchSemitones: 2),
+    );
+    final incoming = await startMix();
+    expect(native.playing, {'music-player', incoming});
+    expect(effectRenderer.tails, isEmpty);
+  });
 
   test(
     'turning AutoMix off releases the standby player without changing song',
@@ -1185,6 +1514,32 @@ void main() {
     expect(handler.mediaItem.value?.id, 'two');
     expect(native.playing, isEmpty);
   });
+
+  test(
+    'network playback uses URL transport and does not analyze remote files',
+    () async {
+      setAutoMixEnabled(true);
+      const remote = PlayableMedia(
+        id: 'remote',
+        source: 'https://music.test/song.mp3',
+        title: 'Remote',
+        artist: 'Server',
+      );
+      await handler.setQueueAndPlay([remote, _tracks.first]);
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(
+        native.calls.lastWhere((c) => c.$2 == 'setSourceUrl').$3['isLocal'],
+        false,
+      );
+      expect(native.playing, {'music-player'});
+      expect(analyzer.calls, isEmpty);
+      await handler.skipToNext();
+      expect(
+        native.calls.lastWhere((c) => c.$2 == 'setSourceUrl').$3['isLocal'],
+        true,
+      );
+    },
+  );
 
   test('repeat one never prepares another deck', () async {
     setAutoMixEnabled(true);

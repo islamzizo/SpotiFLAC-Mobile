@@ -43,7 +43,6 @@ extension _QueueTabFilterWidgets on _QueueTabState {
     required bool isPageLoading,
     required List<DownloadHistoryItem> inMemoryHistoryItems,
   }) {
-    final historyItems = filterData.historyItems;
     final showFilteringIndicator = filterData.showFilteringIndicator;
     final filteredGroupedAlbums = filterData.filteredGroupedAlbums;
     final filteredGroupedLocalAlbums = filterData.filteredGroupedLocalAlbums;
@@ -236,6 +235,20 @@ extension _QueueTabFilterWidgets on _QueueTabState {
           playlistIndexes.add(i);
         }
       }
+      playlistIndexes.sort((a, b) {
+        final first = collectionState.playlists[a];
+        final second = collectionState.playlists[b];
+        return switch (_sortMode) {
+          'a-z' => first.name.toLowerCase().compareTo(
+            second.name.toLowerCase(),
+          ),
+          'z-a' => second.name.toLowerCase().compareTo(
+            first.name.toLowerCase(),
+          ),
+          'oldest' => first.createdAt.compareTo(second.createdAt),
+          _ => second.updatedAt.compareTo(first.updatedAt),
+        };
+      });
     }
 
     Widget leadGridCell(int index) {
@@ -294,8 +307,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               context,
               context.l10n.queueTrackCount(totalTrackCount),
               [
-                if (!_isSelectionMode)
-                  _buildFilterButton(context, unifiedItems),
+                if (!_isSelectionMode) _buildFilterButton(context),
                 if (!_isSelectionMode && filteredUnifiedItems.isNotEmpty)
                   TextButton.icon(
                     onPressed: () => _showCreatePlaylistDialog(context),
@@ -316,22 +328,22 @@ extension _QueueTabFilterWidgets on _QueueTabState {
             child: _countHeaderRow(
               context,
               context.l10n.queueAlbumCount(totalAlbumCount),
-              [_buildFilterButton(context, unifiedItems)],
+              [_buildFilterButton(context)],
             ),
           ),
 
         if (filteredGroupedAlbums.isEmpty &&
             filteredGroupedLocalAlbums.isEmpty &&
             filterMode == 'albums' &&
-            (historyItems.isNotEmpty || unifiedItems.isNotEmpty))
+            (_activeFilterCount > 0 ||
+                ref.read(downloadHistoryProvider).totalCount > 0 ||
+                (ref.read(settingsProvider).localLibraryEnabled &&
+                    ref.read(localLibraryProvider).totalCount > 0)))
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
               child: Row(
-                children: [
-                  const Spacer(),
-                  _buildFilterButton(context, unifiedItems),
-                ],
+                children: [const Spacer(), _buildFilterButton(context)],
               ),
             ),
           ),
@@ -346,8 +358,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               child: Row(
                 children: [
                   const Spacer(),
-                  if (!_isSelectionMode)
-                    _buildFilterButton(context, unifiedItems),
+                  if (!_isSelectionMode) _buildFilterButton(context),
                 ],
               ),
             ),
@@ -363,8 +374,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               child: Row(
                 children: [
                   const Spacer(),
-                  if (!_isSelectionMode)
-                    _buildFilterButton(context, unifiedItems),
+                  if (!_isSelectionMode) _buildFilterButton(context),
                 ],
               ),
             ),
@@ -509,29 +519,14 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                       final item = filteredUnifiedItems[trackIndex];
                       return KeyedSubtree(
                         key: ValueKey(item.id),
-                        child: LongPressDraggable<UnifiedLibraryItem>(
+                        child: LibraryPlaylistDragSource<UnifiedLibraryItem>(
                           data: item,
-                          feedback: _buildDragFeedback(
-                            context,
-                            item,
-                            colorScheme,
-                          ),
-                          childWhenDragging: Opacity(
-                            opacity: 0.4,
-                            child: _buildUnifiedGridItem(
-                              context,
-                              item,
-                              colorScheme,
-                              downloadedNavigationItems:
-                                  downloadedNavigationItems,
-                              downloadedNavigationIndex:
-                                  downloadedNavigationIndexByUnifiedId[item.id],
-                              localNavigationItems: localNavigationItems,
-                              localNavigationIndex:
-                                  localNavigationIndexByUnifiedId[item.id],
-                              libraryItems: filteredUnifiedItems,
-                            ),
-                          ),
+                          onSelect: () =>
+                              _selectDraggedTrack(item, filteredUnifiedItems),
+                          onDragStarted: _startLibraryTrackDrag,
+                          onDragEnd: _endLibraryTrackDrag,
+                          feedbackBuilder: (context) =>
+                              _buildDragFeedback(context, item, colorScheme),
                           child: _buildUnifiedGridItem(
                             context,
                             item,
@@ -544,6 +539,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                             localNavigationIndex:
                                 localNavigationIndexByUnifiedId[item.id],
                             libraryItems: filteredUnifiedItems,
+                            playlistDragEnabled: true,
                           ),
                         ),
                       );
@@ -579,29 +575,14 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                       final item = filteredUnifiedItems[trackIndex];
                       return KeyedSubtree(
                         key: ValueKey(item.id),
-                        child: LongPressDraggable<UnifiedLibraryItem>(
+                        child: LibraryPlaylistDragSource<UnifiedLibraryItem>(
                           data: item,
-                          feedback: _buildDragFeedback(
-                            context,
-                            item,
-                            colorScheme,
-                          ),
-                          childWhenDragging: Opacity(
-                            opacity: 0.4,
-                            child: _buildUnifiedLibraryItem(
-                              context,
-                              item,
-                              colorScheme,
-                              downloadedNavigationItems:
-                                  downloadedNavigationItems,
-                              downloadedNavigationIndex:
-                                  downloadedNavigationIndexByUnifiedId[item.id],
-                              localNavigationItems: localNavigationItems,
-                              localNavigationIndex:
-                                  localNavigationIndexByUnifiedId[item.id],
-                              libraryItems: filteredUnifiedItems,
-                            ),
-                          ),
+                          onSelect: () =>
+                              _selectDraggedTrack(item, filteredUnifiedItems),
+                          onDragStarted: _startLibraryTrackDrag,
+                          onDragEnd: _endLibraryTrackDrag,
+                          feedbackBuilder: (context) =>
+                              _buildDragFeedback(context, item, colorScheme),
                           child: _buildUnifiedLibraryItem(
                             context,
                             item,
@@ -614,6 +595,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                             localNavigationIndex:
                                 localNavigationIndexByUnifiedId[item.id],
                             libraryItems: filteredUnifiedItems,
+                            playlistDragEnabled: true,
                           ),
                         ),
                       );
@@ -633,8 +615,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
               context,
               context.l10n.queueTrackCount(totalTrackCount),
               [
-                if (!_isSelectionMode)
-                  _buildFilterButton(context, unifiedItems),
+                if (!_isSelectionMode) _buildFilterButton(context),
                 if (!_isSelectionMode && filteredUnifiedItems.isNotEmpty)
                   TextButton.icon(
                     onPressed: () => _showCreatePlaylistDialog(context),
@@ -866,6 +847,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
           albumName: album.albumName,
           artistName: album.artistName,
           trackCount: album.displayTrackCount,
+          completeness: album.completeness,
           colorScheme: colorScheme,
           coverWidget: embeddedCoverPath != null
               ? Image.file(
@@ -908,6 +890,7 @@ extension _QueueTabFilterWidgets on _QueueTabState {
       albumName: album.albumName,
       artistName: album.artistName,
       trackCount: album.displayTrackCount,
+      completeness: album.completeness,
       colorScheme: colorScheme,
       coverWidget: album.coverPath != null
           ? Image.file(
@@ -949,14 +932,29 @@ extension _QueueTabFilterWidgets on _QueueTabState {
     required IconData badgeIcon,
     required VoidCallback onTap,
     String? coverUrl,
+    AlbumCompleteness? completeness,
   }) {
+    final completenessLabel = completeness == null
+        ? null
+        : completeness.status == 'unknown'
+        ? context.l10n.libraryAlbumCompletenessUnknown
+        : completeness.expected == null
+        ? context.l10n.libraryFilterIncompleteAlbums
+        : context.l10n.libraryAlbumMissingTracks(
+            completeness.present,
+            completeness.expected!,
+            completeness.expected! - completeness.present,
+          );
     return Semantics(
       button: true,
-      label: context.l10n.a11yOpenAlbumByArtistTrackCount(
-        albumName,
-        artistName,
-        trackCount,
-      ),
+      label: [
+        context.l10n.a11yOpenAlbumByArtistTrackCount(
+          albumName,
+          artistName,
+          trackCount,
+        ),
+        ?completenessLabel,
+      ].join('. '),
       child: GestureDetector(
         onTap: onTap,
         child: Column(
@@ -972,29 +970,34 @@ extension _QueueTabFilterWidgets on _QueueTabState {
                   Positioned(
                     right: 8,
                     bottom: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeColor,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(badgeIcon, size: 12, color: badgeTextColor),
-                          const SizedBox(width: 4),
-                          Text(
-                            '$trackCount',
-                            style: TextStyle(
-                              color: badgeTextColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
+                    child: Tooltip(
+                      message:
+                          completenessLabel ??
+                          context.l10n.tracksCount(trackCount),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: badgeColor,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(badgeIcon, size: 12, color: badgeTextColor),
+                            const SizedBox(width: 4),
+                            Text(
+                              completeness?.badge ?? '$trackCount',
+                              style: TextStyle(
+                                color: badgeTextColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),

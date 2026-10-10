@@ -380,7 +380,7 @@ internal object NativeFinalizationPolicy {
     private val primaryArtistSeparator = Regex(
         "$PRIMARY_ARTIST_SPACE*[,;&]$PRIMARY_ARTIST_SPACE*" +
             "|$PRIMARY_ARTIST_SPACE+x$PRIMARY_ARTIST_SPACE+" +
-            "|$PRIMARY_ARTIST_SPACE+(?:feat(?:uring)?|ft|with)\\.?" +
+            "|$PRIMARY_ARTIST_SPACE+(?:feat(?:uring|ured|ure)?|ft|with)\\.?" +
             "(?:$PRIMARY_ARTIST_SPACE+|$)",
         RegexOption.IGNORE_CASE,
     )

@@ -53,8 +53,13 @@ AGENTS.md
 /android/*.keystore
 /android/app/*.jks
 
-# Keep obsolete local SDK copies out of the checkout.
+# Android build outputs from vendored Flutter plugins
+/third_party/**/android/.gradle/
+/third_party/**/android/build/
+
+# Only the pinned encrypted CI payload belongs in the checkout.
 /third_party/discord/*
+!/third_party/discord/discord-mobile-1.10.19337.zip.gpg
 
 # iOS generated state
 /ios/build/
@@ -77,6 +82,9 @@ DerivedData/
 *.pem
 # Public ISRG roots embedded by the Rust network library.
 !/rust_backend/crates/network/src/roots.pem
+# Public self-signed HTTPS fixtures used only by network tests.
+!/test/fixtures/network_tls/cert.pem
+!/test/fixtures/network_tls/key.pem
 
 # Local research and design material
 /design/

@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/services/automix_analysis.dart';
 
@@ -61,6 +62,7 @@ void main() {
   test('compatible tempi align outgoing and incoming beats', () {
     final transition = plan(120, 124);
     expect(transition.beatMatched, isTrue);
+    expect(transition.fallbackReason, isNull);
     expect(transition.rate, closeTo(120 / 124, 0.00001));
     final beat = (transition.start.inMicroseconds / 1e6 - 156.17) / 0.5;
     expect(beat, closeTo(beat.round(), 0.00001));
@@ -69,6 +71,48 @@ void main() {
       transition.start + transition.duration,
       lessThanOrEqualTo(const Duration(seconds: 180)),
     );
+  });
+
+  test('crossfade diagnostics distinguish each fallback condition', () {
+    expect(
+      plan(120, 160).fallbackReason,
+      AutoMixFallbackReason.incompatibleTempo,
+    );
+    expect(
+      plan(120, 124, confidence: 0.2).fallbackReason,
+      AutoMixFallbackReason.unreliableBeats,
+    );
+    AutoMixPlan? transition({
+      AutoMixBeatGrid? intro,
+      AutoMixOptions options = const AutoMixOptions(),
+    }) => AutoMixPlan.create(
+      outgoingDuration: const Duration(minutes: 3),
+      incomingDuration: const Duration(minutes: 3),
+      outro: grid(120),
+      intro: intro,
+      options: options,
+    );
+    expect(
+      transition()!.fallbackReason,
+      AutoMixFallbackReason.analysisUnavailable,
+    );
+    expect(
+      transition(
+        options: const AutoMixOptions(effect: AutoMixEffect.crossfade),
+      )!.fallbackReason,
+      AutoMixFallbackReason.crossfadePreset,
+    );
+    final late = transition(
+      intro: const AutoMixBeatGrid(
+        bpm: 120,
+        phase: 0.17,
+        confidence: 0.9,
+        firstSound: 4,
+      ),
+    )!;
+    expect(late.fallbackReason, AutoMixFallbackReason.longIntro);
+    expect(late.beatMatched, isFalse);
+    expect(late.incomingStart, Duration.zero);
   });
 
   test('incompatible or uncertain beats use unstretched crossfade', () {

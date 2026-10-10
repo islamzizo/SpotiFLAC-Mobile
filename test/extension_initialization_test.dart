@@ -314,6 +314,87 @@ void main() {
     expect(container.read(repoProvider).error, isNull);
   });
 
+  test(
+    'adding a repository retries initialization before changing the URL',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final notifier = _DelayedExtensionNotifier().._failInitialization = true;
+      notifier._ready.complete();
+      final container = ProviderContainer(
+        overrides: [extensionProvider.overrideWith(() => notifier)],
+      );
+      addTearDown(container.dispose);
+      final calls = <String>[];
+      const url = 'https://example.com/registry.json';
+      messenger.setMockMethodCallHandler(backend, (call) async {
+        if (call.method == 'setLoggingEnabled') return null;
+        calls.add(call.method);
+        switch (call.method) {
+          case 'initExtensionRepo':
+            expect(container.read(extensionProvider).isInitialized, isTrue);
+            return null;
+          case 'setRepoRegistryUrl':
+            expect(container.read(repoProvider).isInitialized, isTrue);
+            return null;
+          case 'getRepoRegistryUrl':
+            return url;
+          case 'getRepoExtensions':
+            return <Map<String, dynamic>>[];
+          default:
+            throw StateError('Unexpected backend call: ${call.method}');
+        }
+      });
+      final repository = container.read(repoProvider.notifier);
+      await repository.initialize('/cache/store');
+      await repository.setRegistryUrl(url);
+      expect(
+        container.read(repoProvider).error,
+        contains('Native initialization failed'),
+      );
+      expect(calls, isEmpty);
+      notifier._failInitialization = false;
+      await repository.setRegistryUrl(url);
+      expect(calls, [
+        'initExtensionRepo',
+        'setRepoRegistryUrl',
+        'getRepoRegistryUrl',
+        'getRepoExtensions',
+      ]);
+      expect(container.read(repoProvider).registryUrl, url);
+      expect(container.read(repoProvider).error, isNull);
+      expect(
+        (await SharedPreferences.getInstance()).getString('store_registry_url'),
+        url,
+      );
+    },
+  );
+
+  test(
+    'concurrent repository startup shares one native initialization',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final notifier = _DelayedExtensionNotifier();
+      final container = ProviderContainer(
+        overrides: [extensionProvider.overrideWith(() => notifier)],
+      );
+      addTearDown(container.dispose);
+      var initializations = 0;
+      messenger.setMockMethodCallHandler(backend, (call) async {
+        if (call.method == 'initExtensionRepo') initializations++;
+        return null;
+      });
+      final repository = container.read(repoProvider.notifier);
+      final first = repository.initialize('/cache/store');
+      expect(identical(first, repository.initialize('/cache/store')), isTrue);
+      await notifier._started.future;
+      expect(initializations, 0);
+      notifier._ready.complete();
+      await first;
+      expect(initializations, 1);
+      expect(container.read(repoProvider).isInitialized, isTrue);
+    },
+  );
+
   for (final hasWorkingExtension in [false, true]) {
     test('native package load errors stay visible and recover on retry '
         '(partial=$hasWorkingExtension)', () async {
@@ -454,6 +535,10 @@ void main() {
       expect(settings._syncAttempts, 1);
       expect(notifier._initializations, 0);
       expect(container.read(extensionProvider).isInitialized, isFalse);
+      expect(
+        container.read(extensionProvider).error,
+        contains('Settings load failed'),
+      );
       expect(installs, 0);
 
       expect(

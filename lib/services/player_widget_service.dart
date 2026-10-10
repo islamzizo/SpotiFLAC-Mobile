@@ -36,6 +36,9 @@ class PlayerWidgetService {
   Uri? _artUri;
   PlayerWidgetArtwork? _artwork;
   String? _lastPayload;
+  String? _lastArtworkKey;
+  int? _installedWidgetCount;
+  Future<void>? _consumerQuery;
   int _artworkGeneration = 0;
   Future<void> _writes = Future.value();
   Future<void> _commands = Future.value();
@@ -45,6 +48,11 @@ class PlayerWidgetService {
     if (_initialized) return;
     _initialized = true;
     _channel.setMethodCallHandler((call) async {
+      if (call.method == 'installedWidgetCountChanged' &&
+          call.arguments is int) {
+        await _setInstalledWidgetCount(call.arguments as int);
+        return true;
+      }
       if (call.method != 'command' || call.arguments is! String) return false;
       final command = call.arguments as String;
       if (!const {
@@ -69,10 +77,37 @@ class PlayerWidgetService {
     });
     try {
       await _channel.invokeMethod<void>('ready');
+      await _refreshConsumers();
     } on MissingPluginException {
       // Desktop and tests do not install the mobile widget bridge.
     } on PlatformException catch (error) {
       _log.w('Widget bridge unavailable: ${error.code}');
+    }
+  }
+
+  Future<void> _refreshConsumers() => _consumerQuery ??= () async {
+    try {
+      final count = await _channel.invokeMethod<int>('getInstalledWidgetCount');
+      if (count != null) await _setInstalledWidgetCount(count);
+    } on MissingPluginException {
+      // Older bridges and desktop keep the existing lightweight publishing.
+    } on PlatformException catch (error) {
+      _log.w('Widget consumer query failed: ${error.code}');
+    }
+  }();
+
+  Future<void> _setInstalledWidgetCount(int count) async {
+    final wasAbsent = _installedWidgetCount == 0;
+    _installedWidgetCount = count;
+    if (count == 0) {
+      _artworkGeneration++;
+      _artwork = null;
+      _lastArtworkKey = null;
+      await publish();
+    } else if (wasAbsent) {
+      final generation = ++_artworkGeneration;
+      await _updateArtwork(_artUri, generation);
+      await publish(force: true);
     }
   }
 
@@ -89,20 +124,43 @@ class PlayerWidgetService {
           _artUri = item?.artUri;
           _artwork = null;
           final generation = ++_artworkGeneration;
-          unawaited(_updateArtwork(item?.artUri, generation));
+          unawaited(() async {
+            await _refreshConsumers();
+            if (_installedWidgetCount != 0 &&
+                generation == _artworkGeneration) {
+              await _updateArtwork(item?.artUri, generation);
+            }
+          }());
         }
         unawaited(publish());
       }),
     );
     _subscriptions.add(
-      handler.playbackState.listen((_) => unawaited(publish())),
+      handler.playbackState
+          .map(
+            (state) => (
+              state.playing,
+              state.controls.any(
+                (control) => control.action == MediaAction.skipToPrevious,
+              ),
+              state.controls.any(
+                (control) => control.action == MediaAction.skipToNext,
+              ),
+            ),
+          )
+          .distinct(
+            (previous, next) => previous == next && _lastPayload != null,
+          )
+          .listen((_) => unawaited(publish())),
     );
   }
 
   Future<void> _updateArtwork(Uri? uri, int generation) async {
     try {
       final artwork = await _loadArtwork(uri);
-      if (generation != _artworkGeneration) return;
+      if (generation != _artworkGeneration || _installedWidgetCount == 0) {
+        return;
+      }
       _artwork = artwork;
       await publish();
     } catch (error) {
@@ -141,12 +199,15 @@ class PlayerWidgetService {
       try {
         await _channel.invokeMethod<void>('update', {
           ...payload,
-          if (artwork != null) 'artwork': artwork.png,
+          if (artwork != null && payload['artworkKey'] != _lastArtworkKey)
+            'artwork': artwork.png,
         });
+        _lastArtworkKey = payload['artworkKey'] as String;
       } on MissingPluginException {
         // Mobile-only capability.
       } on PlatformException catch (error) {
         _lastPayload = null;
+        _lastArtworkKey = null;
         _log.w('Widget update failed: ${error.code}');
       }
     });
@@ -180,6 +241,11 @@ class PlayerWidgetService {
     _subscriptions.clear();
     _handler = null;
     await _writes;
+    _consumerQuery = null;
+    _installedWidgetCount = null;
+    _lastArtworkKey = null;
+    _lastPayload = null;
+    _initialized = false;
     _channel.setMethodCallHandler(null);
   }
 

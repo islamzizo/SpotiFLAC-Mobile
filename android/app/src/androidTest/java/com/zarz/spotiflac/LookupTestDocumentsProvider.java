@@ -65,7 +65,7 @@ public final class LookupTestDocumentsProvider extends DocumentsProvider {
                 sequence = 0;
                 projectionMode = extras.getString("mode", "normal");
                 failFinalRename = extras.getBoolean("failFinalRename");
-                add("root", null, "Root", Document.MIME_TYPE_DIR);
+                add("root", null, "Root", projectionMode.equals("root-empty-mime") ? "" : Document.MIME_TYPE_DIR);
                 for (int i = 0; i < extras.getInt("count"); i++) {
                     add("child:" + i, "root", "Track " + i + ".flac", "audio/flac");
                 }
@@ -173,6 +173,10 @@ public final class LookupTestDocumentsProvider extends DocumentsProvider {
         Entry entry = entries.get(documentId);
         if (entry == null) throw new FileNotFoundException(documentId);
         MatrixCursor cursor = cursor(projection != null ? projection : defaultColumns());
+        if (documentId.equals("root") &&
+            (projectionMode.equals("root-metadata-empty") || projectionMode.equals("root-unconfirmed"))) {
+            return cursor;
+        }
         addEntry(cursor, entry);
         return cursor;
     }
@@ -187,6 +191,17 @@ public final class LookupTestDocumentsProvider extends DocumentsProvider {
         String[] columns = projected && projectionMode.equals("missing") ?
             new String[] {Document.COLUMN_DOCUMENT_ID} : projection != null ? projection : defaultColumns();
         MatrixCursor cursor = cursor(columns);
+        if (projectionMode.equals("always-loading") ||
+            (projectionMode.equals("loading") && childQueries <= 2)) {
+            Bundle extras = new Bundle();
+            extras.putBoolean(DocumentsContract.EXTRA_LOADING, true);
+            cursor.setExtras(extras);
+            return cursor;
+        }
+        if (parentId.equals("root") &&
+            (projectionMode.equals("root-unconfirmed") || projectionMode.equals("empty"))) {
+            return cursor;
+        }
         for (Entry entry : entries.values()) if (parentId.equals(entry.parent)) addEntry(cursor, entry);
         return cursor;
     }

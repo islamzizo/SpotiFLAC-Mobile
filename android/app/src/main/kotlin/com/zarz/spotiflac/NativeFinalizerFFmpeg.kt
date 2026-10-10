@@ -1,31 +1,14 @@
 package com.zarz.spotiflac
 
-import android.content.ContentValues
-import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteException
-import android.net.Uri
-import android.util.Base64
 import android.util.Log
 import com.antonkarpenko.ffmpegkit.FFmpegKit
 import com.antonkarpenko.ffmpegkit.FFmpegKitConfig
 import com.antonkarpenko.ffmpegkit.FFmpegSession
-import com.antonkarpenko.ffmpegkit.FFmpegSessionCompleteCallback
 import com.antonkarpenko.ffmpegkit.LogRedirectionStrategy
 import com.antonkarpenko.ffmpegkit.ReturnCode
-import com.zarz.spotiflac.SafDownloadHandler.mimeTypeForExt
 import com.zarz.spotiflac.SafDownloadHandler.normalizeExt
-import com.zarz.spotiflac.NativeFinalizationPolicy.applyQualityVariantFilenameLabel
-import com.zarz.spotiflac.NativeFinalizationPolicy.displayAudioQuality
-import com.zarz.spotiflac.NativeFinalizationPolicy.formatIndexTag
-import com.zarz.spotiflac.NativeFinalizationPolicy.isLosslessAudioCodec
-import com.zarz.spotiflac.NativeFinalizationPolicy.isLossyAudioCodec
-import com.zarz.spotiflac.NativeFinalizationPolicy.normalizeAudioCodec
-import com.zarz.spotiflac.NativeFinalizationPolicy.resolvePreferredDecryptionExtension
-import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
-import java.nio.ByteBuffer
 import java.util.Locale
 import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
@@ -171,19 +154,27 @@ internal fun NativeDownloadFinalizer.stagedConversionPath(finalPath: String): St
 
 internal fun NativeDownloadFinalizer.promoteStagedConversion(stagedPath: String, finalPath: String): Boolean {
     val staged = File(stagedPath)
+    if (!staged.isFile || staged.length() == 0L) return false
     fsyncQuietly(staged)
     val final = File(finalPath)
-    if (staged.renameTo(final)) return true
-    return final.delete() && staged.renameTo(final)
+    val backup = File("$finalPath.spotiflac-backup-${System.nanoTime()}")
+    val backedUp = final.exists()
+    if (backedUp && (!final.isFile || !final.renameTo(backup))) return false
+    if (staged.renameTo(final)) {
+        if (backedUp) backup.delete()
+        return true
+    }
+    if (backedUp) check(backup.renameTo(final)) { "failed to restore conversion source" }
+    return false
 }
 
 internal fun NativeDownloadFinalizer.buildOutputPath(inputPath: String, extension: String): String {
     val ext = normalizeExt(extension).ifBlank { ".tmp" }
     val file = File(inputPath)
     val base = file.nameWithoutExtension.ifBlank { "track" }
-    val candidate = File(file.parentFile, "$base$ext").absolutePath
-    if (candidate != inputPath) return candidate
-    return File(file.parentFile, "${base}_converted$ext").absolutePath
+    // This is the final name. FFmpeg writes via stagedConversionPath even
+    // when the source and final extensions match.
+    return File(file.parentFile, "$base$ext").absolutePath
 }
 
 internal fun NativeDownloadFinalizer.desiredFileName(input: NativeDownloadFinalizer.FinalizeInput, state: NativeDownloadFinalizer.FinalizeState, extension: String): String {

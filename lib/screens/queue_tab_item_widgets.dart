@@ -13,6 +13,10 @@ extension _QueueTabItemWidgets on _QueueTabState {
     final localOnlySelection = _isLocalOnlySelection(unifiedItems);
 
     return LibraryTrackSelectionBar(
+      playbackActions: LibrarySelectionPlaybackActions(
+        items: _selectedItemsFromAll(unifiedItems),
+        onClose: _exitSelectionMode,
+      ),
       selectedCount: selectedCount,
       allSelected: allSelected,
       onClose: _exitSelectionMode,
@@ -180,6 +184,18 @@ extension _QueueTabItemWidgets on _QueueTabState {
                         ),
                       ),
                     ],
+                  ),
+                ],
+                if (item.status == DownloadStatus.finalizing &&
+                    item.preparationStage == 'network_upload') ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${context.l10n.networkUploading}${item.bytesTotal > 0 ? ' • ${(100 * item.bytesReceived / item.bytesTotal).round()}%' : ''}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: colorScheme.primary,
+                    ),
                   ),
                 ],
                 if (item.status == DownloadStatus.failed) ...[
@@ -562,14 +578,11 @@ extension _QueueTabItemWidgets on _QueueTabState {
     }
   }
 
-  Widget _buildFilterButton(
-    BuildContext context,
-    List<UnifiedLibraryItem> unifiedItems,
-  ) {
+  Widget _buildFilterButton(BuildContext context) {
     return GestureDetector(
       onLongPress: _activeFilterCount > 0 ? _resetFilters : null,
       child: TextButton.icon(
-        onPressed: () => _showFilterSheet(context, unifiedItems),
+        onPressed: () => _showFilterSheet(context),
         icon: Badge(
           isLabelVisible: _activeFilterCount > 0,
           label: Text('$_activeFilterCount'),
@@ -590,9 +603,8 @@ extension _QueueTabItemWidgets on _QueueTabState {
   ]) {
     final isDownloaded = item.source == LibraryItemSource.downloaded;
 
-    // For downloaded items, listen to embedded cover version so the cover
-    // updates after async extraction completes.
-    if (isDownloaded) {
+    // Scanned SAF tracks also recover artwork after a transient provider error.
+    if (isDownloaded || item.filePath.startsWith('content://')) {
       return ValueListenableBuilder<int>(
         valueListenable: _embeddedCoverVersion,
         builder: (context, _, child) =>
@@ -612,7 +624,27 @@ extension _QueueTabItemWidgets on _QueueTabState {
     final cacheSize = size != null ? (size * 2).toInt() : 200;
     final iconSize = size != null ? size * 0.4 : 32.0;
 
-    Widget buildPlaceholder({bool isLocal = false}) {
+    Widget buildPlaceholder({
+      bool isLocal = false,
+      bool recoverDocument = true,
+    }) {
+      if (recoverDocument && item.filePath.startsWith('content://')) {
+        final recovered = _resolveDownloadedEmbeddedCoverPath(item.filePath);
+        if (recovered != null) {
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.file(
+              File(recovered),
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              cacheWidth: cacheSize,
+              errorBuilder: (_, _, _) =>
+                  buildPlaceholder(isLocal: isLocal, recoverDocument: false),
+            ),
+          );
+        }
+      }
       final bgColor = (isDownloaded && !isLocal)
           ? colorScheme.surfaceContainerHighest
           : colorScheme.secondaryContainer;
@@ -644,12 +676,15 @@ extension _QueueTabItemWidgets on _QueueTabState {
           width: size,
           height: size,
           memCacheWidth: cacheSize,
-          memCacheHeight: cacheSize,
-          placeholder: (context, url) => buildPlaceholder(),
+          placeholder: (context, url) =>
+              buildPlaceholder(recoverDocument: false),
           errorWidget: (context, url, error) => buildPlaceholder(),
         );
       } else {
-        backdrop = buildPlaceholder(isLocal: !isDownloaded);
+        backdrop = buildPlaceholder(
+          isLocal: !isDownloaded,
+          recoverDocument: false,
+        );
       }
       final animated = Stack(
         fit: StackFit.expand,
@@ -680,7 +715,6 @@ extension _QueueTabItemWidgets on _QueueTabState {
             height: size,
             fit: BoxFit.cover,
             cacheWidth: cacheSize,
-            cacheHeight: cacheSize,
             gaplessPlayback: true,
             frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
                 fadeInFileImage(child, frame, wasSynchronouslyLoaded),
@@ -696,7 +730,6 @@ extension _QueueTabItemWidgets on _QueueTabState {
         width: size,
         height: size,
         memCacheWidth: cacheSize,
-        memCacheHeight: cacheSize,
         borderRadius: BorderRadius.circular(8),
         placeholder: (context, url) => buildPlaceholder(),
         errorWidget: (context, url, error) => buildPlaceholder(),
@@ -714,7 +747,6 @@ extension _QueueTabItemWidgets on _QueueTabState {
           height: size,
           fit: BoxFit.cover,
           cacheWidth: cacheSize,
-          cacheHeight: cacheSize,
           gaplessPlayback: true,
           frameBuilder: (context, child, frame, wasSynchronouslyLoaded) =>
               fadeInFileImage(child, frame, wasSynchronouslyLoaded),
@@ -742,6 +774,7 @@ extension _QueueTabItemWidgets on _QueueTabState {
     required List<LocalLibraryItem> localNavigationItems,
     required int? localNavigationIndex,
     required List<UnifiedLibraryItem> libraryItems,
+    bool playlistDragEnabled = false,
   }) {
     final fileExistsListenable = _fileExistsListenable(item.filePath);
     final isSelected = _selectedIds.contains(item.id);
@@ -788,7 +821,9 @@ extension _QueueTabItemWidgets on _QueueTabState {
                 album: item.albumName,
                 coverUrl: item.coverUrl ?? item.localCoverPath ?? '',
               ),
-        onLongPress: _isSelectionMode
+        onLongPress: playlistDragEnabled
+            ? null
+            : _isSelectionMode
             ? () => _selectRangeTo(item.id, libraryItems)
             : () => _enterSelectionMode(item.id),
         leading: Hero(
@@ -892,6 +927,7 @@ extension _QueueTabItemWidgets on _QueueTabState {
     required List<LocalLibraryItem> localNavigationItems,
     required int? localNavigationIndex,
     required List<UnifiedLibraryItem> libraryItems,
+    bool playlistDragEnabled = false,
   }) {
     final fileExistsListenable = _fileExistsListenable(item.filePath);
     final isSelected = _selectedIds.contains(item.id);
@@ -925,7 +961,9 @@ extension _QueueTabItemWidgets on _QueueTabState {
               album: item.albumName,
               coverUrl: item.coverUrl ?? item.localCoverPath ?? '',
             ),
-      onLongPress: _isSelectionMode
+      onLongPress: playlistDragEnabled
+          ? null
+          : _isSelectionMode
           ? () => _selectRangeTo(item.id, libraryItems)
           : () => _enterSelectionMode(item.id),
       cover: Hero(

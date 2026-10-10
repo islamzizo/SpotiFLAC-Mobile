@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:logger/logger.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
-import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/native_log_source.dart';
 
 const int _maxLogMessageLength = 500;
 const int _maxBufferedLogMessageLength = 4000;
@@ -121,29 +121,41 @@ class LogBuffer extends ChangeNotifier {
   LogBuffer._internal();
 
   static const int maxEntries = 500;
+  static const _nativeLogs = NativeLogSource();
   static const Duration _goLogPollingInterval = Duration(milliseconds: 800);
   final Queue<LogEntry> _entries = Queue<LogEntry>();
   Timer? _goLogTimer;
   int _lastGoLogIndex = 0;
   bool _isFetchingGoLogs = false;
+  int _goLogGeneration = 0;
+  Future<void>? _pendingGoLogClear;
 
   static bool _loggingEnabled = false;
   static bool get loggingEnabled => _loggingEnabled;
   static set loggingEnabled(bool value) {
     _loggingEnabled = value;
-    if (value) {
-      PlatformBridge.setGoLoggingEnabled(true).catchError((_) {});
-    } else {
-      PlatformBridge.setGoLoggingEnabled(false).catchError((_) {});
-    }
+    _nativeLogs.setLoggingEnabled(value).catchError((_) {});
   }
 
   List<LogEntry> get entries => _entries.toList();
   int get length => _entries.length;
 
   void add(LogEntry entry) {
+    if (_append(entry)) notifyListeners();
+  }
+
+  /// A native poll is one UI update, even when it contains hundreds of logs.
+  void addAll(Iterable<LogEntry> entries) {
+    var changed = false;
+    for (final entry in entries) {
+      changed = _append(entry) || changed;
+    }
+    if (changed) notifyListeners();
+  }
+
+  bool _append(LogEntry entry) {
     if (!_loggingEnabled && entry.level != 'ERROR' && entry.level != 'FATAL') {
-      return;
+      return false;
     }
 
     final sanitizedMessage = _truncateLogText(
@@ -172,16 +184,17 @@ class LogBuffer extends ChangeNotifier {
       _entries.removeFirst();
     }
     _entries.add(sanitizedEntry);
-    notifyListeners();
+    return true;
   }
 
   void startGoLogPolling() {
     _goLogTimer?.cancel();
+    _goLogGeneration++;
     _goLogTimer = Timer.periodic(_goLogPollingInterval, (_) async {
       if (_isFetchingGoLogs) return;
       _isFetchingGoLogs = true;
       try {
-        await _fetchGoLogs();
+        await _fetchGoLogs(_goLogGeneration);
       } finally {
         _isFetchingGoLogs = false;
       }
@@ -191,15 +204,21 @@ class LogBuffer extends ChangeNotifier {
   void stopGoLogPolling() {
     _goLogTimer?.cancel();
     _goLogTimer = null;
-    _isFetchingGoLogs = false;
+    _goLogGeneration++;
+    // The stopped poll still owns the in-flight slot until its call completes.
   }
 
-  Future<void> _fetchGoLogs() async {
+  Future<void> _fetchGoLogs(int generation) async {
     try {
-      final result = await PlatformBridge.getGoLogsSince(_lastGoLogIndex);
+      final clearing = _pendingGoLogClear;
+      if (clearing != null) await clearing;
+      if (generation != _goLogGeneration) return;
+      final result = await _nativeLogs.getSince(_lastGoLogIndex);
+      if (generation != _goLogGeneration) return;
       final logs = result['logs'] as List<dynamic>? ?? [];
       final nextIndex = result['next_index'] as int? ?? _lastGoLogIndex;
       final keepNonErrorLogs = _loggingEnabled;
+      final entries = <LogEntry>[];
 
       for (final log in logs.whereType<Map<Object?, Object?>>()) {
         final logMap = Map<String, dynamic>.from(log);
@@ -231,7 +250,7 @@ class LogBuffer extends ChangeNotifier {
           } catch (_) {}
         }
 
-        add(
+        entries.add(
           LogEntry(
             timestamp: parsedTime,
             level: level,
@@ -242,7 +261,8 @@ class LogBuffer extends ChangeNotifier {
         );
       }
 
-      _lastGoLogIndex = nextIndex;
+      addAll(entries);
+      if (generation == _goLogGeneration) _lastGoLogIndex = nextIndex;
     } catch (e) {
       if (kDebugMode) {
         debugPrint('Failed to fetch native backend logs: $e');
@@ -253,7 +273,18 @@ class LogBuffer extends ChangeNotifier {
   void clear() {
     _entries.clear();
     _lastGoLogIndex = 0;
-    PlatformBridge.clearGoLogs().catchError((_) {});
+    _goLogGeneration++;
+    late final Future<void> clearing;
+    clearing =
+        (_pendingGoLogClear?.then((_) => _nativeLogs.clear()) ??
+                _nativeLogs.clear())
+            .catchError((_) {})
+            .whenComplete(() {
+              if (identical(_pendingGoLogClear, clearing)) {
+                _pendingGoLogClear = null;
+              }
+            });
+    _pendingGoLogClear = clearing;
     notifyListeners();
   }
 

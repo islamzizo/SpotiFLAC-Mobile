@@ -121,6 +121,18 @@ impl Output {
         self.shared.1.notify_all();
         Ok(n as u32)
     }
+    pub fn available_bytes(&self) -> Result<u32, String> {
+        let frame = self.format.subslot as usize * self.format.channels as usize;
+        let s = self.shared.0.lock().unwrap();
+        if let Some(e) = &s.error {
+            return Err(e.clone());
+        }
+        if s.closed {
+            return Err("USB output closed".into());
+        }
+        let capacity = (self.format.sample_rate as usize * frame / 5).max(256 * 1024);
+        Ok((capacity.saturating_sub(s.bytes.len()) / frame * frame) as u32)
+    }
     pub fn start(&self) -> Result<(), String> {
         let mut s = self.shared.0.lock().unwrap();
         if let Some(e) = &s.error {
@@ -609,15 +621,24 @@ impl Session {
                     s.frames += slot.music_frames;
                     slot.music_frames = 0;
                 }
-                let lengths: Vec<_> = (0..packets).map(|_| clock.next() * frame).collect();
+                let mut packet_lengths = [0usize; 32];
+                let lengths = &mut packet_lengths[..packets];
+                for length in lengths.iter_mut() {
+                    *length = clock.next() * frame;
+                }
                 if lengths.iter().any(|n| *n > self.endpoint.max_packet) {
                     return Err("USB feedback exceeded endpoint capacity".into());
                 }
                 let total: usize = lengths.iter().sum();
                 let available = total.min(s.bytes.len()) / frame * frame;
-                for b in &mut slot.bytes[..available] {
-                    *b = s.bytes.pop_front().unwrap();
+                {
+                    let (first, second) = s.bytes.as_slices();
+                    let first_len = available.min(first.len());
+                    slot.bytes[..first_len].copy_from_slice(&first[..first_len]);
+                    slot.bytes[first_len..available]
+                        .copy_from_slice(&second[..available - first_len]);
                 }
+                s.bytes.drain(..available);
                 super::framing::finish_transfer(
                     &mut slot.bytes[..total],
                     available,
@@ -625,7 +646,7 @@ impl Session {
                     &mut marker,
                 );
                 slot.music_frames = (available / frame) as u64;
-                slot.submit(self.handle, self.endpoint.address, &lengths)?;
+                slot.submit(self.handle, self.endpoint.address, lengths)?;
             }
         }
         self.drain();

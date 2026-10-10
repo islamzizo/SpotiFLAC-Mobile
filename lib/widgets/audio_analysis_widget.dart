@@ -4,14 +4,16 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-import 'package:ffmpeg_kit_flutter_new_full/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_full/ffmpeg_session.dart';
-import 'package:ffmpeg_kit_flutter_new_full/ffprobe_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_full/return_code.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_session.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/ffprobe_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/return_code.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/services/audio_analysis_jobs.dart';
+import 'package:spotiflac_android/services/audio_analysis_cache.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/app_content_card.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
@@ -631,6 +633,22 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
     }
   }
 
+  final _nativeAnalysisRequests = <String>{};
+
+  void _cancelNativeAnalysis() {
+    for (final request in _nativeAnalysisRequests) {
+      unawaited(_cancelNativeAnalysisRequest(request));
+    }
+  }
+
+  Future<void> _cancelNativeAnalysisRequest(String request) async {
+    try {
+      await PlatformBridge.cancelNativeDataJob(request);
+    } catch (_) {
+      // Await the owned worker before temp cleanup even if cancellation fails.
+    }
+  }
+
   static const _supportedExtensions = {
     '.flac',
     '.mp3',
@@ -679,6 +697,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
 
     _spectrogramRequestId++;
     _analysisJobs.invalidate();
+    _cancelNativeAnalysis();
     _spectrogramImage?.dispose();
     _spectrogramImage = null;
     _spectrogramChannel = -1;
@@ -698,6 +717,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
   void dispose() {
     _spectrogramRequestId++;
     _analysisJobs.dispose();
+    _cancelNativeAnalysis();
     _spectrogramImage?.dispose();
     super.dispose();
   }
@@ -705,6 +725,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
   Future<void> _tryLoadFromCache() async {
     final expectedPath = widget.filePath;
     final requestId = _spectrogramRequestId;
+    final releaseCache = _cacheBudget.retain(_cacheKey(expectedPath));
     bool isCurrentRequest() =>
         mounted &&
         widget.filePath == expectedPath &&
@@ -747,7 +768,12 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
         }
         return;
       }
-    } catch (_) {}
+    } catch (_) {
+      // Missing or unreadable cache entries fall back to the Analyze action.
+    } finally {
+      releaseCache();
+      unawaited(_trimCache());
+    }
     if (isCurrentRequest()) {
       setState(() => _checkingCache = false);
     }
@@ -777,8 +803,10 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
   Future<void> _analyze({bool forceRefresh = false}) async {
     if (_analyzing) return;
     final sourcePath = widget.filePath;
+    final releaseCache = _cacheBudget.retain(_cacheKey(sourcePath));
     final requestId = ++_spectrogramRequestId;
     _analysisJobs.invalidate();
+    _cancelNativeAnalysis();
     setState(() {
       _analyzing = true;
       _spectrogramChannelLoading = false;
@@ -856,6 +884,9 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
           _analyzing = false;
         });
       }
+    } finally {
+      releaseCache();
+      unawaited(_trimCache());
     }
   }
 
@@ -897,6 +928,16 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
     return dir;
   }
 
+  static final _cacheBudget = AudioAnalysisCache();
+
+  static Future<void> _trimCache() async {
+    try {
+      await _cacheBudget.trim(await _cacheDir());
+    } catch (_) {
+      // Cache maintenance must not interrupt the selected track's analysis.
+    }
+  }
+
   static Future<AudioAnalysisData?> _loadFromCache(String filePath) async {
     try {
       final dir = await _cacheDir();
@@ -921,7 +962,9 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
         if (currentSize > 0 && currentSize != cachedSize) return null;
       }
 
-      return AudioAnalysisData.fromJson(json);
+      final data = AudioAnalysisData.fromJson(json);
+      await file.setLastModified(DateTime.now());
+      return data;
     } catch (_) {
       return null;
     }
@@ -953,6 +996,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
           '${dir.path}/${_spectrogramCacheFileName(key, channel)}',
         );
         await file.writeAsBytes(byteData.buffer.asUint8List());
+        await _cacheBudget.trim(dir);
       }
     } catch (_) {}
   }
@@ -1019,19 +1063,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
           channels: info.channels,
         );
         _checkAnalysisRequest(requestId);
-        final cutoffIntensity = spectrogram.cutoffIntensity;
-        if (cutoffIntensity == null) {
-          throw Exception('FFmpeg spectral cutoff plane was not generated');
-        }
-        final spectralCutoffHz = await compute(
-          _estimateEffectiveSpectralCutoffInIsolate,
-          _SpectralCutoffParams(
-            intensity: cutoffIntensity,
-            width: audioSpectralAnalysisWidth,
-            height: audioSpectrogramHeight,
-            maxFrequencyHz: info.sampleRate / 2,
-          ),
-        );
+        final spectralCutoffHz = spectrogram.cutoffFrequencyHz;
         final levelMetrics = await _runFullStreamLevelAnalysis(
           workingPath,
           requestId: requestId,
@@ -1168,20 +1200,45 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
       final rgba = rawBytes.length == expectedLength
           ? rawBytes
           : Uint8List.sublistView(rawBytes, 0, expectedLength);
-      Uint8List? cutoffIntensity;
+      double? cutoffFrequencyHz;
       if (cutoffPath != null) {
         final expectedCutoffLength =
             audioSpectralAnalysisWidth * audioSpectrogramHeight;
-        final cutoffBytes = await File(cutoffPath).readAsBytes();
-        if (cutoffBytes.length < expectedCutoffLength) {
+        final cutoffLength = await File(cutoffPath).length();
+        if (cutoffLength != expectedCutoffLength) {
           throw Exception(
             'Incomplete spectral cutoff output '
-            '(${cutoffBytes.length}/$expectedCutoffLength bytes)',
+            '($cutoffLength/$expectedCutoffLength bytes)',
           );
         }
-        cutoffIntensity = cutoffBytes.length == expectedCutoffLength
-            ? cutoffBytes
-            : Uint8List.sublistView(cutoffBytes, 0, expectedCutoffLength);
+        _checkAnalysisRequest(requestId);
+        final nativeRequest = 'spectral-$rawPath';
+        _nativeAnalysisRequests.add(nativeRequest);
+        try {
+          try {
+            final result = await PlatformBridge.runNativeDataJob({
+              'operation': 'spectral_cutoff',
+              'path': cutoffPath,
+              'width': audioSpectralAnalysisWidth,
+              'height': audioSpectrogramHeight,
+              'max_frequency': (sampleRate ?? 0) / 2,
+            }, requestId: nativeRequest);
+            cutoffFrequencyHz = (result['cutoff'] as num?)?.toDouble();
+          } on MissingPluginException {
+            cutoffFrequencyHz = await compute(
+              _estimateEffectiveSpectralCutoffFileInIsolate,
+              _SpectralCutoffFileParams(
+                path: cutoffPath,
+                width: audioSpectralAnalysisWidth,
+                height: audioSpectrogramHeight,
+                maxFrequencyHz: (sampleRate ?? 0) / 2,
+              ),
+            );
+          }
+        } finally {
+          _nativeAnalysisRequests.remove(nativeRequest);
+        }
+        _checkAnalysisRequest(requestId);
       }
       final completer = Completer<ui.Image>();
       ui.decodeImageFromPixels(
@@ -1194,7 +1251,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
       return _GeneratedSpectrogram(
         image: await completer.future,
         rgba: rgba,
-        cutoffIntensity: cutoffIntensity,
+        cutoffFrequencyHz: cutoffFrequencyHz,
       );
     } finally {
       try {
@@ -1221,6 +1278,7 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
 
     final previousChannel = _spectrogramChannel;
     final sourcePath = widget.filePath;
+    final releaseCache = _cacheBudget.retain(_cacheKey(sourcePath));
     final requestId = ++_spectrogramRequestId;
     setState(() {
       _spectrogramChannel = channel;
@@ -1260,6 +1318,9 @@ class _AudioAnalysisCardState extends State<AudioAnalysisCard> {
           _spectrogramChannelLoading = false;
         });
       }
+    } finally {
+      releaseCache();
+      unawaited(_trimCache());
     }
   }
 

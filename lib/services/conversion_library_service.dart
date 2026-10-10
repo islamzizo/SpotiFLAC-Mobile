@@ -1,4 +1,4 @@
-import 'package:spotiflac_android/providers/download_history_provider.dart';
+import 'package:spotiflac_android/models/download_history.dart';
 import 'package:spotiflac_android/services/history_database.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/audio_conversion_utils.dart';

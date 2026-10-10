@@ -139,6 +139,7 @@ class DonateConfig {
   final List<DonateMethod> methods;
   final List<String> supporters;
   final List<String> notices;
+  final MonthlyDonationGoal? monthlyGoal;
 
   const DonateConfig({
     required this.enabled,
@@ -147,9 +148,11 @@ class DonateConfig {
     required this.methods,
     required this.supporters,
     required this.notices,
+    this.monthlyGoal,
   });
 
   factory DonateConfig.fromJson(Map<String, dynamic> json) {
+    final monthlyGoalJson = json['monthly_goal'];
     final methods = (json['methods'] as List<dynamic>? ?? const [])
         .whereType<Map<Object?, Object?>>()
         .map((value) => DonateMethod.fromJson(Map<String, dynamic>.from(value)))
@@ -159,8 +162,8 @@ class DonateConfig {
     return DonateConfig(
       enabled: json['enabled'] as bool? ?? true,
       title: _readString(json['title']).isEmpty
-          ? 'Support Development'
-          : _readString(json['title']),
+          ? 'Support SpotiFLAC-Mobile'
+          : _mobileDonationText(_readString(json['title'])),
       message: _readString(json['message']).isEmpty
           ? 'Optional support helps cover tools, testing devices, and hosting.'
           : _readString(json['message']),
@@ -171,13 +174,18 @@ class DonateConfig {
       notices: _readStringList(json['notices']).isEmpty
           ? DonateConfig.fallback().notices
           : _readStringList(json['notices']),
+      monthlyGoal: monthlyGoalJson is Map
+          ? MonthlyDonationGoal.fromJson(
+              Map<String, dynamic>.from(monthlyGoalJson),
+            )
+          : null,
     );
   }
 
   factory DonateConfig.fallback() {
     return const DonateConfig(
       enabled: true,
-      title: 'Support Development',
+      title: 'Support SpotiFLAC-Mobile',
       message: 'Optional support helps cover dev tools and testing devices.',
       methods: [
         DonateMethod(
@@ -214,6 +222,110 @@ class DonateConfig {
       ],
     );
   }
+}
+
+class MonthlyDonationGoal {
+  final bool enabled;
+  final bool active;
+  final String period;
+  final String title;
+  final String description;
+  final double progressPercent;
+  final double progressRatio;
+  final bool goalReached;
+  final bool showAmounts;
+  final bool showPercentage;
+  final bool showSupporterCount;
+  final bool showSourceBreakdown;
+  final String currency;
+  final double? targetAmount;
+  final double? raisedAmount;
+  final int supporterCount;
+  final Map<String, MonthlyDonationSource> sources;
+
+  const MonthlyDonationGoal({
+    required this.enabled,
+    required this.active,
+    required this.period,
+    required this.title,
+    required this.description,
+    required this.progressPercent,
+    required this.progressRatio,
+    required this.goalReached,
+    required this.showAmounts,
+    required this.showPercentage,
+    required this.showSupporterCount,
+    required this.showSourceBreakdown,
+    required this.currency,
+    required this.targetAmount,
+    required this.raisedAmount,
+    required this.supporterCount,
+    required this.sources,
+  });
+
+  factory MonthlyDonationGoal.fromJson(Map<String, dynamic> json) {
+    final display = json['display'] is Map
+        ? Map<String, dynamic>.from(json['display'] as Map)
+        : const <String, dynamic>{};
+    final sourcesJson = json['sources'];
+    return MonthlyDonationGoal(
+      enabled: _readBool(json['enabled']),
+      active: _readBool(json['active']),
+      period: _readString(json['period']),
+      title: _mobileDonationText(
+        _readNullableString(json['title']) ??
+            'Monthly SpotiFLAC-Mobile development goal',
+      ),
+      description: _mobileDonationText(_readString(json['description'])),
+      progressPercent: (_readFiniteNumber(json['progress_percent']) ?? 0).clamp(
+        0,
+        double.maxFinite,
+      ),
+      progressRatio: (_readFiniteNumber(json['progress_ratio']) ?? 0).clamp(
+        0,
+        1,
+      ),
+      goalReached: _readBool(json['goal_reached']),
+      showAmounts: _readBool(display['amounts'] ?? json['amounts_visible']),
+      showPercentage: _readBool(display['percentage']),
+      showSupporterCount: _readBool(display['supporter_count']),
+      showSourceBreakdown: _readBool(display['source_breakdown']),
+      currency: _readNullableString(json['currency']) ?? 'USD',
+      targetAmount: _readFiniteNumber(json['target_amount']),
+      raisedAmount: _readFiniteNumber(json['raised_amount']),
+      supporterCount: (_readFiniteNumber(json['supporter_count']) ?? 0)
+          .clamp(0, double.maxFinite)
+          .toInt(),
+      sources: {
+        if (sourcesJson is Map)
+          for (final entry in sourcesJson.entries)
+            if (entry.key is String && entry.value is Map)
+              entry.key as String: MonthlyDonationSource.fromJson(
+                Map<String, dynamic>.from(entry.value as Map),
+              ),
+      },
+    );
+  }
+
+  bool get isVisible => enabled && active;
+}
+
+class MonthlyDonationSource {
+  final double? amount;
+  final int supporterCount;
+
+  const MonthlyDonationSource({
+    required this.amount,
+    required this.supporterCount,
+  });
+
+  factory MonthlyDonationSource.fromJson(Map<String, dynamic> json) =>
+      MonthlyDonationSource(
+        amount: _readFiniteNumber(json['amount']),
+        supporterCount: (_readFiniteNumber(json['supporter_count']) ?? 0)
+            .clamp(0, double.maxFinite)
+            .toInt(),
+      );
 }
 
 class DonateMethod {
@@ -265,13 +377,13 @@ class AppRemoteConfigService {
   static const _dismissedAnnouncementIdsKey =
       'app_remote_config_dismissed_announcement_ids';
 
-  final http.Client _client;
+  final http.Client? _client;
   final String endpoint;
 
   AppRemoteConfigService({
     http.Client? client,
     this.endpoint = AppInfo.remoteConfigApiUrl,
-  }) : _client = client ?? http.Client();
+  }) : _client = client;
 
   Future<RemoteConfigSnapshot?> readCachedConfig() async {
     final prefs = await SharedPreferences.getInstance();
@@ -284,6 +396,9 @@ class AppRemoteConfigService {
   }
 
   Future<RemoteConfigSnapshot?> fetchConfigSnapshot({String? locale}) async {
+    // A default client belongs to this request; an injected client belongs to
+    // its caller. Cached config and dismissal helpers need no HTTP resources.
+    final client = _client ?? http.Client();
     try {
       final uri = Uri.parse(endpoint).replace(
         queryParameters: {
@@ -294,8 +409,14 @@ class AppRemoteConfigService {
         },
       );
 
-      final response = await _client
-          .get(uri, headers: {'Accept': 'application/json'})
+      final response = await client
+          .get(
+            uri,
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'SpotiFLAC-Mobile/${AppInfo.version}',
+            },
+          )
           .timeout(const Duration(seconds: 8));
 
       if (response.statusCode != 200) {
@@ -325,6 +446,8 @@ class AppRemoteConfigService {
     } catch (e) {
       _log.w('Remote config fetch failed: $e');
       return null;
+    } finally {
+      if (_client == null) client.close();
     }
   }
 
@@ -383,6 +506,20 @@ class AppRemoteConfigService {
 
 String _readString(Object? value) {
   return value is String ? value.trim() : '';
+}
+
+String _mobileDonationText(String text) => text.replaceAll(
+  RegExp(r'\bSpotiFLAC(?:[ -]+Mobile)?\b', caseSensitive: false),
+  'SpotiFLAC-Mobile',
+);
+
+double? _readFiniteNumber(Object? value) {
+  final number = value is num
+      ? value.toDouble()
+      : value is String
+      ? double.tryParse(value)
+      : null;
+  return number != null && number.isFinite ? number : null;
 }
 
 String? _readNullableString(Object? value) {

@@ -1,11 +1,138 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:spotiflac_android/models/settings.dart';
+import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/explore_provider.dart';
+import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/widgets/explore_featured_section.dart';
 import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
 import 'package:spotiflac_android/l10n/app_localizations.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('home feed cache ownership', () {
+    const channel = MethodChannel('com.zarz.spotiflac/backend');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    Future<
+      ({
+        ProviderContainer container,
+        ExploreNotifier notifier,
+        Completer<Map<String, Object?>> cache,
+      })
+    >
+    pendingRestore() async {
+      SharedPreferences.setMockInitialValues({
+        'explore_home_feed_cache': jsonEncode(_feed('Cached')),
+        'explore_home_feed_ts': DateTime.now()
+            .subtract(const Duration(hours: 1))
+            .millisecondsSinceEpoch,
+      });
+      final cache = Completer<Map<String, Object?>>();
+      final started = Completer<void>();
+      final container = ProviderContainer(
+        overrides: [
+          settingsProvider.overrideWith(_FeedSettings.new),
+          extensionProvider.overrideWith(_FeedExtensions.new),
+          exploreProvider.overrideWith(
+            () => ExploreNotifier(
+              decodeCache: (_) {
+                started.complete();
+                return cache.future;
+              },
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final notifier = container.read(exploreProvider.notifier);
+      await started.future;
+      return (container: container, notifier: notifier, cache: cache);
+    }
+
+    for (final disabled in [false, true]) {
+      test('late cache cannot undo ${disabled ? 'Off' : 'Clear'}', () async {
+        final restore = await pendingRestore();
+        if (disabled) {
+          (restore.container.read(settingsProvider.notifier) as _FeedSettings)
+              .disableHomeFeed();
+          await restore.notifier.fetchHomeFeed();
+        } else {
+          restore.notifier.clear();
+        }
+        restore.cache.complete(_feed('Cached'));
+        await Future<void>.delayed(Duration.zero);
+        final state = restore.container.read(exploreProvider);
+        expect(state.hasContent, isFalse);
+        expect(state.isLoading, isFalse);
+      });
+    }
+
+    test('completed refresh wins over late cache', () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'getExtensionHomeFeed');
+        return jsonEncode({
+          'success': true,
+          'sections': _feed('Fresh')['sections'],
+        });
+      });
+      final restore = await pendingRestore();
+      await restore.notifier.refresh();
+      expect(
+        restore.container.read(exploreProvider).sections.single.title,
+        'Fresh',
+      );
+      restore.cache.complete(_feed('Cached'));
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        restore.container.read(exploreProvider).sections.single.title,
+        'Fresh',
+      );
+    });
+
+    test(
+      'stale cache stays visible without duplicating the active refresh',
+      () async {
+        final response = Completer<String>();
+        final started = Completer<void>();
+        var calls = 0;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'getExtensionHomeFeed');
+          calls++;
+          if (!started.isCompleted) started.complete();
+          return response.future;
+        });
+        final restore = await pendingRestore();
+        final refresh = restore.notifier.refresh();
+        await started.future;
+        restore.cache.complete(_feed('Cached'));
+        await Future<void>.delayed(Duration.zero);
+        final cached = restore.container.read(exploreProvider);
+        expect(cached.sections.single.title, 'Cached');
+        expect(cached.isLoading, isFalse);
+        await restore.notifier.fetchHomeFeed();
+        expect(calls, 1);
+        response.complete(
+          jsonEncode({'success': true, 'sections': _feed('Fresh')['sections']}),
+        );
+        await refresh;
+        expect(
+          restore.container.read(exploreProvider).sections.single.title,
+          'Fresh',
+        );
+      },
+    );
+  });
+
   test('featured layout and artwork survive cache serialization', () {
     final section = ExploreSection.fromJson({
       'uri': 'featured',
@@ -76,7 +203,7 @@ void main() {
                     items: items,
                     isFeatured: true,
                   ),
-                  onItemTap: (item) => opened = item,
+                  onItemTap: (item, _) => opened = item,
                 ),
               ),
             ),
@@ -108,4 +235,40 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+}
+
+Map<String, Object?> _feed(String title) => {
+  'provider_id': 'cache-race-provider',
+  'sections': <Map<String, Object?>>[
+    {'uri': 'example:feed', 'title': title, 'items': <Map<String, Object?>>[]},
+  ],
+};
+
+class _FeedSettings extends SettingsNotifier {
+  @override
+  AppSettings build() =>
+      const AppSettings(homeFeedProvider: 'cache-race-provider');
+
+  void disableHomeFeed() {
+    state = state.copyWith(homeFeedProvider: AppSettings.homeFeedProviderOff);
+  }
+}
+
+class _FeedExtensions extends ExtensionNotifier {
+  @override
+  ExtensionState build() => const ExtensionState(
+    isInitialized: true,
+    extensions: [
+      Extension(
+        id: 'cache-race-provider',
+        name: 'cache-race-provider',
+        displayName: 'Cache race provider',
+        version: '1.0.0',
+        description: '',
+        enabled: true,
+        status: 'loaded',
+        capabilities: {'homeFeed': true},
+      ),
+    ],
+  );
 }

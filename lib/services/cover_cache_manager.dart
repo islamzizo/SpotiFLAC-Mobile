@@ -113,17 +113,16 @@ class CoverCacheManager {
       await instance.emptyCache();
     } catch (e) {
       debugPrint('CoverCacheManager: emptyCache failed, fallback to wipe: $e');
+      await _wipeDirectory(cachePath);
     }
-
-    await _wipeDirectory(cachePath);
 
     final imageCache = PaintingBinding.instance.imageCache;
     imageCache.clear();
     imageCache.clearLiveImages();
 
+    // Pending downloads publish into this manager when their files finish.
+    // Preserve their unindexed files and the single repository writer.
     instance.store.emptyMemoryCache();
-    _instance = _createManager(cachePath);
-    _initialized = true;
   }
 
   static Future<CacheStats> getStats() async {

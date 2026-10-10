@@ -5,10 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
+import 'package:spotiflac_android/screens/listening_statistics_screen.dart';
+import 'package:spotiflac_android/widgets/animation_utils.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 import 'package:spotiflac_android/widgets/mornye_volume_control.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
+import 'package:spotiflac_android/widgets/discord_presence_settings.dart';
+import 'package:spotiflac_android/widgets/automix_settings.dart';
 
 class PlaybackSettingsPage extends ConsumerStatefulWidget {
   const PlaybackSettingsPage({super.key});
@@ -111,6 +115,73 @@ class _PlaybackSettingsPageState extends ConsumerState<PlaybackSettingsPage> {
               ],
             ),
           ),
+          if (settings.autoMix) ...[
+            SliverToBoxAdapter(
+              child: SettingsSectionHeader(
+                title: context.l10n.autoMixSettingsTitle,
+              ),
+            ),
+            const SliverToBoxAdapter(child: AutoMixSettings()),
+          ],
+          SliverToBoxAdapter(
+            child: SettingsSectionHeader(
+              title: context.l10n.playbackAutomation,
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: SettingsGroup(
+              children: [
+                SettingsSwitchItem(
+                  icon: Icons.volume_off_outlined,
+                  title: context.l10n.playbackPauseOnMute,
+                  subtitle: context.l10n.playbackPauseOnMuteDescription,
+                  value: settings.pauseOnMute,
+                  enabled:
+                      settings.playerMode == 'internal' &&
+                      !settings.usbBitPerfect,
+                  onChanged: (value) =>
+                      ref.read(settingsProvider.notifier).setPauseOnMute(value),
+                ),
+                SettingsSwitchItem(
+                  icon: Icons.headphones_outlined,
+                  title: context.l10n.playbackOnHeadphonesConnected,
+                  subtitle:
+                      context.l10n.playbackOnHeadphonesConnectedDescription,
+                  value: settings.playOnHeadphonesConnected,
+                  enabled: settings.playerMode == 'internal',
+                  onChanged: (value) => ref
+                      .read(settingsProvider.notifier)
+                      .setPlayOnHeadphonesConnected(value),
+                  showDivider: false,
+                ),
+              ],
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: SettingsSectionHeader(title: context.l10n.motionArtwork),
+          ),
+          SliverToBoxAdapter(
+            child: SettingsGroup(
+              children: [
+                SettingsSwitchItem(
+                  icon: Icons.motion_photos_on_outlined,
+                  title: context.l10n.motionArtwork,
+                  subtitle: context.l10n.motionArtworkDescription,
+                  value: settings.motionArtworkEnabled,
+                  onChanged: (value) => ref
+                      .read(settingsProvider.notifier)
+                      .setMotionArtworkEnabled(value),
+                  showDivider: false,
+                ),
+              ],
+            ),
+          ),
+          if (Platform.isAndroid || Platform.isIOS) ...[
+            const SliverToBoxAdapter(
+              child: SettingsSectionHeader(title: 'Discord'),
+            ),
+            const SliverToBoxAdapter(child: DiscordPresenceSettings()),
+          ],
           if (Platform.isAndroid)
             SliverToBoxAdapter(
               child: SettingsSectionHeader(
@@ -264,6 +335,27 @@ class _PlaybackSettingsPageState extends ConsumerState<PlaybackSettingsPage> {
                 ],
               ),
             ),
+          const SliverToBoxAdapter(child: SizedBox(height: 32)),
+          SliverToBoxAdapter(
+            child: SettingsSectionHeader(title: context.l10n.listeningStats),
+          ),
+          SliverToBoxAdapter(
+            child: SettingsGroup(
+              children: [
+                SettingsItem(
+                  icon: Icons.insights_outlined,
+                  title: context.l10n.listeningStats,
+                  subtitle: context.l10n.listeningStatsDescription,
+                  onTap: () => Navigator.of(context).push(
+                    slidePageRoute<void>(
+                      page: const ListeningStatisticsScreen(),
+                    ),
+                  ),
+                  showDivider: false,
+                ),
+              ],
+            ),
+          ),
           const SliverToBoxAdapter(child: SizedBox(height: 32)),
         ],
       ),

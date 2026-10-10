@@ -1,40 +1,15 @@
 package com.zarz.spotiflac
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
-import android.os.Bundle
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document.MIME_TYPE_DIR
-import androidx.activity.OnBackPressedCallback
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.documentfile.provider.DocumentFile
-import io.flutter.embedding.android.FlutterFragmentActivity
-import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode
-import io.flutter.embedding.android.FlutterFragment
-import io.flutter.embedding.android.RenderMode
-import io.flutter.embedding.android.TransparencyMode
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.engine.FlutterShellArgs
-import io.flutter.plugin.common.EventChannel
-import io.flutter.plugin.common.MethodChannel
-import com.ryanheise.audioservice.AudioServicePlugin
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import org.json.JSONTokener
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
@@ -596,11 +571,11 @@ private const val SAF_SCAN_PAUSE_POLL_MS = 100L
  * Holds a SAF scan at its checkpoint while paused, keeping its position in
  * memory. Returns true when the scan should stop because it was cancelled.
  */
-internal fun MainActivity.safScanStopRequested(): Boolean {
-    while (safScanPaused && !safScanCancel) {
+internal fun MainActivity.safScanStopRequested(cancelled: () -> Boolean = { false }): Boolean {
+    while (safScanPaused && !safScanCancel && !cancelled()) {
         Thread.sleep(SAF_SCAN_PAUSE_POLL_MS)
     }
-    return safScanCancel
+    return safScanCancel || cancelled()
 }
 
 /**
@@ -735,6 +710,24 @@ internal fun Context.listSafChildrenOrThrow(
     dir: DocumentFile,
     includeLastModified: Boolean = true,
 ): List<SafChildEntry> {
+    for (attempt in 0..2) {
+        try {
+            return querySafChildrenOrThrow(dir, includeLastModified)
+        } catch (error: SafProviderLoadingException) {
+            if (attempt == 2) throw error
+            Thread.sleep(300L * (attempt + 1))
+        }
+    }
+    throw IOException("SAF directory listing did not complete")
+}
+
+private class SafProviderLoadingException(uri: Uri) :
+    IOException("SAF provider is still loading $uri; retry the scan when it is ready")
+
+private fun Context.querySafChildrenOrThrow(
+    dir: DocumentFile,
+    includeLastModified: Boolean,
+): List<SafChildEntry> {
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
             dir.uri,
             DocumentsContract.getDocumentId(dir.uri),
@@ -758,6 +751,11 @@ internal fun Context.listSafChildrenOrThrow(
             )
         } ?: throw IOException("SAF provider returned no cursor for ${dir.uri}")
         return cursor.use {
+            // Network DocumentsProviders may return cached/partial rows while
+            // fetching a directory. Never commit that as an empty/full scan.
+            if (it.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) {
+                throw SafProviderLoadingException(dir.uri)
+            }
             val documentIdIndex = it.getColumnIndexOrThrow(
                 DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             )
@@ -776,7 +774,7 @@ internal fun Context.listSafChildrenOrThrow(
                         dir.uri,
                         it.getString(documentIdIndex),
                     )
-                    val child = DocumentFile.fromTreeUri(this@listSafChildrenOrThrow, childUri)
+                    val child = DocumentFile.fromTreeUri(this@querySafChildrenOrThrow, childUri)
                         ?: throw IOException("Invalid SAF child URI: $childUri")
                     val name = if (displayNameIndex >= 0 && !it.isNull(displayNameIndex)) {
                         it.getString(displayNameIndex)
@@ -813,17 +811,19 @@ internal fun Context.listSafChildrenOrThrow(
         }
     }
 
-internal fun MainActivity.resolveReadableSafTreeOrThrow(
+internal fun Context.resolveReadableSafTreeOrThrow(
         treeUriStr: String,
-    ): Pair<Uri, DocumentFile> {
+    ): Triple<Uri, DocumentFile, List<SafChildEntry>> {
         if (treeUriStr.isBlank()) {
             throw IllegalArgumentException("SAF tree URI is empty")
         }
         val treeUri = Uri.parse(treeUriStr)
+        val root = DocumentFile.fromTreeUri(this, treeUri)
+            ?: throw IOException("Unable to resolve SAF tree")
         val hasReadPermission = contentResolver.persistedUriPermissions.any {
             it.uri == treeUri && it.isReadPermission
         } || checkUriPermission(
-            treeUri,
+            root.uri,
             android.os.Process.myPid(),
             android.os.Process.myUid(),
             Intent.FLAG_GRANT_READ_URI_PERMISSION,
@@ -831,12 +831,20 @@ internal fun MainActivity.resolveReadableSafTreeOrThrow(
         if (!hasReadPermission) {
             throw SecurityException("Read access to the SAF tree has been revoked")
         }
-        val root = DocumentFile.fromTreeUri(this, treeUri)
-            ?: throw IOException("Unable to resolve SAF tree")
-        if (!root.exists() || !root.canRead()) {
-            throw IOException("SAF tree is unavailable or unreadable")
+        // canRead() also requires a non-empty MIME type from queryDocument.
+        // Remote providers can omit that metadata after reconnecting even
+        // though queryChildDocuments can read the folder. The real listing is
+        // authoritative; reuse it in the scan instead of another round trip.
+        for (attempt in 0..2) {
+            val children = listSafChildrenOrThrow(root)
+            if (children.isNotEmpty() || root.exists()) {
+                return Triple(treeUri, root, children)
+            }
+            // An empty listing without a confirmed root is inconclusive,
+            // never evidence that previously indexed songs were deleted.
+            if (attempt < 2) Thread.sleep(300L * (attempt + 1))
         }
-        return treeUri to root
+        throw IOException("SAF provider could not confirm the library folder; reconnect it and retry")
     }
 
 internal fun MainActivity.scanSafTree(
@@ -867,7 +875,7 @@ internal fun MainActivity.scanSafTree(
             throw java.util.concurrent.CancellationException("SAF library scan cancelled")
         }
 
-        val (_, root) = resolveReadableSafTreeOrThrow(treeUriStr)
+        val (_, root, rootChildren) = resolveReadableSafTreeOrThrow(treeUriStr)
 
         resetSafScanProgress()
         safScanCancel = false
@@ -914,15 +922,16 @@ internal fun MainActivity.scanSafTree(
                 continue
             }
 
-            val listing = lister.list(dir, queue, visitedDirUris)
+            val listing = if (dir.uri == root.uri) {
+                Result.success(rootChildren)
+            } else {
+                lister.list(dir, queue, visitedDirUris)
+            }
             val children = listing.getOrNull()
             if (children == null) {
                 traversalErrors++
                 updateSafScanProgress { it.errorCount = traversalErrors }
-                android.util.Log.w(
-                    "SpotiFLAC",
-                    "SAF scan: failed listing directory $dirUri: ${listing.exceptionOrNull()?.message}",
-                )
+                reportLibraryScanError(dirUri, "List folder", listing.exceptionOrNull()?.message ?: "No directory listing")
                 continue
             }
             rememberCueDirectoryListing(dir, children, safChildLookupCache)
@@ -954,10 +963,7 @@ internal fun MainActivity.scanSafTree(
                 } catch (e: Exception) {
                     traversalErrors++
                     updateSafScanProgress { it.errorCount = traversalErrors }
-                    android.util.Log.w(
-                        "SpotiFLAC",
-                        "SAF scan: skipped child under $dirUri: ${e.message}",
-                    )
+                    reportLibraryScanError(child.doc.uri.toString(), "Inspect entry", e.message ?: e.javaClass.simpleName)
                 }
             }
         }
@@ -1058,12 +1064,11 @@ internal fun MainActivity.scanSafTree(
             updateSafScanProgress { it.currentFile = cueName }
 
             var tempCuePath: String? = null
-            var tempAudioPath: String? = null
             try {
                 tempCuePath = copyUriToTemp(cueDoc.uri, ".cue", cueName)
                 if (tempCuePath == null) {
                     errors++
-                    android.util.Log.w("SpotiFLAC", "SAF scan: failed to copy CUE ${cueDoc.uri}")
+                    reportLibraryScanError(cueUri, "Read CUE", "Failed to copy CUE file")
                     scanned++
                     continue
                 }
@@ -1078,7 +1083,7 @@ internal fun MainActivity.scanSafTree(
                 )
 
                 if (audioDoc == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF scan: no audio file found for CUE $cueName")
+                    reportLibraryScanError(cueUri, "Resolve CUE audio", "No audio file found for $cueName")
                     errors++
                     scanned++
                     continue
@@ -1090,36 +1095,19 @@ internal fun MainActivity.scanSafTree(
                     continue
                 }
 
-                val tempDir = File(tempCuePath).parent ?: cacheDir.absolutePath
                 val audioName = try { audioDoc.name ?: "audio.flac" } catch (_: Exception) { "audio.flac" }
-                val audioExt = audioName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                val fallbackAudioExt = if (audioExt.isNotBlank()) ".$audioExt" else null
                 val audioLastModified = try { audioDoc.lastModified() } catch (_: Exception) { cueDoc.lastModified() }
                 val coverCacheKey = buildLibraryCoverCacheKey(
                     audioDoc.uri.toString(),
                     audioLastModified,
                 )
 
-                tempAudioPath = copyUriToTemp(audioDoc.uri, fallbackAudioExt)
-                if (tempAudioPath == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF scan: failed to copy audio for CUE $cueName")
-                    errors++
-                    scanned++
-                    continue
-                }
-
-                val renamedAudio = File(tempDir, audioName)
-                val tempAudioFile = File(tempAudioPath)
-                if (renamedAudio.absolutePath != tempAudioFile.absolutePath) {
-                    tempAudioFile.renameTo(renamedAudio)
-                    tempAudioPath = renamedAudio.absolutePath
-                }
-
                 val cueLastModified = cue.lastModified
 
-                val cueResultsJson = coreBackend.scanCueForLibrary(
+                val cueResultsJson = scanCueFromUri(
                     tempCuePath,
-                    tempDir,
+                    audioDoc.uri,
+                    audioName,
                     cueDoc.uri.toString(),
                     cueLastModified,
                     coverCacheKey,
@@ -1134,10 +1122,9 @@ internal fun MainActivity.scanSafTree(
 
             } catch (e: Exception) {
                 errors++
-                android.util.Log.w("SpotiFLAC", "SAF scan: error processing CUE $cueName: ${e.message}")
+                reportLibraryScanError(cueUri, "Scan CUE", e.message ?: e.javaClass.simpleName)
             } finally {
                 try { tempCuePath?.let { File(it).delete() } } catch (_: Exception) {}
-                try { tempAudioPath?.let { File(it).delete() } } catch (_: Exception) {}
             }
 
             scanned++
@@ -1154,6 +1141,7 @@ internal fun MainActivity.scanSafTree(
             val name: String,
             val lastModified: Long,
             val metadata: JSONObject?,
+            val error: String?,
         )
 
         val pendingAudio = mutableListOf<SafAudioEntry>()
@@ -1197,31 +1185,33 @@ internal fun MainActivity.scanSafTree(
                 val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 val fallbackExt = if (ext.isNotBlank()) ".${ext}" else null
                 val coverCacheKey = buildLibraryCoverCacheKey(stableUri, lastModified)
+                var error: String? = null
                 val metadata = try {
                     readAudioMetadataFromUri(
                         doc.uri,
                         name,
                         fallbackExt,
                         coverCacheKey,
+                        onFailure = { error = it },
                     )
                 } catch (e: Exception) {
-                    android.util.Log.w(
-                        "SpotiFLAC",
-                        "SAF scan: metadata read failed for $stableUri: ${e.message}",
-                    )
+                    error = e.message ?: e.javaClass.simpleName
                     null
                 }
-                SafAudioScanOutcome(stableUri, name, lastModified, metadata)
+                SafAudioScanOutcome(stableUri, name, lastModified, metadata, error)
             },
-        ) { _, result ->
+        ) { audio, result ->
             val outcome = result.getOrNull()
             if (outcome == null) {
                 errors++
+                val error = result.exceptionOrNull()
+                reportLibraryScanError(audio.doc.uri.toString(), "Read metadata", error?.message ?: "Metadata task failed")
             } else {
                 updateSafScanProgress { it.currentFile = outcome.name }
                 val metadataObj = outcome.metadata
                 if (metadataObj == null) {
                     errors++
+                    reportLibraryScanError(outcome.uri, "Read metadata", outcome.error ?: "No readable audio metadata for ${outcome.name}")
                 } else {
                     try {
                         metadataObj.put("id", buildStableLibraryId(outcome.uri))
@@ -1231,8 +1221,9 @@ internal fun MainActivity.scanSafTree(
                         // Flush before recording the checkpoint to avoid losing the row.
                         ndjsonWriter?.flush()
                         recordCheckpoint(outcome.uri, outcome.lastModified)
-                    } catch (_: Exception) {
+                    } catch (error: Exception) {
                         errors++
+                        reportLibraryScanError(outcome.uri, "Index track", error.message ?: error.javaClass.simpleName)
                     }
                 }
             }
@@ -1296,8 +1287,9 @@ internal fun MainActivity.scanSafTreeIncremental(treeUriStr: String, existingFil
 internal fun MainActivity.scanSafTreeIncremental(
         treeUriStr: String,
         existingFiles: Map<String, Long>,
+        cancelled: () -> Boolean = { false },
     ): Any {
-        val (_, root) = resolveReadableSafTreeOrThrow(treeUriStr)
+        val (_, root, rootChildren) = resolveReadableSafTreeOrThrow(treeUriStr)
 
         resetSafScanProgress()
         safScanCancel = false
@@ -1338,7 +1330,7 @@ internal fun MainActivity.scanSafTreeIncremental(
         val lister = SafTreeLister(this)
 
         while (queue.isNotEmpty()) {
-            if (safScanStopRequested()) {
+            if (safScanStopRequested(cancelled)) {
                 updateSafScanProgress { it.isComplete = true }
                 val result = JSONObject()
                 result.put("files", JSONArray())
@@ -1355,21 +1347,22 @@ internal fun MainActivity.scanSafTreeIncremental(
                 continue
             }
 
-            val listing = lister.list(dir, queue, visitedDirUris)
+            val listing = if (dir.uri == root.uri) {
+                Result.success(rootChildren)
+            } else {
+                lister.list(dir, queue, visitedDirUris)
+            }
             val children = listing.getOrNull()
             if (children == null) {
                 traversalErrors++
                 updateSafScanProgress { it.errorCount = traversalErrors }
-                android.util.Log.w(
-                    "SpotiFLAC",
-                    "SAF incremental scan: failed listing directory $dirUri: ${listing.exceptionOrNull()?.message}",
-                )
+                reportLibraryScanError(dirUri, "List folder", listing.exceptionOrNull()?.message ?: "No directory listing")
                 continue
             }
             rememberCueDirectoryListing(dir, children, safChildLookupCache)
 
             for (child in children) {
-                if (safScanStopRequested()) {
+                if (safScanStopRequested(cancelled)) {
                     updateSafScanProgress { it.isComplete = true }
                     val result = JSONObject()
                     result.put("files", JSONArray())
@@ -1422,10 +1415,7 @@ internal fun MainActivity.scanSafTreeIncremental(
                 } catch (e: Exception) {
                     traversalErrors++
                     updateSafScanProgress { it.errorCount = traversalErrors }
-                    android.util.Log.w(
-                        "SpotiFLAC",
-                        "SAF incremental scan: skipped child under $dirUri: ${e.message}",
-                    )
+                    reportLibraryScanError(child.doc.uri.toString(), "Inspect entry", e.message ?: e.javaClass.simpleName)
                 }
             }
         }
@@ -1473,7 +1463,7 @@ internal fun MainActivity.scanSafTreeIncremental(
         val cueReferencedAudioUris = mutableSetOf<String>()
 
         for ((cueDoc, parentDir, cueName, cueLastModified) in cueFilesToScan) {
-            if (safScanStopRequested()) {
+            if (safScanStopRequested(cancelled)) {
                 updateSafScanProgress { it.isComplete = true }
                 spill.abandon()
                 val result = JSONObject()
@@ -1488,12 +1478,11 @@ internal fun MainActivity.scanSafTreeIncremental(
             updateSafScanProgress { it.currentFile = cueName }
 
             var tempCuePath: String? = null
-            var tempAudioPath: String? = null
             try {
                 tempCuePath = copyUriToTemp(cueDoc.uri, ".cue", cueName)
                 if (tempCuePath == null) {
                     errors++
-                    android.util.Log.w("SpotiFLAC", "SAF incremental scan: failed to copy CUE ${cueDoc.uri}")
+                    reportLibraryScanError(cueDoc.uri.toString(), "Read CUE", "Failed to copy CUE file")
                     scanned++
                     continue
                 }
@@ -1508,7 +1497,7 @@ internal fun MainActivity.scanSafTreeIncremental(
                 )
 
                 if (audioDoc == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF incremental scan: no audio file found for CUE $cueName")
+                    reportLibraryScanError(cueDoc.uri.toString(), "Resolve CUE audio", "No audio file found for $cueName")
                     errors++
                     scanned++
                     continue
@@ -1516,34 +1505,17 @@ internal fun MainActivity.scanSafTreeIncremental(
 
                 cueReferencedAudioUris.add(audioDoc.uri.toString())
 
-                val tempDir = File(tempCuePath).parent ?: cacheDir.absolutePath
                 val audioName = try { audioDoc.name ?: "audio.flac" } catch (_: Exception) { "audio.flac" }
-                val audioExt = audioName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                val fallbackAudioExt = if (audioExt.isNotBlank()) ".$audioExt" else null
                 val audioLastModified = try { audioDoc.lastModified() } catch (_: Exception) { cueLastModified }
                 val coverCacheKey = buildLibraryCoverCacheKey(
                     audioDoc.uri.toString(),
                     audioLastModified,
                 )
 
-                tempAudioPath = copyUriToTemp(audioDoc.uri, fallbackAudioExt)
-                if (tempAudioPath == null) {
-                    android.util.Log.w("SpotiFLAC", "SAF incremental scan: failed to copy audio for CUE $cueName")
-                    errors++
-                    scanned++
-                    continue
-                }
-
-                val renamedAudio = File(tempDir, audioName)
-                val tempAudioFile = File(tempAudioPath)
-                if (renamedAudio.absolutePath != tempAudioFile.absolutePath) {
-                    tempAudioFile.renameTo(renamedAudio)
-                    tempAudioPath = renamedAudio.absolutePath
-                }
-
-                val cueResultsJson = coreBackend.scanCueForLibrary(
+                val cueResultsJson = scanCueFromUri(
                     tempCuePath,
-                    tempDir,
+                    audioDoc.uri,
+                    audioName,
                     cueDoc.uri.toString(),
                     cueLastModified,
                     coverCacheKey,
@@ -1561,10 +1533,9 @@ internal fun MainActivity.scanSafTreeIncremental(
 
             } catch (e: Exception) {
                 errors++
-                android.util.Log.w("SpotiFLAC", "SAF incremental scan: error processing CUE $cueName: ${e.message}")
+                reportLibraryScanError(cueDoc.uri.toString(), "Scan CUE", e.message ?: e.javaClass.simpleName)
             } finally {
                 try { tempCuePath?.let { File(it).delete() } } catch (_: Exception) {}
-                try { tempAudioPath?.let { File(it).delete() } } catch (_: Exception) {}
             }
 
             scanned++
@@ -1632,7 +1603,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
         val pendingAudio = mutableListOf<ChangedAudio>()
         for (audio in audioFiles) {
-            if (safScanStopRequested()) return cancelledIncrementalResult()
+            if (safScanStopRequested(cancelled)) return cancelledIncrementalResult()
             if (cueReferencedAudioUris.contains(audio.doc.uri.toString())) {
                 scanned++
                 reportProcessed()
@@ -1643,7 +1614,7 @@ internal fun MainActivity.scanSafTreeIncremental(
 
         val completed = runSafReadsInOrder(
             pendingAudio,
-            cancelled = { safScanStopRequested() },
+            cancelled = { safScanStopRequested(cancelled) },
             task = { audio ->
                 val ext = audio.name.substringAfterLast('.', "").lowercase(Locale.ROOT)
                 val fallbackExt = if (ext.isNotBlank()) ".${ext}" else null
@@ -1652,12 +1623,20 @@ internal fun MainActivity.scanSafTreeIncremental(
                     audio.name,
                     fallbackExt,
                     buildLibraryCoverCacheKey(audio.doc.uri.toString(), audio.lastModified),
+                    onFailure = { message ->
+                        reportLibraryScanError(audio.doc.uri.toString(), "Read metadata", message)
+                    },
                 )
             },
         ) { audio, result ->
             updateSafScanProgress { it.currentFile = audio.name }
             // A failed read aborts the incremental scan, as it did when serial.
-            val metadataObj = result.getOrThrow()
+            val metadataObj = try {
+                result.getOrThrow()
+            } catch (error: Exception) {
+                reportLibraryScanError(audio.doc.uri.toString(), "Read metadata", error.message ?: error.javaClass.simpleName)
+                throw error
+            }
             if (metadataObj == null) {
                 errors++
             } else {
@@ -1668,8 +1647,9 @@ internal fun MainActivity.scanSafTreeIncremental(
                     metadataObj.put("fileModTime", audio.lastModified)
                     metadataObj.put("lastModified", audio.lastModified)
                     putFile(metadataObj)
-                } catch (_: Exception) {
+                } catch (error: Exception) {
                     errors++
+                    reportLibraryScanError(audio.doc.uri.toString(), "Index track", error.message ?: error.javaClass.simpleName)
                 }
             }
             scanned++

@@ -211,6 +211,30 @@ bool isInconclusiveAudioCodec(String? value) {
   return normalized == 'm4a' || normalized == 'mp4';
 }
 
+bool isLosslessAudioCodec(String? codec) {
+  final normalized = codec?.trim().toLowerCase().replaceAll('-', '_') ?? '';
+  return normalized.startsWith('pcm_') ||
+      const {
+        'alac',
+        'flac',
+        'wavpack',
+        'ape',
+        'tta',
+        'mlp',
+        'truehd',
+        'shorten',
+      }.contains(normalized);
+}
+
+/// A generic container needs an explicit conversion request; known lossy
+/// audio stays in its native container even when that request is present.
+bool shouldAttemptLosslessContainerConversion({
+  required bool forceConversion,
+  required String? probedCodec,
+}) =>
+    isLosslessAudioCodec(probedCodec) ||
+    (forceConversion && isInconclusiveAudioCodec(probedCodec));
+
 /// Returns a provider-independent quality label suitable for a filename.
 ///
 /// Requested labels such as LOSSLESS and HI_RES are intentionally ignored:

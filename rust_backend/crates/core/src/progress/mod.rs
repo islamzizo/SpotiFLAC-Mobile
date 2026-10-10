@@ -118,9 +118,14 @@ impl State {
     }
 
     fn next(&mut self, changed: &Condvar) -> i64 {
+        let seq = self.advance();
+        changed.notify_all();
+        seq
+    }
+
+    fn advance(&mut self) -> i64 {
         self.seq = self.seq.wrapping_add(1);
         self.dirty = true;
-        changed.notify_all();
         self.seq
     }
 
@@ -300,21 +305,36 @@ impl ProgressRegistry {
     }
 
     pub fn remove(&self, id: &str) -> Result<(), ProgressError> {
+        self.remove_many(std::iter::once(id))
+    }
+
+    pub fn remove_many<'a>(
+        &self,
+        ids: impl IntoIterator<Item = &'a str>,
+    ) -> Result<(), ProgressError> {
         let mut state = self.shared.state.lock().expect("progress state lock");
         state.check()?;
-        if state.items.remove(id).is_some() {
-            let seq = state.next(&self.shared.changed);
-            state.removed.insert(id.to_owned(), seq);
-            if state.removed.len() > 512 {
-                let mut revisions: Vec<_> = state.removed.values().copied().collect();
-                revisions.sort_unstable();
-                let cutoff = revisions[revisions.len() / 2];
-                state.removed.retain(|_, revision| *revision > cutoff);
-                state.reset = state.reset.max(cutoff);
+        let mut changed = false;
+        for id in ids {
+            if state.items.remove(id).is_some() {
+                let seq = state.advance();
+                state.removed.insert(id.to_owned(), seq);
+                if state.removed.len() > 512 {
+                    let mut revisions: Vec<_> = state.removed.values().copied().collect();
+                    revisions.sort_unstable();
+                    let cutoff = revisions[revisions.len() / 2];
+                    state.removed.retain(|_, revision| *revision > cutoff);
+                    state.reset = state.reset.max(cutoff);
+                }
+                changed = true;
             }
+            // Even removing a missing ID invalidates the snapshot cache in Go.
+            state.dirty = true;
         }
-        // Even removing a missing ID invalidates the snapshot cache in Go.
-        state.dirty = true;
+        drop(state);
+        if changed {
+            self.shared.changed.notify_all();
+        }
         Ok(())
     }
 
@@ -407,4 +427,77 @@ fn rounded_speed(value: f64) -> i64 {
         return value as u64 as i64;
     }
     value as i64
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn batch_removal_preserves_revisions_tombstones_and_cached_survivors() {
+        let registry = ProgressRegistry::new();
+        for id in ["a", "b", "keep", ""] {
+            registry.start(id).unwrap();
+        }
+        registry.set_progress("keep", 0.5, 20, 40).unwrap();
+        let before: Value = serde_json::from_str(&registry.snapshot().unwrap()).unwrap();
+        let seq = registry.shared.state.lock().unwrap().seq;
+        registry
+            .remove_many(["a", "b", "a", "missing", ""])
+            .unwrap();
+        let after: Value = serde_json::from_str(&registry.snapshot().unwrap()).unwrap();
+        assert_eq!(after, json!({"items": {"keep": before["items"]["keep"]}}));
+        let delta: Value = serde_json::from_str(&registry.wait_delta(seq, 1).unwrap()).unwrap();
+        assert_eq!(delta, json!({"seq":seq + 3, "removed":["", "a", "b"]}));
+        registry.remove_many(["a", "missing"]).unwrap();
+        assert_eq!(registry.shared.state.lock().unwrap().seq, seq + 3);
+        registry.start("a").unwrap();
+        let delta: Value = serde_json::from_str(&registry.wait_delta(seq, 1).unwrap()).unwrap();
+        assert_eq!(delta["removed"], json!(["", "b"]));
+        assert_eq!(delta["items"]["a"]["status"], "preparing");
+    }
+
+    #[test]
+    fn pruning_resets_old_cursors_and_retains_newer_removals() {
+        let registry = ProgressRegistry::new();
+        let ids: Vec<_> = (0..514).map(|i| format!("item-{i:04}")).collect();
+        for id in &ids {
+            registry.start(id).unwrap();
+        }
+        registry
+            .remove_many(ids.iter().take(513).map(String::as_str))
+            .unwrap();
+        let state = registry.shared.state.lock().unwrap();
+        assert_eq!(state.seq, 1027);
+        assert_eq!(state.reset, 771);
+        assert_eq!(state.removed.len(), 256);
+        let older: Value = serde_json::from_str(&state.delta(770)).unwrap();
+        assert_eq!(older["reset"], true);
+        assert_eq!(
+            older["items"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            [&ids[513]]
+        );
+        let newer: Value = serde_json::from_str(&state.delta(771)).unwrap();
+        assert_eq!(newer["removed"], json!(ids[257..513]));
+        assert!(newer.get("reset").is_none());
+    }
+
+    #[test]
+    fn batch_wakes_subscribers_and_closed_registry_rejects_empty_batch() {
+        let registry = Arc::new(ProgressRegistry::new());
+        registry.start("a").unwrap();
+        registry.start("b").unwrap();
+        let listener = registry.subscribe().unwrap();
+        let waiting = std::thread::spawn(move || listener.wait_delta(2, 1000).unwrap());
+        registry.remove_many(["a", "b"]).unwrap();
+        let delta: Value = serde_json::from_str(&waiting.join().unwrap()).unwrap();
+        assert_eq!(delta, json!({"seq":4,"removed":["a","b"]}));
+        registry.shutdown();
+        assert_eq!(registry.remove_many([]), Err(ProgressError::Closed));
+    }
 }

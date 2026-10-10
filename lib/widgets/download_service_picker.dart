@@ -40,19 +40,23 @@ class DownloadServicePicker extends ConsumerStatefulWidget {
     required void Function(String quality, String service) onSelect,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final mornye = context.isMornye;
 
     showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
-      backgroundColor: context.isMornye
+      backgroundColor: mornye
           ? Colors.transparent
           : colorScheme.surfaceContainerHigh,
-      elevation: context.isMornye ? 0 : null,
-      barrierColor: context.isMornye
-          ? Colors.black.withValues(alpha: 0.26)
+      elevation: mornye ? 0 : null,
+      // Only the glass draws the sheet outline, including its bottom corners.
+      shape: mornye ? const RoundedRectangleBorder() : null,
+      clipBehavior: mornye ? Clip.none : null,
+      barrierColor: mornye
+          ? CupertinoDynamicColor.resolve(kCupertinoModalBarrierColor, context)
           : null,
       isScrollControlled: true,
-      showDragHandle: !context.isMornye,
+      showDragHandle: !mornye,
       constraints: BoxConstraints(
         maxHeight: MediaQuery.sizeOf(context).height * 0.88,
       ),
@@ -65,16 +69,16 @@ class DownloadServicePicker extends ConsumerStatefulWidget {
           recommendedService: recommendedService,
         );
         return context.isMornye
-            ? MornyeGlassPanel.overlay(
-                tintOpacity: colorScheme.brightness == Brightness.dark
-                    ? 0.68
-                    : 0.75,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const AppSheetHandle(),
-                    Flexible(child: picker),
-                  ],
+            ? Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: MornyeGlassPanel.overlay(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const AppSheetHandle(),
+                      Flexible(child: picker),
+                    ],
+                  ),
                 ),
               )
             : picker;
@@ -103,7 +107,12 @@ class _DownloadServicePickerState extends ConsumerState<DownloadServicePicker> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      ref.read(extensionProvider.notifier).refreshEnabledExtensionHealth();
+      final notifier = ref.read(extensionProvider.notifier);
+      for (final extension in _downloadExtensions()) {
+        if (extension.hasServiceHealth) {
+          unawaited(notifier.checkExtensionHealth(extension.id));
+        }
+      }
     });
     final downloadExtensions = _downloadExtensions();
     final recommended = widget.recommendedService;
@@ -132,6 +141,7 @@ class _DownloadServicePickerState extends ConsumerState<DownloadServicePicker> {
   }
 
   void _selectService(Extension extension) {
+    if (_selectedService == extension.id) return;
     setState(() => _selectedService = extension.id);
     if (extension.hasServiceHealth) {
       unawaited(
@@ -143,8 +153,12 @@ class _DownloadServicePickerState extends ConsumerState<DownloadServicePicker> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final extensionState = ref.watch(extensionProvider);
-    final downloadExtensions = _downloadExtensions();
+    final extensions = ref.watch(
+      extensionProvider.select((state) => state.extensions),
+    );
+    final downloadExtensions = extensions
+        .where((ext) => ext.enabled && ext.hasDownloadProvider)
+        .toList(growable: false);
     final hasProviders = downloadExtensions.isNotEmpty;
     final qualityOptions = _getQualityOptions(downloadExtensions);
     final qualityRows = [
@@ -199,10 +213,11 @@ class _DownloadServicePickerState extends ConsumerState<DownloadServicePicker> {
                       children: [
                         for (final ext in downloadExtensions)
                           _ServiceChip(
+                            key: ValueKey(ext.id),
                             label: ext.displayName,
                             isRecommended: widget.recommendedService == ext.id,
-                            healthStatus: ext.hasServiceHealth
-                                ? extensionState.healthStatuses[ext.id]?.status
+                            healthServiceId: ext.hasServiceHealth
+                                ? ext.id
                                 : null,
                             isSelected: _selectedService == ext.id,
                             onTap: () => _selectService(ext),
@@ -233,10 +248,7 @@ class _DownloadServicePickerState extends ConsumerState<DownloadServicePicker> {
               if (context.isMornye)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Material(
-                    color: MornyeTheme.controlFill(context),
-                    borderRadius: BorderRadius.circular(24),
-                    clipBehavior: Clip.antiAlias,
+                  child: RepaintBoundary(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -407,15 +419,16 @@ class _ServiceChip extends StatelessWidget {
   final bool isRecommended;
   final VoidCallback? onTap;
   final String? iconPath;
-  final String? healthStatus;
+  final String? healthServiceId;
 
   const _ServiceChip({
+    super.key,
     required this.label,
     required this.isSelected,
     required this.onTap,
     this.isRecommended = false,
     this.iconPath,
-    this.healthStatus,
+    this.healthServiceId,
   });
 
   @override
@@ -435,7 +448,7 @@ class _ServiceChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(24),
           color: isSelected
               ? colorScheme.primary.withValues(alpha: 0.14)
-              : MornyeTheme.controlFill(context),
+              : colorScheme.onSurface.withValues(alpha: 0.05),
           onPressed: onTap,
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -451,6 +464,10 @@ class _ServiceChip extends StatelessWidget {
                     File(iconPath!),
                     width: 18,
                     height: 18,
+                    cacheWidth: (18 * MediaQuery.devicePixelRatioOf(context))
+                        .ceil(),
+                    cacheHeight: (18 * MediaQuery.devicePixelRatioOf(context))
+                        .ceil(),
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) => Icon(
                       CupertinoIcons.square_grid_2x2,
@@ -466,7 +483,7 @@ class _ServiceChip extends StatelessWidget {
                   label,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: foreground,
-                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -482,9 +499,9 @@ class _ServiceChip extends StatelessWidget {
                   ),
                 ),
               ],
-              if (healthStatus != null) ...[
+              if (healthServiceId != null) ...[
                 const SizedBox(width: 8),
-                _ServiceHealthDot(status: healthStatus!),
+                _ServiceHealthDot(serviceId: healthServiceId!),
               ],
             ],
           ),
@@ -510,8 +527,8 @@ class _ServiceChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (healthStatus != null) ...[
-              _ServiceHealthDot(status: healthStatus!),
+            if (healthServiceId != null) ...[
+              _ServiceHealthDot(serviceId: healthServiceId!),
               const SizedBox(width: 8),
             ],
             if (iconPath != null) ...[
@@ -521,6 +538,10 @@ class _ServiceChip extends StatelessWidget {
                   File(iconPath!),
                   width: 18,
                   height: 18,
+                  cacheWidth: (18 * MediaQuery.devicePixelRatioOf(context))
+                      .ceil(),
+                  cacheHeight: (18 * MediaQuery.devicePixelRatioOf(context))
+                      .ceil(),
                   fit: BoxFit.cover,
                   errorBuilder: (context, error, stackTrace) => Icon(
                     Icons.extension,
@@ -549,13 +570,20 @@ class _ServiceChip extends StatelessWidget {
   }
 }
 
-class _ServiceHealthDot extends StatelessWidget {
-  final String status;
+class _ServiceHealthDot extends ConsumerWidget {
+  final String serviceId;
 
-  const _ServiceHealthDot({required this.status});
+  const _ServiceHealthDot({required this.serviceId});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final status =
+        ref.watch(
+          extensionProvider.select(
+            (state) => state.healthStatuses[serviceId]?.status,
+          ),
+        ) ??
+        'unknown';
     final color = _serviceHealthColor(status);
     return Tooltip(
       message: _serviceHealthTooltip(context, status),
@@ -670,6 +698,8 @@ class _TrackInfoHeader extends StatefulWidget {
 class _TrackInfoHeaderState extends State<_TrackInfoHeader> {
   bool _expanded = false;
   bool _isOverflowing = false;
+  (double, TextStyle?, TextScaler, TextDirection, Locale?)? _titleLayout;
+  bool _titleOverflows = false;
 
   @override
   Widget build(BuildContext context) {
@@ -697,6 +727,12 @@ class _TrackInfoHeaderState extends State<_TrackInfoHeader> {
                             widget.coverUrl!,
                             width: 56,
                             height: 56,
+                            cacheWidth:
+                                (56 * MediaQuery.devicePixelRatioOf(context))
+                                    .ceil(),
+                            cacheHeight:
+                                (56 * MediaQuery.devicePixelRatioOf(context))
+                                    .ceil(),
                             fit: BoxFit.cover,
                             errorBuilder: (context, error, stackTrace) =>
                                 Container(
@@ -727,22 +763,35 @@ class _TrackInfoHeaderState extends State<_TrackInfoHeader> {
                             .textTheme
                             .titleMedium
                             ?.copyWith(fontWeight: FontWeight.w600);
-                        final titleSpan = TextSpan(
-                          text: widget.trackName,
-                          style: titleStyle,
+                        final titleLayout = (
+                          constraints.maxWidth,
+                          titleStyle,
+                          MediaQuery.textScalerOf(context),
+                          Directionality.of(context),
+                          Localizations.maybeLocaleOf(context),
                         );
-                        final titlePainter = TextPainter(
-                          text: titleSpan,
-                          maxLines: 1,
-                          textDirection: TextDirection.ltr,
-                        )..layout(maxWidth: constraints.maxWidth);
-                        final titleOverflows = titlePainter.didExceedMaxLines;
-
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted && _isOverflowing != titleOverflows) {
-                            setState(() => _isOverflowing = titleOverflows);
-                          }
-                        });
+                        if (_titleLayout != titleLayout) {
+                          _titleLayout = titleLayout;
+                          final painter = TextPainter(
+                            text: TextSpan(
+                              text: widget.trackName,
+                              style: titleStyle,
+                            ),
+                            maxLines: 1,
+                            textScaler: titleLayout.$3,
+                            textDirection: titleLayout.$4,
+                            locale: titleLayout.$5,
+                          )..layout(maxWidth: constraints.maxWidth);
+                          _titleOverflows = painter.didExceedMaxLines;
+                          painter.dispose();
+                        }
+                        if (_isOverflowing != _titleOverflows) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted && _isOverflowing != _titleOverflows) {
+                              setState(() => _isOverflowing = _titleOverflows);
+                            }
+                          });
+                        }
 
                         return Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -787,5 +836,14 @@ class _TrackInfoHeaderState extends State<_TrackInfoHeader> {
         ),
       ),
     );
+  }
+
+  @override
+  void didUpdateWidget(covariant _TrackInfoHeader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.trackName != widget.trackName) {
+      _titleLayout = null;
+      _expanded = false;
+    }
   }
 }

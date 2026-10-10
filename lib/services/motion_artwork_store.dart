@@ -3,11 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:ffmpeg_kit_flutter_new_full/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_full/return_code.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_audio/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/motion_artwork_download.dart';
+import 'package:spotiflac_android/services/motion_artwork_proxy.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 
@@ -183,13 +184,39 @@ class MotionArtworkStore {
       '$output.source.mp4',
     );
     try {
-      return await _remuxVideo(original?.path ?? source, output);
+      if (original != null) return await _remuxVideo(original.path, output);
+      final proxy = await MotionArtworkProxy.start(Uri.parse(source));
+      try {
+        final hls = proxy.isHls;
+        final ratio = await _remuxVideo(
+          proxy.source.toString(),
+          output,
+          hlsInput: hls,
+        );
+        // Opaque or redirected URLs reveal HLS only after the first request.
+        // Retry failed HLS input with its scoped demuxer options, without
+        // passing HLS-only flags to ordinary MP4 inputs or buffering video.
+        if (ratio == null && !hls && proxy.isHls && !proxy.isClosed) {
+          return await _remuxVideo(
+            proxy.source.toString(),
+            output,
+            hlsInput: true,
+          );
+        }
+        return ratio;
+      } finally {
+        await proxy.close();
+      }
     } finally {
       if (original != null && await original.exists()) await original.delete();
     }
   }
 
-  static Future<double?> _remuxVideo(String source, String output) async {
+  static Future<double?> _remuxVideo(
+    String source,
+    String output, {
+    bool hlsInput = false,
+  }) async {
     // Remux public video/HLS into a self-contained, silent MP4. Bound both
     // transfer time and output size; never let optional artwork block audio.
     final success = await _run([
@@ -200,7 +227,11 @@ class MotionArtworkStore {
       '10000000',
       // HLS byte ranges can share one MP4 URL. Reusing/prefetching HTTP
       // connections can splice the next range into an unfinished segment.
-      if (Uri.parse(source).path.toLowerCase().endsWith('.m3u8')) ...[
+      if (hlsInput) ...[
+        // Tokenized URLs retain normal suffixes, but public HLS sources can
+        // use opaque segment paths. Only discovered HTTP resources are served.
+        '-extension_picky',
+        '0',
         '-http_multiple',
         '0',
         '-http_persistent',

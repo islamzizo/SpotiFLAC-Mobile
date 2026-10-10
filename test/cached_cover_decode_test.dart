@@ -4,11 +4,111 @@ import 'dart:ui' as ui;
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:spotiflac_android/utils/image_cache_utils.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final source in [
+    'network cover',
+    'network backdrop',
+    'local backdrop',
+  ]) {
+    testWidgets('metadata $source prewarm reuses the display bitmap', (
+      tester,
+    ) async {
+      final cache = PaintingBinding.instance.imageCache;
+      cache.clear();
+      cache.clearLiveImages();
+      late BuildContext context;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(
+              size: Size(393, 852),
+              devicePixelRatio: 2,
+            ),
+            child: Builder(
+              builder: (value) {
+                context = value;
+                return const SizedBox();
+              },
+            ),
+          ),
+        ),
+      );
+      final network = source != 'local backdrop';
+      final backdrop = source != 'network cover';
+      const url = 'https://example.invalid/metadata-prewarm.png';
+      final ImageProvider provider = network
+          ? cachedCoverImageProvider(url)
+          : FileImage(File('/metadata-prewarm.png'));
+      final width = backdrop
+          ? metadataBackdropCacheExtent(context)
+          : coverCacheWidthForViewport(context);
+      final display = ResizeImage(
+        provider,
+        width: width,
+        height: network ? null : width,
+      );
+      final key = await display.obtainKey(ImageConfiguration.empty);
+      final image = await tester.runAsync(() async {
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawColor(Colors.blue, BlendMode.src);
+        final picture = recorder.endRecording();
+        final image = await picture.toImage(1, 1);
+        picture.dispose();
+        return image;
+      });
+      cache.putIfAbsent(
+        key,
+        () => OneFrameImageStreamCompleter(
+          Future.value(ImageInfo(image: image!)),
+        ),
+      );
+      await tester.pump();
+      try {
+        await tester.runAsync(() async {
+          if (backdrop) {
+            await precacheMetadataBackdrop(
+              context,
+              network ? url : '/metadata-prewarm.png',
+            );
+          } else {
+            precacheCoverImage(context, url);
+            await Future<void>.delayed(Duration.zero);
+          }
+        });
+        expect(cache.statusForKey(key).live, isTrue);
+        expect(cache.pendingImageCount, 0);
+        expect(cache.currentSize, 1);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: network
+                ? CachedCoverImage(
+                    imageUrl: url,
+                    memCacheWidth: width,
+                    memCacheHeight: backdrop ? width : null,
+                  )
+                : Image.file(
+                    File('/metadata-prewarm.png'),
+                    cacheWidth: width,
+                    cacheHeight: width,
+                  ),
+          ),
+        );
+        expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
+        expect(cache.currentSize, 1);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox());
+        cache.clear();
+        cache.clearLiveImages();
+      }
+    });
+  }
+
   for (final explicit in [false, true]) {
     testWidgets(
       'grid decode follows constraints, explicit override=$explicit',
@@ -40,6 +140,93 @@ void main() {
           tester.getSize(find.byType(CachedCoverImage)),
           const Size(180, 180),
         );
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets('explicit height decode keeps one axis even with square bounds', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Center(
+          child: CachedCoverImage(
+            imageUrl: 'https://example.invalid/height-cover.png',
+            width: 56,
+            height: 56,
+            memCacheHeight: 128,
+          ),
+        ),
+      ),
+    );
+    final image = tester.widget<CachedNetworkImage>(
+      find.byType(CachedNetworkImage),
+    );
+    expect(image.memCacheWidth, isNull);
+    expect(image.memCacheHeight, 128);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final override in [false, true]) {
+    testWidgets(
+      'playlist thumbnail preserves network proportions ($override)',
+      (tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: const MediaQueryData(devicePixelRatio: 2),
+              child: Center(
+                child: SizedBox.square(
+                  dimension: 56,
+                  child: LocalOrNetworkCoverImage(
+                    url: 'https://example.invalid/playlist-cover.png',
+                    width: 56,
+                    height: 56,
+                    networkCacheWidth: override ? 112 : null,
+                    placeholder: (_) => const SizedBox(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        final image = tester.widget<CachedNetworkImage>(
+          find.byType(CachedNetworkImage),
+        );
+        expect(image.memCacheWidth, 112);
+        expect(image.memCacheHeight, isNull);
+        expect(image.fit, BoxFit.cover);
+        expect(
+          tester.getSize(find.byType(LocalOrNetworkCoverImage)),
+          const Size(56, 56),
+        );
+        // Exercise the same Flutter decode sizing used by CachedNetworkImage,
+        // with non-square artwork rather than checking only the widget bounds.
+        final directory = await tester.runAsync(() async {
+          final directory = await Directory.systemTemp.createTemp(
+            'playlist-cover-',
+          );
+          await _writeCover(directory, const Size(320, 160));
+          return directory;
+        });
+        try {
+          final decoded = await tester.runAsync(() async {
+            final bytes = await File(
+              '${directory!.path}/cover.png',
+            ).readAsBytes();
+            return _decodedImageSize(
+              ResizeImage.resizeIfNeeded(
+                image.memCacheWidth,
+                image.memCacheHeight,
+                MemoryImage(bytes),
+              ),
+            );
+          });
+          expect(decoded, const Size(112, 56));
+        } finally {
+          await tester.runAsync(() => directory!.delete(recursive: true));
+        }
         await tester.pumpWidget(const SizedBox());
       },
     );

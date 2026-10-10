@@ -1,0 +1,569 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:spotiflac_android/services/network_library_scanner.dart';
+import 'package:spotiflac_android/services/network_storage_service.dart';
+import 'package:spotiflac_android/services/library_cleanup.dart';
+import 'package:spotiflac_android/utils/file_access.dart';
+import 'package:spotiflac_android/utils/logger.dart';
+
+import 'support/network_scan_output.dart';
+
+class _Storage extends NetworkStorageService {
+  _Storage(this.tree, {this.failedFolder});
+  final Map<String, List<NetworkEntry>> tree;
+  final String? failedFolder;
+
+  @override
+  Future<NetworkConnection> connection(String id) async => NetworkConnection(
+    id: id,
+    name: 'NAS',
+    protocol: NetworkProtocol.webdav,
+    address: 'https://nas.test/music/',
+    username: 'private-user',
+    password: 'private-password',
+  );
+
+  @override
+  Future<List<NetworkEntry>> list(
+    NetworkConnection c, [
+    String path = '',
+  ]) async {
+    if (path == failedFolder) throw const SocketException('offline');
+    return tree[path] ?? [];
+  }
+}
+
+void main() {
+  late Directory directory;
+  setUp(
+    () async =>
+        directory = await Directory.systemTemp.createTemp('nas-library-test-'),
+  );
+  tearDown(() async => directory.delete(recursive: true));
+
+  NetworkLibraryScanner scanner(
+    _Storage storage,
+    Future<Map<String, dynamic>> Function(String) reader, {
+    Future<RandomAccessFile> Function(File)? openOutput,
+  }) => NetworkLibraryScanner(
+    storage: storage,
+    readMetadata: reader,
+    supportDirectory: () async => directory,
+    temporaryDirectory: () async => directory,
+    openOutput: openOutput,
+  );
+
+  _Storage tracks(int count) => _Storage({
+    '': List.generate(
+      count,
+      (index) => NetworkEntry('$index.flac', '$index.flac'),
+    ),
+  });
+
+  Future<void> expectNoOutput() async {
+    expect(
+      await Directory('${directory.path}/network_scans').list().toList(),
+      isEmpty,
+    );
+  }
+
+  test(
+    'bounded writes preserve all rows, Unicode, order and progress',
+    () async {
+      late InstrumentedScanOutput output;
+      final progress = <(int, int, String)>[];
+      final scan =
+          await scanner(
+            tracks(1000),
+            (source) async => {
+              'title': 'Title — 音楽 🎵 ${Uri.parse(source).pathSegments.last}',
+              'artist': 'Artist\nTwo',
+              'genre': 'Line\r\nTwo',
+            },
+            openOutput: (file) async => output = InstrumentedScanOutput(
+              await file.open(mode: FileMode.write),
+            ),
+          ).scan(
+            NetworkStorageService.source('nas', ''),
+            checkpoint: () async {},
+            onProgress: (count, errors, name) =>
+                progress.add((count, errors, name)),
+          );
+      final rows = await scan.rows().toList();
+      expect(scan.expectedCount, 1000);
+      expect(scan.errorCount, 0);
+      expect(rows, hasLength(1000));
+      expect(progress, List.generate(1000, (i) => (i + 1, 0, '$i.flac')));
+      for (var index = 0; index < rows.length; index++) {
+        expect(rows[index]['trackName'], 'Title — 音楽 🎵 $index.flac');
+        expect(rows[index]['artistName'], 'Artist\nTwo');
+        expect(rows[index]['genre'], 'Line\r\nTwo');
+      }
+      expect(rows.map((row) => row['id']).toSet(), hasLength(1000));
+      expect(output.physicalWrites, lessThan(100));
+      expect(output.maximumConcurrentWrites, 1);
+      expect(
+        output.writeLengths.every((length) => length <= 64 * 1024),
+        isTrue,
+      );
+      expect(output.rowCounts.every((count) => count <= 64), isTrue);
+    },
+  );
+
+  test('oversized rows are written intact between bounded batches', () async {
+    late InstrumentedScanOutput output;
+    final longTitle = List.filled(70000, '音楽 🎵').join();
+    final scan =
+        await scanner(
+          tracks(3),
+          (source) async => {
+            'title': source.endsWith('1.flac') ? longTitle : 'Small',
+          },
+          openOutput: (file) async => output = InstrumentedScanOutput(
+            await file.open(mode: FileMode.write),
+          ),
+        ).scan(
+          NetworkStorageService.source('nas', ''),
+          checkpoint: () async {},
+          onProgress: (_, _, _) {},
+        );
+    expect((await scan.rows().toList()).map((row) => row['trackName']), [
+      'Small',
+      longTitle,
+      'Small',
+    ]);
+    expect(
+      output.writeLengths.where((length) => length > 64 * 1024),
+      hasLength(1),
+    );
+    expect(output.rowCounts, everyElement(1));
+    expect(output.maximumConcurrentWrites, 1);
+  });
+
+  test(
+    'large metadata reaches the character bound before the row bound',
+    () async {
+      late InstrumentedScanOutput output;
+      final title = List.filled(10000, '音楽').join();
+      final scan =
+          await scanner(
+            tracks(25),
+            (source) async => {'title': title, 'artist': source},
+            openOutput: (file) async => output = InstrumentedScanOutput(
+              await file.open(mode: FileMode.write),
+            ),
+          ).scan(
+            NetworkStorageService.source('nas', ''),
+            checkpoint: () async {},
+            onProgress: (_, _, _) {},
+          );
+      final rows = await scan.rows().toList();
+      expect(rows, hasLength(25));
+      expect(rows.map((row) => row['trackName']), everyElement(title));
+      expect(rows.map((row) => row['artistName']).toSet(), hasLength(25));
+      expect(
+        output.writeLengths.every((length) => length <= 64 * 1024),
+        isTrue,
+      );
+      expect(output.rowCounts.reduce((a, b) => a + b), 25);
+      expect(output.physicalWrites, greaterThan(1));
+      expect(output.maximumConcurrentWrites, 1);
+    },
+  );
+
+  test('unencodable metadata does not discard adjacent valid rows', () async {
+    final cycle = <String, dynamic>{};
+    cycle['cycle'] = cycle;
+    final scan =
+        await scanner(
+          tracks(3),
+          (source) async => {
+            'title': source,
+            'genre': source.endsWith('1.flac') ? cycle : 'Valid',
+          },
+        ).scan(
+          NetworkStorageService.source('nas', ''),
+          checkpoint: () async {},
+          onProgress: (_, _, _) {},
+        );
+    expect(scan.errorCount, 1);
+    expect(scan.expectedCount, 2);
+    expect((await scan.rows().toList()).map((row) => row['filePath']), [
+      NetworkStorageService.source('nas', '0.flac'),
+      NetworkStorageService.source('nas', '2.flac'),
+    ]);
+  });
+
+  test('cancel before a flush drops buffered rows and stops reads', () async {
+    late InstrumentedScanOutput output;
+    var cancelled = false;
+    var reads = 0;
+    await expectLater(
+      scanner(
+        tracks(500),
+        (_) async {
+          reads++;
+          return {'title': 'Track'};
+        },
+        openOutput: (file) async => output = InstrumentedScanOutput(
+          await file.open(mode: FileMode.write),
+        ),
+      ).scan(
+        NetworkStorageService.source('nas', ''),
+        checkpoint: () async {
+          if (cancelled) throw StateError('cancelled');
+        },
+        onProgress: (count, _, _) {
+          if (count == 5) cancelled = true;
+        },
+      ),
+      throwsStateError,
+    );
+    expect(reads, 5);
+    expect(output.physicalWrites, 0);
+    await expectNoOutput();
+  });
+
+  for (final cancelOnClose in [false, true]) {
+    test(
+      'cancel during final ${cancelOnClose ? 'close' : 'write'} aborts',
+      () async {
+        var cancelled = false;
+        await expectLater(
+          scanner(
+            tracks(3),
+            (_) async => {'title': 'Track'},
+            openOutput: (file) async => InstrumentedScanOutput(
+              await file.open(mode: FileMode.write),
+              afterWrite: cancelOnClose ? null : () => cancelled = true,
+              afterClose: cancelOnClose ? () => cancelled = true : null,
+            ),
+          ).scan(
+            NetworkStorageService.source('nas', ''),
+            checkpoint: () async {
+              if (cancelled) throw StateError('cancelled');
+            },
+            onProgress: (_, _, _) {},
+          ),
+          throwsStateError,
+        );
+        expect(cancelled, isTrue);
+        await expectNoOutput();
+      },
+    );
+  }
+
+  for (final failClose in [false, true]) {
+    test(
+      'partial write failure aborts even with close failure: $failClose',
+      () async {
+        final failure = FileSystemException('disk full');
+        var reads = 0;
+        final errors = <int>[];
+        await expectLater(
+          scanner(
+            tracks(500),
+            (_) async {
+              reads++;
+              return {'title': 'Track'};
+            },
+            openOutput: (file) async => InstrumentedScanOutput(
+              await file.open(mode: FileMode.write),
+              writeError: failure,
+              closeError: failClose ? StateError('close failed') : null,
+            ),
+          ).scan(
+            NetworkStorageService.source('nas', ''),
+            checkpoint: () async {},
+            onProgress: (_, errorCount, _) => errors.add(errorCount),
+          ),
+          throwsA(same(failure)),
+        );
+        expect(reads, lessThan(500));
+        expect(errors, isNotEmpty);
+        expect(errors, everyElement(0));
+        await expectNoOutput();
+      },
+    );
+  }
+
+  test(
+    'close failure removes completed output without returning success',
+    () async {
+      final failure = StateError('close failed');
+      await expectLater(
+        scanner(
+          tracks(3),
+          (_) async => {'title': 'Track'},
+          openOutput: (file) async => InstrumentedScanOutput(
+            await file.open(mode: FileMode.write),
+            closeError: failure,
+          ),
+        ).scan(
+          NetworkStorageService.source('nas', ''),
+          checkpoint: () async {},
+          onProgress: (_, _, _) {},
+        ),
+        throwsA(same(failure)),
+      );
+      await expectNoOutput();
+    },
+  );
+
+  test('failed output open cleans up any partially created file', () async {
+    final failure = FileSystemException('open failed');
+    await expectLater(
+      scanner(
+        tracks(1),
+        (_) async => {},
+        openOutput: (file) async {
+          await file.writeAsString('partial');
+          throw failure;
+        },
+      ).scan(
+        NetworkStorageService.source('nas', ''),
+        checkpoint: () async {},
+        onProgress: (_, _, _) {},
+      ),
+      throwsA(same(failure)),
+    );
+    await expectNoOutput();
+  });
+
+  test('empty folder produces a valid empty scan without writes', () async {
+    late InstrumentedScanOutput output;
+    final scan =
+        await scanner(
+          tracks(0),
+          (_) async => throw StateError('unexpected read'),
+          openOutput: (file) async => output = InstrumentedScanOutput(
+            await file.open(mode: FileMode.write),
+          ),
+        ).scan(
+          NetworkStorageService.source('nas', ''),
+          checkpoint: () async {},
+          onProgress: (_, _, _) => fail('unexpected progress'),
+        );
+    expect(scan.expectedCount, 0);
+    expect(scan.errorCount, 0);
+    expect(await scan.rows().toList(), isEmpty);
+    expect(output.physicalWrites, 0);
+  });
+
+  test(
+    'identical artwork shares storage until the last reference is gone',
+    () async {
+      final shared = await File(
+        '${directory.path}/shared.jpg',
+      ).writeAsBytes([1, 2]);
+      final different = await File(
+        '${directory.path}/different.jpg',
+      ).writeAsBytes([3]);
+      final scan =
+          await scanner(
+            _Storage({
+              '': [
+                const NetworkEntry('one.flac', 'one.flac'),
+                const NetworkEntry('two.flac', 'two.flac'),
+                const NetworkEntry('three.flac', 'three.flac'),
+              ],
+            }),
+            (source) async => {
+              'title': 'Track',
+              'cover_path': source.endsWith('three.flac')
+                  ? different.path
+                  : shared.path,
+            },
+          ).scan(
+            NetworkStorageService.source('nas', ''),
+            checkpoint: () async {},
+            onProgress: (_, _, _) {},
+          );
+      final rows = await scan.rows().toList();
+      expect(rows[0]['id'], isNot(rows[1]['id']));
+      expect(rows[0]['coverPath'], rows[1]['coverPath']);
+      expect(rows[0]['coverPath'], isNot(rows[2]['coverPath']));
+      final covers = Directory('${directory.path}/library_covers');
+      expect(await covers.list().length, 2);
+      // Removing one track retains its sibling's shared cover.
+      expect(
+        await pruneUnreferencedLibraryCovers(covers, {
+          for (final row in rows.skip(1)) row['coverPath'] as String,
+        }),
+        0,
+      );
+      expect(
+        await pruneUnreferencedLibraryCovers(covers, {
+          rows[2]['coverPath'] as String,
+        }),
+        1,
+      );
+      expect(await File(rows[2]['coverPath'] as String).readAsBytes(), [3]);
+    },
+  );
+
+  test(
+    'subfolders keep original metadata, stable identities and persistent artwork',
+    () async {
+      final cover = await File(
+        '${directory.path}/transient.jpg',
+      ).writeAsBytes([1, 2, 3]);
+      final storage = _Storage({
+        'albums/': [const NetworkEntry('albums/One/', 'One', directory: true)],
+        'albums/One/': [
+          const NetworkEntry(
+            'albums/One/Title - Artist #1.flac',
+            'Title - Artist #1.flac',
+          ),
+          const NetworkEntry(
+            'albums/One/Title - Artist #1.flac',
+            'Title - Artist #1.flac',
+          ),
+          const NetworkEntry('albums/', 'Parent', directory: true),
+        ],
+      });
+      var reads = 0;
+      final progress = <int>[];
+      final scan =
+          await scanner(storage, (source) async {
+            reads++;
+            expect(
+              Uri.parse(source).pathSegments.last,
+              'Title - Artist #1.flac',
+            );
+            return {
+              'title': 'Original Title',
+              'artist': 'Original Artist',
+              'album': 'Original Album',
+              'audio_codec': 'flac',
+              'bit_depth': 24,
+              'sample_rate': 96000,
+              'lyrics': '[00:01.00]Words',
+              'replaygain_track_gain': '-4 dB',
+              'cover_path': cover.path,
+            };
+          }).scan(
+            NetworkStorageService.source('nas', 'albums/'),
+            checkpoint: () async {},
+            onProgress: (count, errors, name) => progress.add(count),
+          );
+      final rows = await scan.rows().toList();
+      expect(reads, 1);
+      expect(progress, [1]);
+      expect(scan.errorCount, 0);
+      expect(rows.single['albumName'], 'Original Album');
+      expect(rows.single['trackName'], 'Original Title');
+      expect(rows.single['artistName'], 'Original Artist');
+      expect(rows.single['hasLyrics'], true);
+      expect(rows.single['replaygain_track_gain'], '-4 dB');
+      expect(rows.single['sampleRate'], 96000);
+      expect(rows.toString(), isNot(contains('private-password')));
+      expect(rows.toString(), isNot(contains('127.0.0.1')));
+      await cover.delete();
+      expect(await File(rows.single['coverPath'] as String).readAsBytes(), [
+        1,
+        2,
+        3,
+      ]);
+      await scan.delete();
+      expect(await scan.file.exists(), false);
+    },
+  );
+
+  test(
+    'failed folders and tags report partial results instead of deleting old rows',
+    () async {
+      LogBuffer().clear();
+      final storage = _Storage({
+        '': [
+          const NetworkEntry('offline/', 'Offline', directory: true),
+          const NetworkEntry('ok.flac', 'ok.flac'),
+          const NetworkEntry('bad.flac', 'bad.flac'),
+        ],
+      }, failedFolder: 'offline/');
+      final scan =
+          await scanner(storage, (source) async {
+            if (source.endsWith('bad.flac')) {
+              return {'metadataFromFilename': true};
+            }
+            return {'title': 'Valid', 'album': 'Album'};
+          }).scan(
+            NetworkStorageService.source('nas', ''),
+            checkpoint: () async {},
+            onProgress: (_, _, _) {},
+          );
+      expect(scan.errorCount, 2);
+      expect(scan.expectedCount, 1);
+      expect((await scan.rows().toList()).single['trackName'], 'Valid');
+      final errors = LogBuffer().entries.where(
+        (entry) => entry.level == 'ERROR',
+      );
+      expect(errors, hasLength(2));
+      expect(errors.any((entry) => entry.message.contains('bad.flac')), isTrue);
+      expect(errors.any((entry) => entry.message.contains('offline/')), isTrue);
+      expect(errors.first.error, contains('Network tags unavailable'));
+    },
+  );
+
+  test(
+    'root connection failure never produces an empty successful scan',
+    () async {
+      await expectLater(
+        scanner(_Storage({}, failedFolder: ''), (_) async => {}).scan(
+          NetworkStorageService.source('nas', ''),
+          checkpoint: () async {},
+          onProgress: (_, _, _) {},
+        ),
+        throwsA(isA<SocketException>()),
+      );
+      expect(await directory.list().toList(), isEmpty);
+    },
+  );
+
+  test(
+    'cancellation removes incomplete output and stops further tag reads',
+    () async {
+      var cancelled = false;
+      var reads = 0;
+      await expectLater(
+        scanner(
+          _Storage({
+            '': [
+              const NetworkEntry('one.flac', 'one.flac'),
+              const NetworkEntry('two.flac', 'two.flac'),
+            ],
+          }),
+          (_) async {
+            reads++;
+            cancelled = true;
+            return {'title': 'One'};
+          },
+        ).scan(
+          NetworkStorageService.source('nas', ''),
+          checkpoint: () async {
+            if (cancelled) throw StateError('cancelled');
+          },
+          onProgress: (_, _, _) {},
+        ),
+        throwsStateError,
+      );
+      expect(reads, 1);
+      expect(
+        await Directory('${directory.path}/network_scans').list().toList(),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'local file checks never delete or classify NAS files as missing',
+    () async {
+      final path = NetworkStorageService.source('offline', 'Song.flac');
+      expect(await fileExists(path), true);
+      expect(await fileStat(path), isNotNull);
+      expect((await fileExistenceByPath([path]))[path], isNull);
+      expect(await deleteFile(path), false);
+    },
+  );
+}

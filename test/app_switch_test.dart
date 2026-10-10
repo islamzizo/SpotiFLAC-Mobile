@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_switch.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
@@ -52,7 +51,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byType(LiquidGlassSwitch));
+    await tester.tap(find.byType(AppSwitch));
     await tester.pumpAndSettle(const Duration(milliseconds: 16));
     expect(changes, [true]);
 
@@ -79,7 +78,7 @@ void main() {
     );
     final node = tester.getSemantics(find.bySemanticsLabel('Disabled setting'));
     expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isFalse);
-    expect(find.byType(LiquidGlassSwitch), findsNothing);
+    expect(find.byType(BackdropFilter), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -115,7 +114,7 @@ void main() {
                 );
         },
       );
-      expect(find.byType(LiquidGlassSwitch), findsNothing);
+      expect(find.byType(BackdropFilter), findsNothing);
       await tester.tap(find.text('Example setting'));
       await tester.pumpAndSettle();
       expect(changes, [true]);

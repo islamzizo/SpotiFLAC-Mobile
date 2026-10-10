@@ -11,6 +11,7 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
   }) {
     Widget buildMenu(BuildContext sheetContext) {
       final l10n = sheetContext.l10n;
+      final canEditFile = _fileExists && !_isNetworkItem;
 
       final options = <_MetadataOption>[
         if (_fileExists)
@@ -29,15 +30,26 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
           _MetadataOption(
             icon: Icons.album_outlined,
             label: l10n.homeGoToAlbum,
-            onTap: () => _goToStoredAlbum(screenContext),
+            onTap: () => navigateToAlbum(
+              screenContext,
+              albumName: albumName,
+              artistName: albumArtist ?? artistName,
+              coverUrl: _coverUrl,
+            ),
           ),
+        _MetadataOption(
+          icon: Icons.person_outline,
+          label: l10n.mornyeGoToArtist,
+          onTap: () =>
+              navigateToArtistCredits(screenContext, artistNames: artistName),
+        ),
         _MetadataOption(
           icon: Icons.copy_outlined,
           label: l10n.trackCopyFilePath,
           dividerAbove: _fileExists,
           onTap: () => _copyToClipboard(screenContext, cleanFilePath),
         ),
-        if (_fileExists)
+        if (canEditFile)
           _MetadataOption(
             icon: Icons.edit_outlined,
             label: l10n.trackEditMetadata,
@@ -56,31 +68,31 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
             label: l10n.trackSaveLyrics,
             onTap: _saveLyrics,
           ),
-        if (_fileExists)
+        if (canEditFile)
           _MetadataOption(
             icon: Icons.travel_explore,
             label: l10n.trackReEnrich,
             onTap: _reEnrichMetadata,
           ),
-        if (_fileExists && _isConvertibleFormat)
+        if (canEditFile && _isConvertibleFormat)
           _MetadataOption(
             icon: Icons.swap_horiz,
             label: l10n.trackConvertFormat,
             onTap: () => _showConvertSheet(screenContext),
           ),
-        if (_fileExists && !_isCueFile)
+        if (canEditFile && !_isCueFile)
           _MetadataOption(
             icon: Icons.graphic_eq,
             label: l10n.trackReplayGain,
             onTap: () => _updateReplayGain(),
           ),
-        if (_fileExists && !_isCueFile)
+        if (canEditFile && !_isCueFile)
           _MetadataOption(
             icon: Icons.remove_circle_outline,
             label: l10n.trackRemoveReplayGain,
             onTap: () => _removeReplayGain(),
           ),
-        if (_fileExists && _isCueFile)
+        if (canEditFile && _isCueFile)
           _MetadataOption(
             icon: Icons.call_split,
             label: l10n.cueSplitTitle,
@@ -97,25 +109,26 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
               isrc: isrc ?? '',
             ),
           ),
-        _MetadataOption(
-          icon: Icons.share_outlined,
-          label: l10n.trackMetadataShare,
-          dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
-          onTap: () => _shareFile(screenContext),
-        ),
-        _MetadataOption(
-          icon: Icons.delete_outline,
-          label: l10n.trackRemoveFromDevice,
-          destructive: true,
-          onTap: () => _confirmDelete(screenContext, ref, colorScheme),
-        ),
+        if (!_isNetworkItem)
+          _MetadataOption(
+            icon: Icons.share_outlined,
+            label: l10n.trackMetadataShare,
+            dividerAbove: _spotifyId == null && !(isrc?.isNotEmpty ?? false),
+            onTap: () => _shareFile(screenContext),
+          ),
+        if (!_isNetworkItem)
+          _MetadataOption(
+            icon: Icons.delete_outline,
+            label: l10n.trackRemoveFromDevice,
+            destructive: true,
+            onTap: () => _confirmDelete(screenContext, ref, colorScheme),
+          ),
       ];
 
       if (sheetContext.isMornye) {
         final groups = <List<MornyeMenuAction>>[];
         for (final option in options) {
-          if (option.icon == Icons.share_outlined ||
-              option.icon == Icons.edit_outlined) {
+          if (option.icon == Icons.share_outlined) {
             continue;
           }
           if (groups.isEmpty || option.dividerAbove || option.destructive) {
@@ -142,23 +155,16 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
                   () => _openFile(screenContext, rawFilePath),
                 ),
               ),
+            ],
+            if (!_isNetworkItem)
               MornyeMenuAction(
-                icon: CupertinoIcons.pencil,
-                label: l10n.trackEditMetadata,
+                icon: CupertinoIcons.share_solid,
+                label: l10n.trackMetadataShare,
                 onPressed: () => _closeOptionsMenuAndRun(
                   sheetContext,
-                  () => _showEditMetadataSheet(screenContext, ref, colorScheme),
+                  () => _shareFile(screenContext),
                 ),
               ),
-            ],
-            MornyeMenuAction(
-              icon: CupertinoIcons.share_solid,
-              label: l10n.trackMetadataShare,
-              onPressed: () => _closeOptionsMenuAndRun(
-                sheetContext,
-                () => _shareFile(screenContext),
-              ),
-            ),
           ],
           groups: groups,
         );
@@ -302,56 +308,5 @@ extension _TrackMetadataMenu on _TrackMetadataScreenState {
     }
 
     return placeholder();
-  }
-
-  Future<void> _goToStoredAlbum(BuildContext screenContext) async {
-    final resolvedAlbumArtist = (albumArtist ?? '').trim();
-    final artist = resolvedAlbumArtist.isNotEmpty
-        ? resolvedAlbumArtist
-        : artistName;
-
-    if (!_isLocalItem) {
-      pushViaPreferredNavigator(
-        screenContext,
-        (_) => DownloadedAlbumScreen(
-          albumName: albumName,
-          artistName: artist,
-          coverUrl: _coverUrl,
-        ),
-      );
-      return;
-    }
-
-    try {
-      final rows = await LibraryDatabase.instance.getQueueLocalAlbumTracksByKey(
-        _localLibraryItem!.albumKey,
-      );
-      if (!mounted || !screenContext.mounted) return;
-      final tracks = rows
-          .map(LocalLibraryItem.fromJson)
-          .toList(growable: false);
-      if (tracks.isNotEmpty) {
-        pushViaPreferredNavigator(
-          screenContext,
-          (_) => LocalAlbumScreen(
-            albumName: albumName,
-            artistName: artist,
-            coverPath: _localCoverPath,
-            tracks: tracks,
-          ),
-        );
-        return;
-      }
-    } catch (e) {
-      _log.w('Failed to resolve local album: $e');
-    }
-
-    if (!mounted || !screenContext.mounted) return;
-    await navigateToAlbum(
-      screenContext,
-      albumName: albumName,
-      artistName: artist,
-      coverUrl: _coverUrl,
-    );
   }
 }

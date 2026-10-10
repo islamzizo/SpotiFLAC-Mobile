@@ -44,4 +44,10 @@ impl ExtensionEnvironment {
         self.isrc.invalidate(directory);
         Ok(())
     }
+
+    pub(crate) fn clear_isrc_cache(&self) -> Result<(), EnvironmentError> {
+        let _operation = self.enter()?;
+        self.isrc.clear();
+        Ok(())
+    }
 }

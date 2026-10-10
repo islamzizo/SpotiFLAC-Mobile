@@ -8,6 +8,7 @@ import 'package:spotiflac_android/widgets/mornye_player_slider.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:volume_controller/volume_controller.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
+import 'package:spotiflac_android/services/system_volume_service.dart';
 
 final usbVolumeProvider = StreamProvider.autoDispose<UsbVolumeState?>((ref) {
   final events = StreamController<UsbVolumeState?>();
@@ -23,20 +24,9 @@ final usbVolumeProvider = StreamProvider.autoDispose<UsbVolumeState?>((ref) {
 
 /// A single shared subscription for the visible player, including hardware
 /// volume-button changes. This controls system volume, not ReplayGain gain.
-final systemVolumeProvider = StreamProvider.autoDispose<double>((ref) {
-  final events = StreamController<double>();
-  final volume = VolumeController.instance;
-  final subscription = volume.addListener(events.add);
-  subscription.onError((Object error, StackTrace stack) {
-    events.addError(error, stack);
-  });
-  ref.onDispose(() {
-    unawaited(subscription.cancel());
-    volume.removeListener();
-    unawaited(events.close());
-  });
-  return events.stream;
-});
+final systemVolumeProvider = StreamProvider.autoDispose<double>(
+  (ref) => SystemVolumeService.instance.changes,
+);
 
 final systemVolumeWriterProvider = Provider<Future<void> Function(double)>((
   ref,

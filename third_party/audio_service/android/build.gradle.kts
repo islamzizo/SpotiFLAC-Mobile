@@ -73,4 +73,5 @@ android {
 dependencies {
     implementation("androidx.media:media:1.8.0")
     implementation("androidx.core:core:1.19.1")
+    testImplementation("junit:junit:4.13.2")
 }

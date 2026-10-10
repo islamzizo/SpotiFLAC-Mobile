@@ -13,10 +13,8 @@ extension _SingleItemDownload on DownloadQueueNotifier {
     try {
       final settings = ref.read(settingsProvider);
       final extensionState = ref.read(extensionProvider);
-      final resolvedAlbumArtist = _resolveAlbumArtistForMetadata(
-        track,
-        settings,
-      );
+      final resolvedAlbumArtist =
+          DownloadMetadataResolver.albumArtistForMetadata(track, settings);
 
       if (!settings.useExtensionProviders) return null;
 
@@ -85,7 +83,7 @@ class _DownloadRun {
   bool pausedDuringThisRun = false;
 
   late AppSettings settings;
-  late bool metadataEmbeddingEnabled;
+  bool get metadataEmbeddingEnabled => settings.embedMetadata;
   late Track trackToDownload;
   String? resolvedAlbumArtist;
   late String quality;
@@ -110,7 +108,7 @@ class _DownloadRun {
   String? label;
   String? copyright;
 
-  late Map<String, dynamic> result;
+  late DownloadResult result;
 
   // Success-path state shared between finalization stages.
   String? filePath;
@@ -118,7 +116,6 @@ class _DownloadRun {
   String actualQuality = '';
   String? resultOutputExt;
   bool shouldPreserveNativeM4a = false;
-  DownloadDecryptionDescriptor? decryptionDescriptor;
 
   /// Filled by the SAF embed op from the local temp so the final quality
   /// probe doesn't have to copy the published file back out of SAF.
@@ -126,6 +123,8 @@ class _DownloadRun {
   bool externalLrcWritten = false;
   final Map<String, String> _directoryScopes = {};
   bool fakeHiResChecked = false;
+  bool get isNetworkDownload => item.networkDownloadFolder.isNotEmpty;
+  String networkRelativeDir = '';
   String? fakeHiResOriginalPath;
 
   Future<void> _run() async {
@@ -144,7 +143,7 @@ class _DownloadRun {
       n._saveQueueToStorage();
     }
 
-    if (!n._hasActiveDownloadProvider(item.service)) {
+    if (!isNetworkDownload && !n._hasActiveDownloadProvider(item.service)) {
       n.updateItemStatus(
         item.id,
         DownloadStatus.failed,
@@ -175,8 +174,28 @@ class _DownloadRun {
 
     try {
       settings = n.ref.read(settingsProvider);
-      metadataEmbeddingEnabled = settings.embedMetadata;
       trackToDownload = item.track;
+
+      if (isNetworkDownload) {
+        final prepared = await NetworkDownloadStaging.instance.read(item.id);
+        if (prepared != null) {
+          trackToDownload = Track.fromJson(
+            Map<String, dynamic>.from(prepared['track'] as Map),
+          );
+          result = DownloadResult.fromMap(
+            Map<String, dynamic>.from(prepared['result'] as Map),
+          );
+          filePath = prepared['localPath'] as String;
+          actualQuality = prepared['quality'] as String;
+          externalLrcWritten = prepared['externalLrcWritten'] == true;
+          networkRelativeDir = prepared['relativeDir'] as String;
+          await _persistCompletionAndNotify();
+          return;
+        }
+        if (!n._hasActiveDownloadProvider(item.service)) {
+          throw StateError('Download provider is no longer available');
+        }
+      }
 
       if (!await _enrichDeezerTrackIfNeeded()) return;
 
@@ -186,7 +205,7 @@ class _DownloadRun {
       );
       if (await _shouldAbort('during album metadata lookup')) return;
 
-      resolvedAlbumArtist = n._resolveAlbumArtistForMetadata(
+      resolvedAlbumArtist = DownloadMetadataResolver.albumArtistForMetadata(
         trackToDownload,
         settings,
       );
@@ -199,13 +218,13 @@ class _DownloadRun {
       // with the download instead of delaying its start; it is awaited right
       // after the download returns.
       final extendedMetadataFuture = shouldSkipMetadataEnrichment
-          ? Future<_DeezerExtendedMetadataFields?>.value(null)
-          : n._loadExtendedMetadataForDeezerId(deezerTrackId).catchError((
-              Object e,
-            ) {
-              _log.w('Extended metadata lookup failed: $e');
-              return null;
-            });
+          ? Future<DownloadExtendedMetadata?>.value(null)
+          : n._metadataResolver
+                .loadExtendedMetadataForDeezerId(deezerTrackId)
+                .catchError((Object e) {
+                  _log.w('Extended metadata lookup failed: $e');
+                  return null;
+                });
 
       if (await _shouldAbort('before native download start')) {
         return;
@@ -214,10 +233,10 @@ class _DownloadRun {
       if (!await _downloadAndMaybeFallback()) return;
 
       _log.d(
-        'Native download result: success=${result['success'] == true}, '
-        'service=${result['service'] ?? item.service}, '
+        'Native download result: success=${result.success}, '
+        'service=${result.service ?? item.service}, '
         'errorType=${result['error_type'] ?? 'none'}, '
-        'filePresent=${(result['file_path'] as String?)?.isNotEmpty == true}',
+        'filePresent=${result.filePath?.isNotEmpty == true}',
       );
 
       final extendedMetadata = await extendedMetadataFuture;
@@ -227,9 +246,8 @@ class _DownloadRun {
         copyright = extendedMetadata.copyright;
       }
 
-      final resultFilePath = result['file_path'] as String?;
-      final resultFileToCleanup =
-          (resultFilePath != null && result['success'] == true)
+      final resultFilePath = result.filePath;
+      final resultFileToCleanup = (resultFilePath != null && result.success)
           ? resultFilePath
           : null;
       if (await _shouldAbort(
@@ -239,11 +257,10 @@ class _DownloadRun {
         return;
       }
 
-      if (result['success'] == true) {
-        if (effectiveSafMode && result['saf_relative_dir'] is String) {
-          effectiveOutputDir = n._sanitizeSafRelativeDir(
-            result['saf_relative_dir'] as String,
-          );
+      if (result.success) {
+        final resolvedDirectory = result.resolvedSafDirectory;
+        if (effectiveSafMode && resolvedDirectory != null) {
+          effectiveOutputDir = n._sanitizeSafRelativeDir(resolvedDirectory);
           _log.d('Resolved output dir: $effectiveOutputDir');
         }
         if (!await _handleDownloadSuccess()) return;
@@ -258,6 +275,13 @@ class _DownloadRun {
     } catch (e, stackTrace) {
       await _handleRunException(e, stackTrace);
     } finally {
+      if (isNetworkDownload && n._findItemById(item.id) == null) {
+        try {
+          await NetworkDownloadStaging.instance.discard(item.id);
+        } catch (e) {
+          _log.w('Could not remove dismissed network staging: $e');
+        }
+      }
       for (final token in _directoryScopes.values) {
         try {
           await PlatformBridge.releaseDownloadDirectory(token);
@@ -300,15 +324,17 @@ class _DownloadRun {
   }
 
   Future<bool> _enrichDeezerTrackIfNeeded() async {
-    trackToDownload = await n._prepareDownloadSourceTrack(trackToDownload);
+    trackToDownload = await n._metadataResolver.prepareSourceTrack(
+      trackToDownload,
+    );
     return !await _shouldAbort('during metadata enrichment');
   }
 
   Future<void> _resolveOutputTarget() async {
     quality = item.qualityOverride ?? n.state.audioQuality;
     if (quality == 'DEFAULT') quality = n.state.audioQuality;
-    final isSafMode = n._isSafMode(settings);
-    final relativeOutputDir = isSafMode
+    final isSafMode = !isNetworkDownload && n._isSafMode(settings);
+    final relativeOutputDir = isSafMode || isNetworkDownload
         ? n._buildRelativeOutputDir(
             trackToDownload,
             settings.folderOrganization,
@@ -322,7 +348,10 @@ class _DownloadRun {
             playlistName: item.playlistName,
           )
         : '';
-    final initialOutputDir = isSafMode
+    networkRelativeDir = relativeOutputDir;
+    final initialOutputDir = isNetworkDownload
+        ? (await NetworkDownloadStaging.instance.workDirectory(item.id)).path
+        : isSafMode
         ? relativeOutputDir
         : await n._buildOutputDir(
             trackToDownload,
@@ -385,22 +414,25 @@ class _DownloadRun {
               e.hasMetadataProvider &&
               e.id.toLowerCase() == trackSource,
         );
-    shouldSkipMetadataEnrichment = n._shouldSkipMetadataEnrichment(
-      extensionState,
-      trackToDownload.source,
-      item.service,
-    );
+    shouldSkipMetadataEnrichment =
+        DownloadMetadataResolver.shouldSkipMetadataEnrichment(
+          extensionState,
+          trackToDownload.source,
+          item.service,
+        );
     final hasActiveExtensions = extensionState.extensions.any((e) => e.enabled);
     useExtensions = settings.useExtensionProviders && hasActiveExtensions;
   }
 
   Future<bool> _resolveTrackIdentifiers() async {
     if (shouldSkipMetadataEnrichment) {
-      deezerTrackId = n._extractKnownDeezerTrackId(trackToDownload);
+      deezerTrackId = DownloadMetadataResolver.knownDeezerTrackId(
+        trackToDownload,
+      );
       _log.d('Skipping cross-provider metadata enrichment for ${item.service}');
       return true;
     }
-    deezerTrackId = await n._resolveDeezerIdFromKnownOrIsrc(
+    deezerTrackId = await n._metadataResolver.resolveDeezerIdFromKnownOrIsrc(
       trackToDownload,
       item.id,
       lookupContext: 'ISRC',
@@ -411,11 +443,13 @@ class _DownloadRun {
 
     // For tidal:/qobuz: tracks without ISRC, resolve ISRC from provider
     // API directly (faster than SongLink and avoids rate limits).
-    final providerResolved = await n._resolveDeezerIdViaProviderIfNeeded(
-      trackToDownload,
-      deezerTrackId,
-      item.id,
-    );
+    final providerResolved = await n._metadataResolver
+        .resolveDeezerIdViaProviderIfNeeded(
+          trackToDownload,
+          deezerTrackId,
+          item.id,
+          extensionState: extensionState,
+        );
     trackToDownload = providerResolved.track;
     deezerTrackId = providerResolved.deezerTrackId;
     if (await _shouldAbort('during provider ISRC resolution')) {
@@ -430,9 +464,8 @@ class _DownloadRun {
         !trackToDownload.id.startsWith('extension:') &&
         !trackToDownload.id.startsWith('tidal:') &&
         !trackToDownload.id.startsWith('qobuz:')) {
-      final spotifyLookup = await n._resolveSpotifyTrackViaDeezer(
-        trackToDownload,
-      );
+      final spotifyLookup = await n._metadataResolver
+          .resolveSpotifyTrackViaDeezer(trackToDownload);
       trackToDownload = spotifyLookup.track;
       deezerTrackId ??= spotifyLookup.deezerTrackId;
 
@@ -451,7 +484,7 @@ class _DownloadRun {
     return true;
   }
 
-  Future<Map<String, dynamic>> _invokeDownload({
+  Future<DownloadResult> _invokeDownload({
     required bool useSaf,
     required String outputDir,
   }) async {
@@ -500,10 +533,12 @@ class _DownloadRun {
       qualityVariantCollisionOnly: qualityVariantCollisionOnly,
     );
 
-    return PlatformBridge.downloadByStrategy(
-      payload: payload,
-      useExtensions: shouldUseExtensions,
-      useFallback: shouldUseFallback,
+    return DownloadResult.fromMap(
+      await PlatformBridge.downloadByStrategy(
+        payload: payload,
+        useExtensions: shouldUseExtensions,
+        useFallback: shouldUseFallback,
+      ),
     );
   }
 
@@ -513,7 +548,8 @@ class _DownloadRun {
       outputDir: effectiveOutputDir,
     );
 
-    if (result['success'] != true &&
+    if (!isNetworkDownload &&
+        !result.success &&
         isStorageWriteFailure(
           errorType: result['error_type']?.toString(),
           errorMessage: (result['error'] ?? result['message'])?.toString(),
@@ -527,12 +563,12 @@ class _DownloadRun {
         _log.w(
           'SAF write failed; preserving the selected destination for reauthorization',
         );
-        result = {
+        result = DownloadResult.fromMap({
           ...result,
           'success': false,
           'error': safPermissionLostErrorMessage,
           'error_type': 'permission',
-        };
+        });
         return true;
       }
       _log.w('Storage write failed, retrying with a writable app folder');
@@ -560,7 +596,7 @@ class _DownloadRun {
           outputDir: fallbackDir,
         );
         result = fallbackResult;
-        if (fallbackResult['success'] == true) {
+        if (fallbackResult.success) {
           effectiveSafMode = false;
           effectiveOutputDir = fallbackDir;
           finalSafFileName = null;
@@ -582,19 +618,19 @@ class _DownloadRun {
       stageWatch.reset();
     }
 
-    filePath = result['file_path'] as String?;
-    final reportedFileName = result['file_name'] as String?;
+    filePath = result.filePath;
+    final reportedFileName = result.fileName;
     if (effectiveSafMode &&
         reportedFileName != null &&
         reportedFileName.isNotEmpty) {
       finalSafFileName = reportedFileName;
     }
 
-    wasExisting = result['already_exists'] == true;
+    wasExisting = result.alreadyExists;
     _log.i('Download completed (existing=$wasExisting)');
 
-    final actualBitDepth = result['actual_bit_depth'] as int?;
-    final actualSampleRate = result['actual_sample_rate'] as int?;
+    final actualBitDepth = result.actualBitDepth;
+    final actualSampleRate = result.actualSampleRate;
     actualQuality = quality;
 
     if (actualBitDepth != null && actualBitDepth > 0) {
@@ -608,19 +644,14 @@ class _DownloadRun {
     }
 
     final actualService =
-        ((result['service'] as String?)?.toLowerCase()) ??
-        item.service.toLowerCase();
-    resultOutputExt = n._downloadResultOutputExt(result, filePath: filePath);
-    final resultAudioFormat = normalizeAudioFormatValue(
-      result['audio_codec']?.toString() ??
-          result['actual_audio_codec']?.toString(),
-    );
+        result.service?.toLowerCase() ?? item.service.toLowerCase();
+    resultOutputExt = result.outputExtension(path: filePath);
+    final resultAudioFormat = normalizeAudioFormatValue(result.audioCodec);
     final resultIsKnownLossyAudio =
         isLossyAudioFormat(resultAudioFormat) &&
         !isInconclusiveAudioCodec(resultAudioFormat);
     final requiresContainerConversion =
-        result['requires_container_conversion'] == true ||
-        result['requiresContainerConversion'] == true ||
+        result.requiresContainerConversion ||
         (!resultIsKnownLossyAudio &&
             n._shouldRequestContainerConversion(actualService, safOutputExt));
     final preferredOutputExt = n._extensionPreferredOutputExt(actualService);
@@ -632,9 +663,6 @@ class _DownloadRun {
             preferredOutputExt == '.mp4' ||
             n._extensionPreservesNativeOutputExt(actualService, '.m4a') ||
             n._extensionPreservesNativeOutputExt(actualService, '.mp4'));
-    decryptionDescriptor = DownloadDecryptionDescriptor.fromDownloadResult(
-      result,
-    );
     final requestTrack = trackToDownload;
     trackToDownload = buildTrackForMetadataEmbedding(
       trackToDownload,
@@ -682,7 +710,7 @@ class _DownloadRun {
 
     final deferredSafPublish =
         effectiveSafMode &&
-        result['saf_deferred_publish'] == true &&
+        result.deferredSafPublish &&
         filePath != null &&
         !isContentUri(filePath!);
     if (!deferredSafPublish) {
@@ -706,7 +734,7 @@ class _DownloadRun {
           await deleteFile(hookInput);
         }
         filePath = postProcessedPath;
-        result['file_path'] = postProcessedPath;
+        result.filePath = postProcessedPath;
       }
       if (await _shouldAbort(
         'during post-processing',
@@ -725,7 +753,7 @@ class _DownloadRun {
       final outcome = await n._autoConvertDownloadedFile(
         itemId: item.id,
         filePath: autoConvertInput,
-        fileName: finalSafFileName ?? result['file_name'] as String?,
+        fileName: finalSafFileName ?? result.fileName,
         currentQuality: actualQuality,
         settings: settings,
         track: trackToDownload,
@@ -821,23 +849,30 @@ class _DownloadRun {
 
     final rgPath = filePath;
     stageCompleted('external lyrics');
+    if (wasExisting &&
+        rgPath != null &&
+        !isNetworkDownload &&
+        settings.embedReplayGain) {
+      // A retry after history persistence failed may reuse the finished file.
+      // retryItem purges the old scan, and normal metadata embedding is skipped
+      // for existing files, so recover the measurement for this attempt.
+      try {
+        final scan = await ReplayGainService.scanAndApplyToFile(rgPath);
+        if (scan != null) {
+          n._storeTrackReplayGainForAlbum(trackToDownload, rgPath, scan);
+        }
+      } catch (e) {
+        _log.w('Could not recover ReplayGain for existing download: $e');
+      }
+    }
     // Album ReplayGain: update the accumulator path to the final file
     // location.  For SAF downloads the metadata was embedded on a temp
     // copy, so the stored path still points there.  Replace it with the
     // actual output path (SAF content URI or local path) so the later
     // album-gain writer targets the correct file.
-    if (rgPath != null) {
+    if (rgPath != null && !isNetworkDownload) {
       n._updateAlbumRgFilePath(trackToDownload, rgPath);
     }
-    // Album ReplayGain: check if all album tracks are now complete and,
-    // if so, compute and write album gain/peak to every track file.
-    try {
-      await n._checkAndWriteAlbumReplayGain(trackToDownload);
-    } catch (e) {
-      _log.w('Album ReplayGain check failed: $e');
-    }
-    stageCompleted('album ReplayGain');
-
     await _persistCompletionAndNotify();
     stageCompleted('quality probe, history and notification');
     return true;
@@ -845,7 +880,7 @@ class _DownloadRun {
 
   Future<bool> _decryptIfNeeded() async {
     final path = filePath;
-    final descriptor = decryptionDescriptor;
+    final descriptor = result.decryption;
     if (wasExisting || descriptor == null || path == null) {
       return true;
     }
@@ -855,24 +890,24 @@ class _DownloadRun {
     n.updateItemStatus(item.id, DownloadStatus.finalizing, progress: 0.9);
 
     final isSafSource = effectiveSafMode && isContentUri(path);
-    final decryptOutcome = await n._finalizeDecryption(
+    final decryptOutcome = await n._fileFinalizer.decrypt(
       result: result,
       filePath: path,
-      storageMode: effectiveSafMode ? 'saf' : 'app',
-      downloadTreeUri: settings.downloadTreeUri,
-      safRelativeDir: effectiveOutputDir,
+      useSaf: effectiveSafMode,
+      treeUri: settings.downloadTreeUri,
+      relativeDir: effectiveOutputDir,
       baseName: safBaseName ?? 'track',
-      extFallback: '.flac',
-      repairAc4: true,
+      extensionFallback: '.flac',
+      repairContainer: true,
     );
     if (decryptOutcome.path == null) {
       final String errorMsg;
-      switch (decryptOutcome.failStage) {
-        case DownloadQueueNotifier._decryptStageSafAccess:
+      switch (decryptOutcome.failure) {
+        case DownloadDecryptionFailure.safAccess:
           _log.e('Failed to copy encrypted SAF file to temp for decrypt');
           errorMsg = 'Failed to access encrypted SAF file';
           break;
-        case DownloadQueueNotifier._decryptStageSafWrite:
+        case DownloadDecryptionFailure.safWrite:
           _log.e('Failed to write decrypted stream back to SAF');
           errorMsg = 'Failed to write decrypted file to storage';
           break;
@@ -894,8 +929,8 @@ class _DownloadRun {
       return false;
     }
     filePath = decryptOutcome.path;
-    if (decryptOutcome.newFileName != null) {
-      finalSafFileName = decryptOutcome.newFileName;
+    if (decryptOutcome.fileName != null) {
+      finalSafFileName = decryptOutcome.fileName;
     }
     _log.i(
       isSafSource ? 'SAF decryption completed' : 'Local decryption completed',
@@ -960,7 +995,7 @@ class _DownloadRun {
     } else if (metadataEmbeddingEnabled &&
         !isContentUriPath &&
         effectiveSafMode &&
-        result['saf_deferred_publish'] == true &&
+        result.deferredSafPublish &&
         !isFlacFile &&
         !isM4aFile &&
         !wasExisting) {
@@ -978,10 +1013,7 @@ class _DownloadRun {
   }
 
   void _markFinalOutputAsFlac() {
-    result['audio_codec'] = 'flac';
-    result['format'] = 'flac';
-    result['actual_extension'] = '.flac';
-    result['output_extension'] = '.flac';
+    result.markFlacContainer();
     resultOutputExt = '.flac';
   }
 
@@ -1005,8 +1037,7 @@ class _DownloadRun {
       fileName: finalName,
       localPath: localPath,
       fallbackExtension:
-          n._downloadResultOutputExt(result, filePath: localPath) ??
-          safOutputExt,
+          result.outputExtension(path: localPath) ?? safOutputExt,
     );
     final localExt = finalName.substring(finalName.lastIndexOf('.'));
 
@@ -1172,8 +1203,10 @@ class _DownloadRun {
           final isAlreadyNativeFlac =
               codec == 'flac' && await FFmpegService.isNativeFlacFile(tempPath);
           final shouldAttemptConversion =
-              FFmpegService.isLosslessAudioCodec(codec) ||
-              isInconclusiveAudioCodec(codec);
+              shouldAttemptLosslessContainerConversion(
+                forceConversion: true,
+                probedCodec: codec,
+              );
           if (!shouldAttemptConversion) {
             _log.d(
               'Preserving native container; audio codec is ${codec ?? 'unknown'}, '
@@ -1305,8 +1338,10 @@ class _DownloadRun {
               codec == 'flac' &&
               await FFmpegService.isNativeFlacFile(currentFilePath);
           final shouldAttemptConversion =
-              FFmpegService.isLosslessAudioCodec(codec) ||
-              isInconclusiveAudioCodec(codec);
+              shouldAttemptLosslessContainerConversion(
+                forceConversion: true,
+                probedCodec: codec,
+              );
           if (!shouldAttemptConversion) {
             _log.d(
               'Preserving native container; audio codec is ${codec ?? 'unknown'}, '
@@ -1533,17 +1568,18 @@ class _DownloadRun {
     }
 
     if (path != null) {
-      final historyFilePath = path;
-      final backendBitDepth = result['actual_bit_depth'] as int?;
-      final backendSampleRate = result['actual_sample_rate'] as int?;
-      final backendFormat =
-          normalizeAudioFormatValue(
-            result['audio_codec']?.toString() ?? result['format']?.toString(),
-          ) ??
-          normalizeAudioFormatValue(audioFormatForPath(path));
-      final backendBitrateKbps = readPositiveBitrateKbps(
-        result['bitrate'] ?? result['actual_bitrate'],
+      var historyFilePath = path;
+      final audio = await resolveDownloadCompletionAudio(
+        result: result,
+        filePath: path,
+        fileName: finalSafFileName,
+        quality: actualQuality,
+        metadata: probedFinalMetadata,
+        readMetadata: PlatformBridge.readFileMetadata,
+        debug: _log.d,
       );
+      actualQuality = audio.quality;
+      probedFinalMetadata = audio.metadata;
       final backendGenre = result['genre'] as String?;
       final backendLabel = result['label'] as String?;
       final backendCopyright = result['copyright'] as String?;
@@ -1560,87 +1596,60 @@ class _DownloadRun {
           normalizeOptionalString(copyright) ??
           normalizeOptionalString(existingInHistory?.copyright);
 
-      int? finalBitDepth = backendBitDepth;
-      int? finalSampleRate = backendSampleRate;
-      String? finalFormat = backendFormat;
-      int? finalBitrateKbps = backendBitrateKbps;
-      final lowerFilePath = path.toLowerCase();
-      final canProbeFinalMetadata =
-          path.startsWith('content://') ||
-          lowerFilePath.endsWith('.flac') ||
-          lowerFilePath.endsWith('.m4a') ||
-          lowerFilePath.endsWith('.mp4') ||
-          lowerFilePath.endsWith('.aac') ||
-          lowerFilePath.endsWith('.mp3') ||
-          lowerFilePath.endsWith('.opus') ||
-          lowerFilePath.endsWith('.ogg');
-
-      if (canProbeFinalMetadata) {
-        try {
-          final probed = probedFinalMetadata;
-          final metadata = (probed != null && probed['error'] == null)
-              ? probed
-              : await PlatformBridge.readFileMetadata(path);
-          if (metadata['error'] == null) {
-            probedFinalMetadata = metadata;
-            final probedBitDepth = metadata['bit_depth'] is num
-                ? (metadata['bit_depth'] as num).toInt()
-                : int.tryParse(metadata['bit_depth']?.toString() ?? '');
-            final probedSampleRate = metadata['sample_rate'] is num
-                ? (metadata['sample_rate'] as num).toInt()
-                : int.tryParse(metadata['sample_rate']?.toString() ?? '');
-
-            if (probedBitDepth != null && probedBitDepth > 0) {
-              finalBitDepth = probedBitDepth;
-            }
-            if (probedSampleRate != null && probedSampleRate > 0) {
-              finalSampleRate = probedSampleRate;
-            }
-            final probedFormat = normalizeAudioFormatValue(
-              metadata['audio_codec']?.toString() ??
-                  metadata['format']?.toString(),
-            );
-            if (probedFormat != null) {
-              finalFormat = probedFormat;
-            }
-            final probedBitrateKbps = readPositiveBitrateKbps(
-              metadata['bitrate'] ?? metadata['bit_rate'],
-            );
-            if (probedBitrateKbps != null) {
-              finalBitrateKbps = probedBitrateKbps;
-            }
-
-            final resolvedQuality = resolveDisplayQuality(
-              filePath: path,
-              fileName: finalSafFileName,
-              detectedFormat: finalFormat,
-              bitDepth: finalBitDepth,
-              sampleRate: finalSampleRate,
-              bitrateKbps: finalBitrateKbps,
-              storedQuality: actualQuality,
-            );
-            if (resolvedQuality != null) {
-              actualQuality = resolvedQuality;
-            }
-          }
-        } catch (e) {
-          _log.d('Final audio metadata probe failed for $path: $e');
-        }
-      }
-
-      final isLossyOutput =
-          isLossyAudioFormat(finalFormat) ||
-          lowerFilePath.endsWith('.mp3') ||
-          lowerFilePath.endsWith('.opus') ||
-          lowerFilePath.endsWith('.ogg');
-      final historyBitDepth = isLossyOutput ? null : finalBitDepth;
-      final historySampleRate = isLossyOutput ? null : finalSampleRate;
-      final historyBitrate = finalBitrateKbps;
       final lyricsAvailability = await n._resolveFinalLyricsAvailability(
         filePath: historyFilePath,
         probedMetadata: probedFinalMetadata,
         externalLrcWritten: externalLrcWritten,
       );
+
+      if (isNetworkDownload) {
+        final staging = NetworkDownloadStaging.instance;
+        await staging.prepareCompletion(
+          id: item.id,
+          localPath: path,
+          folder: item.networkDownloadFolder,
+          relativeDir: networkRelativeDir,
+          quality: actualQuality,
+          track: trackToDownload.toJson(),
+          externalLrcWritten: externalLrcWritten,
+          result: result,
+        );
+        void checkpoint() {
+          if (n._findItemById(item.id) == null ||
+              n._isLocallyCancelled(item.id) ||
+              n._isPausePending(item.id)) {
+            throw StateError('Network upload interrupted');
+          }
+        }
+
+        n.updateItemStatus(
+          item.id,
+          DownloadStatus.finalizing,
+          progress: 0.99,
+          preparationStage: 'network_upload',
+        );
+        var lastProgress = DateTime.fromMillisecondsSinceEpoch(0);
+        historyFilePath = await staging.publish(
+          item.id,
+          checkpoint: checkpoint,
+          progress: (sent, total) {
+            final now = DateTime.now();
+            if (sent != total &&
+                now.difference(lastProgress).inMilliseconds < 250) {
+              return;
+            }
+            lastProgress = now;
+            n.updateItemStatus(
+              item.id,
+              DownloadStatus.finalizing,
+              progress: 0.99,
+              preparationStage: 'network_upload',
+              bytesReceived: sent,
+              bytesTotal: total,
+            );
+          },
+        );
+      }
 
       await n._saveDownloadedMotionArtwork(
         n.ref,
@@ -1664,10 +1673,10 @@ class _DownloadRun {
                   downloadTreeUri: settings.downloadTreeUri,
                   safRelativeDir: effectiveOutputDir,
                   safFileName: finalSafFileName ?? safFileName,
-                  bitDepth: historyBitDepth,
-                  sampleRate: historySampleRate,
-                  bitrate: historyBitrate,
-                  format: finalFormat,
+                  bitDepth: audio.bitDepth,
+                  sampleRate: audio.sampleRate,
+                  bitrate: audio.bitrate,
+                  format: audio.format,
                   genre: effectiveGenre,
                   label: effectiveLabel,
                   copyright: effectiveCopyright,
@@ -1686,10 +1695,15 @@ class _DownloadRun {
             item.id,
             DownloadStatus.completed,
             progress: 1.0,
-            filePath: path,
+            filePath: historyFilePath,
           );
         },
       );
+      // Only durable completions can unblock an album. Checking while this
+      // item is still finalizing makes the final track block its own album.
+      if (!isNetworkDownload) {
+        await n._checkAndWriteAlbumReplayGain(trackToDownload);
+      }
       try {
         await n._notificationService.showDownloadComplete(
           trackName: item.track.name,
@@ -1703,6 +1717,14 @@ class _DownloadRun {
         // must not roll back a valid replacement or its persisted history.
         _log.w('Download completed but notification failed: $e');
       }
+      if (isNetworkDownload) {
+        n._purgeAlbumRgEntry(trackToDownload);
+        try {
+          await NetworkDownloadStaging.instance.discard(item.id);
+        } catch (e) {
+          _log.w('Could not clean uploaded network staging: $e');
+        }
+      }
       n.removeItem(item.id);
     }
   }
@@ -1712,13 +1734,10 @@ class _DownloadRun {
       return false;
     }
 
-    var errorMsg = result['error'] as String? ?? 'Download failed';
-    final errorTypeStr = result['error_type'] as String? ?? 'unknown';
-    final retryAfterSeconds = readPositiveInt(result['retry_after_seconds']);
-    if (retryAfterSeconds != null && retryAfterSeconds > 0) {
-      errorMsg = '$errorMsg retry-after: $retryAfterSeconds';
-    }
-    if (errorTypeStr == 'cancelled') {
+    final failure = result.failure!;
+    final errorMsg = failure.retryMessage;
+    final errorTypeStr = failure.backendType;
+    if (failure.cancelled) {
       if (n._isPausePending(item.id)) {
         pausedDuringThisRun = true;
         n._requeueItemForPause(item.id);
@@ -1730,7 +1749,7 @@ class _DownloadRun {
       return false;
     }
 
-    final backendErrorType = downloadErrorTypeFromBackend(errorTypeStr);
+    final backendErrorType = failure.type;
     final errorType =
         backendErrorType ?? n._downloadErrorTypeFromMessage(errorMsg);
 
@@ -1738,7 +1757,7 @@ class _DownloadRun {
       await n._handleVerificationRequiredDownload(
         item,
         errorMsg,
-        result['service'] as String?,
+        failure.service,
       );
       return false;
     }
@@ -1770,6 +1789,17 @@ class _DownloadRun {
     }
 
     _log.e('Exception: $e', e, stackTrace);
+
+    if (isNetworkDownload) {
+      n.updateItemStatus(
+        item.id,
+        DownloadStatus.failed,
+        error: 'Network download failed. Retry keeps prepared audio: $e',
+        errorType: DownloadErrorType.unknown,
+      );
+      n._failedInSession++;
+      return;
+    }
 
     String errorMsg = e.toString();
     DownloadErrorType errorType = DownloadErrorType.unknown;

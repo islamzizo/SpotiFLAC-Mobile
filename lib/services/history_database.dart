@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
+import 'package:spotiflac_android/services/history_maintenance.dart';
 import 'package:spotiflac_android/utils/isrc_utils.dart' as isrc;
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/utils/logger.dart';
@@ -95,7 +96,7 @@ class HistoryDatabase {
   // the existing schema migration. The background native writer shares
   // history.db and must accept the same schema contract and
   // user_version without depending on FTS5.
-  static const int schemaVersion = 14;
+  static const int schemaVersion = 15;
   static const String searchFtsTable = 'history_search_fts';
   static final HistoryDatabase instance = HistoryDatabase._init();
   static final sqlite.SingleFlightInitializer<Database> _database =
@@ -242,7 +243,6 @@ class HistoryDatabase {
     }
     if (oldVersion < 7) {
       await _createPathKeyTable(db);
-      await sqlite.backfillPathKeys(db, 'history', 'history_path_keys');
     }
     if (oldVersion < 8) {
       await sqlite.addColumnIfMissing(db, 'history', 'spotify_id_norm', 'TEXT');
@@ -314,6 +314,10 @@ class HistoryDatabase {
         'INTEGER NOT NULL DEFAULT 0',
       );
       _log.i('Added indexed ReplayGain availability metadata');
+    }
+    if (oldVersion < 15) {
+      await sqlite.backfillPathKeys(db, 'history', 'history_path_keys');
+      _log.i('Updated history path keys with provider document identities');
     }
   }
 
@@ -806,6 +810,19 @@ class HistoryDatabase {
     });
   }
 
+  Future<void> replaceAll(Stream<Map<String, dynamic>> items) async =>
+      replaceHistoryRows(await database, items.map(_jsonToDbRow));
+
+  Future<Set<String>> updateExistingBatch(
+    List<Map<String, dynamic>> items,
+  ) async {
+    if (items.isEmpty) return const {};
+    final db = await database;
+    return db.transaction(
+      (txn) => updateExistingHistoryRows(txn, items.map(_jsonToDbRow)),
+    );
+  }
+
   Future<List<Map<String, dynamic>>> getAll({int? limit, int? offset}) async {
     final db = await database;
     final rows = await db.query(
@@ -881,6 +898,9 @@ class HistoryDatabase {
     if (rows.isEmpty) return null;
     return _dbRowToJson(rows.first);
   }
+
+  Future<List<String>> getPhysicalFileIds(Iterable<String> filePaths) async =>
+      sqlite.findPhysicalFileRowIds(await database, 'history', filePaths);
 
   Future<Map<String, dynamic>?> getBySpotifyId(String spotifyId) async {
     final db = await database;
@@ -1138,7 +1158,7 @@ class HistoryDatabase {
     _searchFtsAvailable = null;
   }
 
-  Future<void> updateFilePath(
+  Future<bool> updateFilePath(
     String id,
     String newFilePath, {
     String? newSafFileName,
@@ -1149,6 +1169,8 @@ class HistoryDatabase {
     int? newBitrate,
     String? newFormat,
     bool clearAudioSpecs = false,
+    String? expectedFilePath,
+    String? expectedDownloadedAt,
   }) async {
     final db = await database;
     final values = <String, dynamic>{'file_path': newFilePath};
@@ -1181,11 +1203,21 @@ class HistoryDatabase {
         values['sample_rate'] = newSampleRate;
       }
     }
-    await db.transaction((txn) async {
-      await txn.update('history', values, where: 'id = ?', whereArgs: [id]);
+    return db.transaction((txn) async {
+      final changed = await txn.update(
+        'history',
+        values,
+        where:
+            'id = ?'
+            '${expectedFilePath == null ? '' : ' AND file_path = ?'}'
+            '${expectedDownloadedAt == null ? '' : ' AND downloaded_at = ?'}',
+        whereArgs: [id, ?expectedFilePath, ?expectedDownloadedAt],
+      );
+      if (changed == 0) return false;
       final batch = txn.batch();
       _putPathKeysInBatch(batch, id, newFilePath);
       await batch.commit(noResult: true);
+      return true;
     });
   }
 
@@ -1242,6 +1274,7 @@ class HistoryDatabase {
         'download_tree_uri',
         'saf_relative_dir',
         'saf_file_name',
+        'downloaded_at',
       ],
       where: 'file_path IS NOT NULL AND file_path != ""',
       orderBy: 'sort_added DESC, id DESC',
@@ -1251,25 +1284,58 @@ class HistoryDatabase {
     return rows.map((r) => Map<String, dynamic>.from(r)).toList();
   }
 
+  /// A delayed absence check must not delete a replacement downloaded after
+  /// the inspected snapshot, even when it reused the same ID and path.
+  Future<List<String>> deleteInspectedEntries(
+    List<Map<String, dynamic>> entries,
+  ) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final deletedIds = <String>[];
+      for (final entry in entries) {
+        final id = entry['id'] as String;
+        final downloadedAt = entry['downloaded_at'] as String?;
+        final count = await txn.delete(
+          'history',
+          where:
+              'id = ? AND file_path = ?'
+              '${downloadedAt == null ? '' : ' AND downloaded_at = ?'}',
+          whereArgs: [id, entry['file_path'], ?downloadedAt],
+        );
+        if (count == 0) continue;
+        await txn.delete(
+          'history_path_keys',
+          where: 'item_id = ?',
+          whereArgs: [id],
+        );
+        deletedIds.add(id);
+      }
+      return deletedIds;
+    });
+  }
+
   Future<int> deleteByIds(List<String> ids) async {
     if (ids.isEmpty) return 0;
 
     final db = await database;
-    var totalDeleted = 0;
-    const chunkSize = 500;
-    for (var i = 0; i < ids.length; i += chunkSize) {
-      final end = (i + chunkSize < ids.length) ? i + chunkSize : ids.length;
-      final chunk = ids.sublist(i, end);
-      final placeholders = List.filled(chunk.length, '?').join(',');
-      await db.rawDelete(
-        'DELETE FROM history_path_keys WHERE item_id IN ($placeholders)',
-        chunk,
-      );
-      totalDeleted += await db.rawDelete(
-        'DELETE FROM history WHERE id IN ($placeholders)',
-        chunk,
-      );
-    }
+    final totalDeleted = await db.transaction((txn) async {
+      var deleted = 0;
+      const chunkSize = 500;
+      for (var i = 0; i < ids.length; i += chunkSize) {
+        final end = (i + chunkSize < ids.length) ? i + chunkSize : ids.length;
+        final chunk = ids.sublist(i, end);
+        final placeholders = List.filled(chunk.length, '?').join(',');
+        await txn.rawDelete(
+          'DELETE FROM history_path_keys WHERE item_id IN ($placeholders)',
+          chunk,
+        );
+        deleted += await txn.rawDelete(
+          'DELETE FROM history WHERE id IN ($placeholders)',
+          chunk,
+        );
+      }
+      return deleted;
+    });
     _log.i('Deleted $totalDeleted orphaned entries');
     return totalDeleted;
   }

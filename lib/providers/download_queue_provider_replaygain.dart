@@ -2,7 +2,7 @@
 part of 'download_queue_provider.dart';
 
 class _AlbumRgTrackEntry {
-  String filePath;
+  final String filePath;
   final String trackId;
   final double integratedLufs;
   final double truePeakLinear;
@@ -19,15 +19,12 @@ class _AlbumRgTrackEntry {
 
 class _AlbumRgAccumulator {
   final List<_AlbumRgTrackEntry> entries = [];
+  int revision = 0;
+  Future<void>? writing;
 }
 
 extension _DownloadQueueReplayGain on DownloadQueueNotifier {
-  String _albumRgKey(Track track) {
-    if (track.albumId != null && track.albumId!.isNotEmpty) {
-      return 'id:${track.albumId}';
-    }
-    return 'name:${track.albumName}|${track.albumArtist ?? ''}';
-  }
+  String _albumRgKey(Track track) => albumReplayGainKey(track);
 
   /// Purge a track's stale ReplayGain accumulator entry, dropping the whole
   /// album accumulator once it becomes empty.
@@ -36,6 +33,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final accumulator = _albumRgData[key];
     if (accumulator == null) return;
     accumulator.entries.removeWhere((e) => e.trackId == track.id);
+    accumulator.revision++;
     if (accumulator.entries.isEmpty) {
       _albumRgData.remove(key);
     }
@@ -47,6 +45,9 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     String filePath,
     ReplayGainResult rg,
   ) {
+    // Network staging is released per published track. Track ReplayGain is
+    // embedded normally; do not schedule later writes to deleted staging files.
+    if (filePath.contains('/network_downloads/')) return;
     final key = _albumRgKey(track);
     _albumRgData.putIfAbsent(key, () => _AlbumRgAccumulator());
     // Remove any stale entry for this track (e.g. from a previous failed
@@ -62,6 +63,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
         durationSecs: track.duration.toDouble(),
       ),
     );
+    _albumRgData[key]!.revision++;
   }
 
   /// Replace the temp path stored in the accumulator with the final output
@@ -71,9 +73,18 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final key = _albumRgKey(track);
     final accumulator = _albumRgData[key];
     if (accumulator == null) return;
-    for (final entry in accumulator.entries) {
+    for (var i = 0; i < accumulator.entries.length; i++) {
+      final entry = accumulator.entries[i];
       if (entry.trackId == track.id) {
-        entry.filePath = finalPath;
+        if (entry.filePath == finalPath) return;
+        accumulator.entries[i] = _AlbumRgTrackEntry(
+          filePath: finalPath,
+          trackId: entry.trackId,
+          integratedLufs: entry.integratedLufs,
+          truePeakLinear: entry.truePeakLinear,
+          durationSecs: entry.durationSecs,
+        );
+        accumulator.revision++;
         break;
       }
     }
@@ -83,6 +94,7 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
   /// in the current queue are done.  If so, compute album gain and write it
   /// to every track's file.
   Future<void> _checkAndWriteAlbumReplayGain(Track track) async {
+    if (!ref.mounted) return;
     final settings = ref.read(settingsProvider);
     if (!settings.embedReplayGain) return;
 
@@ -90,80 +102,14 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final accumulator = _albumRgData[key];
     if (accumulator == null || accumulator.entries.isEmpty) return;
 
-    // Find queue items for this album that are STILL in the queue.
-    // Completed tracks may have already been removed by removeItem(), so
-    // their absence means they finished successfully (not that they're
-    // still pending).
-    final albumItemsInQueue = state.items
-        .where((item) => _albumRgKey(item.track) == key)
-        .toList();
+    if (albumReplayGainBlocked(state.items, key)) return;
 
-    final pending = albumItemsInQueue.where(
-      (item) =>
-          item.status == DownloadStatus.queued ||
-          item.status == DownloadStatus.downloading ||
-          item.status == DownloadStatus.finalizing,
-    );
-    if (pending.isNotEmpty) return;
-
-    // If any item is failed/skipped, the user might retry it later.
-    // Don't finalize album RG with partial data — wait until all album
-    // tracks are either completed (and possibly removed) or retried.
-    final retryable = albumItemsInQueue.where(
-      (item) =>
-          item.status == DownloadStatus.failed ||
-          item.status == DownloadStatus.skipped,
-    );
-    if (retryable.isNotEmpty) return;
-
-    // The accumulator entries represent successfully scanned tracks.  Entries
-    // are only added after a successful ReplayGain scan, removed on retry or
-    // when a non-completed item is removed from the queue, so every entry
-    // here corresponds to a track that completed (or is about to complete)
-    // its download.
-    final validEntries = accumulator.entries.toList();
-
-    // Single-track albums: album gain == track gain, no extra write needed.
-    if (validEntries.length <= 1) {
-      _albumRgData.remove(key);
-      return;
+    // A tag failure must not turn a durable download back into a failed item.
+    try {
+      await _computeAndWriteAlbumRg(key, accumulator);
+    } catch (e) {
+      _log.w('Album ReplayGain check failed: $e');
     }
-
-    // Compute album gain using duration-weighted power-mean of LUFS values.
-    // album_loudness = 10 * log10( Σ(10^(Li/10) * di) / Σ(di) )
-    // This weights longer tracks more, matching "whole program" loudness.
-    double sumWeightedPower = 0;
-    double sumDuration = 0;
-    double maxPeak = 0;
-    for (final entry in validEntries) {
-      final weight = entry.durationSecs > 0 ? entry.durationSecs : 1.0;
-      sumWeightedPower += pow(10, entry.integratedLufs / 10.0) * weight;
-      sumDuration += weight;
-      if (entry.truePeakLinear > maxPeak) {
-        maxPeak = entry.truePeakLinear;
-      }
-    }
-    final albumLufs = 10.0 * _log10(sumWeightedPower / sumDuration);
-    const replayGainReferenceLufs = -18.0;
-    final albumGainDb = replayGainReferenceLufs - albumLufs;
-
-    final albumGain =
-        '${albumGainDb >= 0 ? "+" : ""}${albumGainDb.toStringAsFixed(2)} dB';
-    final albumPeak = maxPeak.toStringAsFixed(6);
-
-    _log.i(
-      'Album ReplayGain for "$key": gain=$albumGain, peak=$albumPeak (${validEntries.length} tracks, album LUFS=${albumLufs.toStringAsFixed(1)})',
-    );
-
-    for (final entry in validEntries) {
-      try {
-        await _writeAlbumReplayGain(entry.filePath, albumGain, albumPeak);
-      } catch (e) {
-        _log.w('Failed to write album ReplayGain to ${entry.filePath}: $e');
-      }
-    }
-
-    _albumRgData.remove(key);
   }
 
   /// Write album ReplayGain tags to a single file.
@@ -190,30 +136,16 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     final settings = ref.read(settingsProvider);
     if (!settings.embedReplayGain) return;
 
-    // Snapshot the keys — _checkAndWriteAlbumReplayGain may mutate the map.
-    final keys = _albumRgData.keys.toList();
+    // Decide readiness once before starting writes, which may remove completed
+    // accumulators. Avoid scanning the entire queue again for every album.
+    final keys = readyReplayGainAlbums(state.items, {
+      for (final entry in _albumRgData.entries)
+        entry.key: entry.value.entries.length,
+    });
     for (final key in keys) {
       final acc = _albumRgData[key];
       if (acc == null || acc.entries.isEmpty) continue;
-      // Use the first entry's trackId to find a representative track.
-      // _checkAndWriteAlbumReplayGain only needs it for _albumRgKey(), so any
-      // track from the album works.
-      final albumItems = state.items
-          .where((item) => _albumRgKey(item.track) == key)
-          .toList();
-      // If there are no items left in queue for this album but we have
-      // accumulator data, all items were completed and removed.  Use a
-      // synthetic call — we need a Track to call the check, but the items
-      // are gone.  For this case, directly check conditions inline.
-      if (albumItems.isEmpty) {
-        // All items removed → no pending/retryable.  Trigger computation.
-        if (acc.entries.length > 1) {
-          _computeAndWriteAlbumRg(key, acc);
-        }
-        continue;
-      }
-      final representative = albumItems.first;
-      _checkAndWriteAlbumReplayGain(representative.track);
+      _computeAndWriteAlbumRg(key, acc);
     }
   }
 
@@ -222,13 +154,55 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
   Future<void> _computeAndWriteAlbumRg(
     String key,
     _AlbumRgAccumulator accumulator,
+  ) {
+    // Concurrent completions/dismissals can observe the same ready album.
+    // Share the write so they cannot edit the same audio files concurrently.
+    final pending = accumulator.writing;
+    if (pending != null) return pending;
+    late final Future<void> writing;
+    writing = _writeReadyAlbumRg(key, accumulator).whenComplete(() {
+      if (identical(accumulator.writing, writing)) accumulator.writing = null;
+    });
+    accumulator.writing = writing;
+    return writing;
+  }
+
+  Future<void> _writeReadyAlbumRg(
+    String key,
+    _AlbumRgAccumulator accumulator,
+  ) async {
+    while (ref.mounted && identical(_albumRgData[key], accumulator)) {
+      // The caller already checked readiness. Only rescan if the queue changes
+      // during I/O; a bulk retrigger must not become one full scan per album.
+      final queueItems = state.items;
+      final revision = accumulator.revision;
+      await _writeAlbumRgSnapshot(key, accumulator);
+      if (!ref.mounted || !identical(_albumRgData[key], accumulator)) return;
+      // New requests/scans or final-path changes may arrive during tag I/O.
+      // Retain their statistics until those requests complete, then recompute.
+      if (!identical(queueItems, state.items) &&
+          albumReplayGainBlocked(state.items, key)) {
+        return;
+      }
+      if (revision == accumulator.revision) {
+        _albumRgData.remove(key);
+        return;
+      }
+    }
+  }
+
+  Future<void> _writeAlbumRgSnapshot(
+    String key,
+    _AlbumRgAccumulator accumulator,
   ) async {
     final validEntries = accumulator.entries.toList();
+    // Single-track albums already have their track gain, so need no write.
     if (validEntries.length <= 1) {
-      _albumRgData.remove(key);
       return;
     }
 
+    // Duration-weighted power-mean of LUFS, matching whole-program loudness:
+    // album_loudness = 10 * log10( Σ(10^(Li/10) * di) / Σ(di) ).
     double sumWeightedPower = 0;
     double sumDuration = 0;
     double maxPeak = 0;
@@ -253,13 +227,12 @@ extension _DownloadQueueReplayGain on DownloadQueueNotifier {
     );
 
     for (final entry in validEntries) {
+      if (!ref.mounted || !identical(_albumRgData[key], accumulator)) return;
       try {
         await _writeAlbumReplayGain(entry.filePath, albumGain, albumPeak);
       } catch (e) {
         _log.w('Failed to write album ReplayGain to ${entry.filePath}: $e');
       }
     }
-
-    _albumRgData.remove(key);
   }
 }

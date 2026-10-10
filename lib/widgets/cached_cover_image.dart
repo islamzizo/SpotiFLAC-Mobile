@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:spotiflac_android/services/cover_cache_manager.dart';
+import 'package:spotiflac_android/utils/image_cache_utils.dart';
 
 class CachedCoverImage extends StatelessWidget {
   static const int _defaultMinCacheExtent = 64;
@@ -56,9 +57,15 @@ class CachedCoverImage extends StatelessWidget {
 
   Widget _buildImage(BuildContext context, BoxConstraints constraints) {
     var autoMemCacheWidth =
-        memCacheWidth ?? _cacheExtentForLogicalSize(context, width);
-    var autoMemCacheHeight =
-        memCacheHeight ?? _cacheExtentForLogicalSize(context, height);
+        memCacheWidth ??
+        (memCacheHeight == null
+            ? _cacheExtentForLogicalSize(context, width)
+            : null);
+    // ResizeImage stretches the decoded bitmap when both axes are supplied.
+    // Keep one decode axis so BoxFit can crop the original proportions.
+    var autoMemCacheHeight = autoMemCacheWidth == null
+        ? memCacheHeight ?? _cacheExtentForLogicalSize(context, height)
+        : null;
     if (autoMemCacheWidth == null && autoMemCacheHeight == null) {
       // Infer one axis to preserve the source aspect ratio and respect any
       // explicit decode override used by large artwork/header consumers.
@@ -334,7 +341,9 @@ Future<void> precacheMetadataBackdrop(
   if (normalized == null || normalized.isEmpty) return;
 
   final ImageProvider provider;
-  if (normalized.startsWith('http://') || normalized.startsWith('https://')) {
+  final network =
+      normalized.startsWith('http://') || normalized.startsWith('https://');
+  if (network) {
     provider = cachedCoverImageProvider(normalized);
   } else if (!normalized.startsWith('content://')) {
     final filePath = normalized.startsWith('file://')
@@ -348,7 +357,7 @@ Future<void> precacheMetadataBackdrop(
   final extent = metadataBackdropCacheExtent(context);
   try {
     await precacheImage(
-      ResizeImage(provider, width: extent, height: extent),
+      ResizeImage(provider, width: extent, height: network ? null : extent),
       context,
       onError: (_, _) {},
     ).timeout(const Duration(milliseconds: 200));
@@ -362,13 +371,10 @@ void precacheCoverImage(BuildContext context, String? url) {
   if (!url.startsWith('http://') && !url.startsWith('https://')) {
     return;
   }
-  final dpr = MediaQuery.devicePixelRatioOf(context).clamp(1.0, 3.0).toDouble();
-  final targetSize = (360 * dpr).round().clamp(512, 1024).toInt();
   precacheImage(
     ResizeImage(
       cachedCoverImageProvider(url),
-      width: targetSize,
-      height: targetSize,
+      width: coverCacheWidthForViewport(context),
     ),
     context,
   );

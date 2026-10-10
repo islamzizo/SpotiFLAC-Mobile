@@ -7,6 +7,7 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/providers/download_queue_provider.dart';
+import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/library_collections_provider.dart';
 import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
@@ -57,6 +58,7 @@ class _Player extends MusicPlayerController {
 }
 
 class _Playback extends PlaybackController {
+  final List<List<String>> resolvedRequests = [];
   final Map<String, String?> paths = {
     'First': 'content://library/first',
     'Selected': 'content://library/selected',
@@ -64,9 +66,10 @@ class _Playback extends PlaybackController {
   };
 
   @override
-  Future<List<String?>> resolveTrackFilePaths(List<Track> tracks) async => [
-    for (final track in tracks) paths[track.id],
-  ];
+  Future<List<String?>> resolveTrackFilePaths(List<Track> tracks) async {
+    resolvedRequests.add(tracks.map((track) => track.id).toList());
+    return [for (final track in tracks) paths[track.id]];
+  }
 }
 
 class _Collections extends LibraryCollectionsNotifier {
@@ -95,6 +98,49 @@ class _Collections extends LibraryCollectionsNotifier {
   Future<void> ensurePlaylistLoaded(String playlistId) async {}
 }
 
+class _RemovalCollections extends _Collections {
+  _RemovalCollections(this._record);
+  final void Function(String, List<String>) _record;
+
+  @override
+  LibraryCollectionsState build() {
+    final initial = super.build();
+    final tracks = initial.playlists.single.tracks;
+    return initial.copyWith(wishlist: tracks, loved: tracks);
+  }
+
+  Future<int> _remove(String kind, Iterable<String> keys) async {
+    final selected = keys.toSet();
+    _record(kind, selected.toList());
+    List<CollectionTrackEntry> keep(List<CollectionTrackEntry> entries) =>
+        entries.where((entry) => !selected.contains(entry.key)).toList();
+    state = switch (kind) {
+      'wishlist' => state.copyWith(wishlist: keep(state.wishlist)),
+      'loved' => state.copyWith(loved: keep(state.loved)),
+      _ => state.copyWith(
+        playlists: [
+          state.playlists.single.copyWith(
+            tracks: keep(state.playlists.single.tracks),
+          ),
+        ],
+      ),
+    };
+    return selected.length;
+  }
+
+  @override
+  Future<int> removeWishlistTracks(Iterable<String> keys) =>
+      _remove('wishlist', keys);
+
+  @override
+  Future<int> removeLovedTracks(Iterable<String> keys) =>
+      _remove('loved', keys);
+
+  @override
+  Future<int> removeTracksFromPlaylist(String id, Iterable<String> keys) =>
+      _remove('playlist', keys);
+}
+
 class _Library extends LocalLibraryNotifier {
   @override
   LocalLibraryState build() => LocalLibraryState();
@@ -105,9 +151,178 @@ class _History extends DownloadHistoryNotifier {
   DownloadHistoryState build() => DownloadHistoryState();
 }
 
+class _DownloadSelection extends DownloadQueueNotifier {
+  _DownloadSelection(this._record);
+  final void Function(List<Track>, String) _record;
+
+  @override
+  DownloadQueueState build() => const DownloadQueueState();
+
+  @override
+  void addIndividualTracksToQueue(List<Track> tracks, String service) =>
+      _record(tracks, service);
+}
+
+class _DownloadExtensions extends ExtensionNotifier {
+  @override
+  ExtensionState build() => const ExtensionState(
+    extensions: [
+      Extension(
+        id: 'example',
+        name: 'example',
+        displayName: 'Example',
+        version: '1',
+        description: '',
+        enabled: true,
+        status: 'loaded',
+        hasDownloadProvider: true,
+      ),
+    ],
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  for (final mornye in [false, true]) {
+    testWidgets('Wishlist enqueues one selection (Mornye: $mornye)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <(List<Track>, String)>[];
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsProvider.overrideWith(_Settings.new),
+            musicPlayerControllerProvider.overrideWithValue(_Player()),
+            playbackProvider.overrideWith(_Playback.new),
+            libraryCollectionsProvider.overrideWith(
+              () => _RemovalCollections((_, _) {}),
+            ),
+            extensionProvider.overrideWith(_DownloadExtensions.new),
+            downloadQueueProvider.overrideWith(
+              () => _DownloadSelection(
+                (tracks, service) => calls.add((tracks, service)),
+              ),
+            ),
+            localLibraryProvider.overrideWith(_Library.new),
+            downloadHistoryProvider.overrideWith(_History.new),
+            downloadHistoryVisibleBatchExistsProvider.overrideWith(
+              (ref, request) => const {},
+            ),
+            localLibraryCoverProvider.overrideWith(
+              (ref, request) async => null,
+            ),
+            localLibraryFirstCoverProvider.overrideWith(
+              (ref, request) async => null,
+            ),
+          ],
+          child: MaterialApp(
+            theme: mornye
+                ? MornyeTheme.build(Brightness.dark)
+                : AppTheme.light(),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const LibraryTracksFolderScreen(
+              mode: LibraryTracksFolderMode.wishlist,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Unavailable'));
+      await tester.longPress(find.text('Unavailable'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('First'));
+      await tester.tap(find.text('First'));
+      await tester.pumpAndSettle();
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(LibraryTracksFolderScreen)),
+      );
+      await tester.tap(find.text('${l10n.settingsDownload} (2)'));
+      await tester.pumpAndSettle();
+      expect(calls, hasLength(1));
+      expect(calls.single.$1, [_tracks[0], _tracks[1]]);
+      expect(calls.single.$2, 'example');
+      expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
+      expect(find.text(l10n.selectionSelected(2)), findsOneWidget);
+      expect(find.text('First'), findsOneWidget);
+      expect(find.text('Unavailable'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final mode in LibraryTracksFolderMode.values) {
+    for (final mornye in [false, true]) {
+      testWidgets(
+        'selection dispatches one ${mode.name} removal (Mornye: $mornye)',
+        (tester) async {
+          final calls = <(String, List<String>)>[];
+          await tester.pumpWidget(
+            ProviderScope(
+              overrides: [
+                settingsProvider.overrideWith(_Settings.new),
+                musicPlayerControllerProvider.overrideWithValue(_Player()),
+                playbackProvider.overrideWith(_Playback.new),
+                libraryCollectionsProvider.overrideWith(
+                  () => _RemovalCollections(
+                    (kind, keys) => calls.add((kind, keys)),
+                  ),
+                ),
+                localLibraryProvider.overrideWith(_Library.new),
+                downloadHistoryProvider.overrideWith(_History.new),
+                downloadHistoryVisibleBatchExistsProvider.overrideWith(
+                  (ref, request) => const {},
+                ),
+                localLibraryCoverProvider.overrideWith(
+                  (ref, request) async => null,
+                ),
+                localLibraryFirstCoverProvider.overrideWith(
+                  (ref, request) async => null,
+                ),
+              ],
+              child: MaterialApp(
+                theme: mornye
+                    ? MornyeTheme.build(Brightness.dark)
+                    : AppTheme.light(),
+                localizationsDelegates: AppLocalizations.localizationsDelegates,
+                supportedLocales: AppLocalizations.supportedLocales,
+                home: LibraryTracksFolderScreen(
+                  mode: mode,
+                  playlistId: mode == LibraryTracksFolderMode.playlist
+                      ? 'playlist'
+                      : null,
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(find.text('First'));
+          await tester.longPress(find.text('First'));
+          await tester.pumpAndSettle();
+          await tester.ensureVisible(find.text('Unavailable'));
+          await tester.tap(find.text('Unavailable'));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byIcon(Icons.remove_circle_outline));
+          await tester.pumpAndSettle();
+          expect(calls, hasLength(1));
+          expect(calls.single.$1, mode.name);
+          expect(calls.single.$2, ['First', 'Unavailable']);
+          expect(find.text('First'), findsNothing);
+          expect(find.text('Unavailable'), findsNothing);
+          expect(find.byIcon(Icons.remove_circle_outline), findsNothing);
+          final l10n = AppLocalizations.of(
+            tester.element(find.byType(LibraryTracksFolderScreen)),
+          );
+          expect(find.text(l10n.selectionSelected(2)), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
 
   for (final mornye in [false, true]) {
     testWidgets('playlist row queues its neighbors (Mornye: $mornye)', (
@@ -278,5 +493,54 @@ void main() {
       containsPair('uri', 'content://library/selected'),
     );
     expect(player.index, isNull);
+    expect(playback.resolvedRequests, [
+      ['Selected'],
+    ]);
   });
+
+  test('external mode skips unavailable and CUE candidates lazily', () async {
+    container.read(settingsProvider.notifier).setPlayerMode('external');
+    playback.paths['Selected'] = '/album.cue#track02';
+    const channel = MethodChannel('com.zarz.spotiflac/backend');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await container
+        .read(playbackProvider.notifier)
+        .playTrackList(_tracks, startIndex: 1);
+    expect(playback.resolvedRequests, [
+      ['Unavailable'],
+      ['Selected'],
+      ['Last'],
+    ]);
+    expect(
+      calls.single.arguments,
+      containsPair('uri', 'content://library/last'),
+    );
+  });
+
+  test(
+    'external mode routes a network fallback to the internal queue',
+    () async {
+      container.read(settingsProvider.notifier).setPlayerMode('external');
+      playback.paths['Selected'] = 'network://storage/track.flac';
+      await container
+          .read(playbackProvider.notifier)
+          .playTrackList(_tracks, startIndex: 1);
+      expect(
+        player.queue[player.index!].source,
+        'network://storage/track.flac',
+      );
+      expect(playback.resolvedRequests.take(2), [
+        ['Unavailable'],
+        ['Selected'],
+      ]);
+      expect(playback.resolvedRequests.last, _tracks.map((track) => track.id));
+    },
+  );
 }

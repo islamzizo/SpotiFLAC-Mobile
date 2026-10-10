@@ -4,10 +4,15 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:spotiflac_android/services/library_search.dart';
+import 'package:spotiflac_android/utils/path_match_keys.dart';
 
 // Execute the production SQL, including bound parameters, against real SQLite.
 // Python is also used by the repository's native artifact checks in CI.
 class _SearchDatabase implements DatabaseExecutor {
+  const _SearchDatabase({this.extraTracks = const []});
+
+  final List<Map<String, Object?>> extraTracks;
+
   @override
   Future<List<Map<String, Object?>>> rawQuery(
     String sql, [
@@ -59,9 +64,13 @@ track(False, '6', 'OR Nothing', 'Artist', 'Night')
 for i in range(85):
     track(False, 'page-'+str(i), 'Page '+str(i).zfill(3), 'Artist', 'Many')
 query = json.loads(sys.argv[1])
+for extra in query['extra_tracks']:
+    track(extra['local'], extra['id'], extra['title'], 'Artist', extra['album'], path=extra['path'])
+    keys = 'library_path_keys' if extra['local'] else 'history_db.history_path_keys'
+    db.executemany('INSERT INTO '+keys+' VALUES (?, ?)', [(extra['id'], key) for key in extra['keys']])
 print(json.dumps([dict(row) for row in db.execute(query['sql'], query['args'])]))
 ''',
-      jsonEncode({'sql': sql, 'args': arguments}),
+      jsonEncode({'sql': sql, 'args': arguments, 'extra_tracks': extraTracks}),
     ]);
     if (result.exitCode != 0) fail('${result.stderr}\n$sql\n$arguments');
     return (jsonDecode(result.stdout as String) as List)
@@ -119,6 +128,63 @@ void main() {
             (await search('lilac', includeLocal: false)).map((hit) => hit.id),
             ['1', '3'],
           );
+        },
+      );
+      test(
+        'scan and download tree aliases appear as one search result',
+        () async {
+          const provider = 'org.example.documents';
+          const documentId = 'account:Music/Album/Tree Song.flac';
+          String path(String tree, String document) => Uri(
+            scheme: 'content',
+            host: provider,
+            pathSegments: ['tree', tree, 'document', document],
+          ).toString();
+          Map<String, Object?> row(
+            String id,
+            bool local,
+            String file,
+            String album,
+          ) => {
+            'id': id,
+            'local': local,
+            'title': 'Tree Song',
+            'album': album,
+            'path': file,
+            'keys': buildPathMatchKeys(file).toList(),
+          };
+          final treeStore = LibrarySearchStore(
+            _SearchDatabase(
+              extraTracks: [
+                row(
+                  'tree-download',
+                  false,
+                  path('account:Music/Album', documentId),
+                  'Album',
+                ),
+                row(
+                  'tree-scan',
+                  true,
+                  path('account:Music', documentId),
+                  'Unknown Album',
+                ),
+                row(
+                  'tree-other',
+                  true,
+                  path('account:Music', 'account:Music/Other/Tree Song.flac'),
+                  'Other Album',
+                ),
+              ],
+            ),
+            historyFts: fts,
+            localFts: fts,
+          );
+          final hits = await treeStore.search(
+            query: 'Tree Song',
+            kind: LibrarySearchKind.songs,
+            includeLocal: true,
+          );
+          expect(hits.map((hit) => hit.id), ['tree-download', 'tree-other']);
         },
       );
       test(

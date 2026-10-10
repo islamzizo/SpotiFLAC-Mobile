@@ -42,34 +42,51 @@ class LyricDisplayLayout {
       rowForLine[lineOrder[row]] = row;
     }
     var latestLead = 0;
+    Duration? latestLeadStart;
     for (var i = 0; i < lines.length; i++) {
-      if (!lines[i].isBackground) latestLead = i;
+      if (!lines[i].isBackground && lines[i].time != latestLeadStart) {
+        latestLead = i;
+        latestLeadStart = lines[i].time;
+      }
+      // Simultaneous leads share the first row as their scroll anchor, so the
+      // earlier singer cannot be pushed above the viewport while still singing.
       // A delayed echo must not scroll backwards after the next lead starts.
-      focusForLine[i] = leadForLine[i] > latestLead
+      focusForLine[i] = lines[i].isBackground && leadForLine[i] > latestLead
           ? leadForLine[i]
           : latestLead;
     }
   }
 }
 
-/// Keep overlapping vocal parts lit until their explicit end. Untimed lines
-/// retain the normal single-line behavior instead of guessing a vocal length.
+/// Hold the latest lead until the next lead starts, including instrumental
+/// gaps. Earlier overlapping parts and backing vocals keep their timed ends.
 Set<int> activeLyricIndices(
   List<LyricLine> lines,
   Duration position,
   int currentIndex,
 ) {
   final active = <int>{};
+  var heldLead = -1;
   for (var i = 0; i <= currentIndex; i++) {
     final line = lines[i];
+    if (!line.isBackground &&
+        line.text.isNotEmpty &&
+        (heldLead < 0 || line.time != lines[heldLead].time)) {
+      // Simultaneous singers retain their shared first-row focus.
+      heldLead = i;
+    }
     final timedVoice =
         (i < currentIndex || line.voice != null || line.isBackground) &&
         line.text.isNotEmpty &&
         line.end != null;
-    // Known ends also apply to the most recently started singer, so a short
-    // reply does not stay lit over a longer lead vocal.
-    if (timedVoice ? line.end! > position : i == currentIndex) active.add(i);
+    // Secondary simultaneous singers and backing parts keep their own ends.
+    final simultaneous =
+        line.text.isNotEmpty && line.time == lines[currentIndex].time;
+    if (timedVoice ? line.end! > position : i == currentIndex || simultaneous) {
+      active.add(i);
+    }
   }
+  if (heldLead >= 0) active.add(heldLead);
   return active;
 }
 

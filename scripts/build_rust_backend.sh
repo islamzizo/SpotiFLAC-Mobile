@@ -98,8 +98,10 @@ if [[ "$PLATFORM" == "android" ]]; then
   done
 
   rustup target add "${ANDROID_TARGETS[@]}"
-  # Align ELF segments for Android devices using 16 KB pages.
-  export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384"
+  # Align ELF segments for 16 KB pages and pack relocations (Android API 23+).
+  # Keep APS2 rather than RELR, which requires API 28; our minimum is API 24.
+  # Fold only identical functions whose addresses are not significant.
+  export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,--pack-dyn-relocs=android -C link-arg=-Wl,--icf=safe"
   for target in "${ANDROID_TARGETS[@]}"; do
     cargo build --locked --release -p spotiflac-mobile --target "$target"
     case "$target" in

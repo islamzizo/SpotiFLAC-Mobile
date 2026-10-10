@@ -4,9 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
+import 'package:spotiflac_android/widgets/view_queue_snackbar_action.dart';
+import 'package:spotiflac_android/widgets/track_detail_actions.dart';
+import 'package:spotiflac_android/services/shell_navigation_service.dart';
 
 void main() {
   for (final brightness in Brightness.values) {
@@ -22,7 +26,10 @@ void main() {
         ProviderScope(
           child: MaterialApp(
             theme: MornyeTheme.build(brightness),
-            builder: (_, child) => RepaintBoundary(key: capture, child: child),
+            builder: (_, child) => RepaintBoundary(
+              key: capture,
+              child: AppScaffoldMessenger(child: child!),
+            ),
             home: Builder(
               builder: (context) => Scaffold(
                 body: Stack(
@@ -81,9 +88,10 @@ void main() {
           image.dispose();
           return colors;
         });
-        // Retain a visible backdrop hue even beneath the glass shadow.
-        expect(colors![0].b - colors[0].r, greaterThan(0.20));
-        expect(colors[1].r - colors[1].b, greaterThan(0.20));
+        // The painted dark tint attenuates chroma along with luminance. Both
+        // backdrop hues must remain visibly distinct throughout the transition.
+        expect(colors![0].b - colors[0].r, greaterThan(0.16));
+        expect(colors[1].r - colors[1].b, greaterThan(0.16));
         final foreground = MornyeTheme.build(brightness).colorScheme.onSurface;
         for (final background in colors) {
           final luminances = [
@@ -102,13 +110,14 @@ void main() {
 
   for (final mornye in [true, false]) {
     testWidgets(
-      'messages still queue, time out and dismiss (Mornye: $mornye)',
+      'new messages replace old ones and still dismiss (Mornye: $mornye)',
       (tester) async {
         late BuildContext messageContext;
         await tester.pumpWidget(
           ProviderScope(
             child: MaterialApp(
               theme: mornye ? MornyeTheme.build(Brightness.dark) : ThemeData(),
+              builder: (_, child) => AppScaffoldMessenger(child: child!),
               home: Builder(
                 builder: (context) {
                   messageContext = context;
@@ -123,16 +132,15 @@ void main() {
           content: const Text('First'),
           duration: const Duration(seconds: 1),
         );
+        await tester.pumpAndSettle();
+        expect(find.text('First'), findsOneWidget);
         final second = showAppSnackBar(
           messageContext,
           content: const Text('Second'),
         );
         await tester.pumpAndSettle();
-        expect(find.text('First'), findsOneWidget);
-        expect(find.text('Second'), findsNothing);
-        await tester.pump(const Duration(seconds: 1));
-        await tester.pumpAndSettle();
-        expect(await first.closed, SnackBarClosedReason.timeout);
+        expect(await first.closed, SnackBarClosedReason.remove);
+        expect(find.text('First'), findsNothing);
         expect(find.text('Second'), findsOneWidget);
         await tester.drag(find.text('Second'), const Offset(0, 300));
         await tester.pumpAndSettle();
@@ -141,5 +149,139 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+
+    testWidgets('View Queue times out and has a close button ($mornye)', (
+      tester,
+    ) async {
+      late BuildContext messageContext;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            theme: mornye ? MornyeTheme.build(Brightness.dark) : ThemeData(),
+            builder: (_, child) => AppScaffoldMessenger(child: child!),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) {
+                messageContext = context;
+                return const Scaffold(body: SizedBox.expand());
+              },
+            ),
+          ),
+        ),
+      );
+      showAddedToQueueSnackBar(messageContext, 'Track');
+      await tester.pumpAndSettle();
+      expect(find.text('View Queue'), findsOneWidget);
+      expect(find.byTooltip('Close'), findsOneWidget);
+      expect(
+        find.byType(MornyeGlassPanel),
+        mornye ? findsOneWidget : findsNothing,
+      );
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsNothing);
+
+      showAddedToQueueSnackBar(messageContext, 'Another track');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('queue confirmation keeps its View action ($mornye)', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 780);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      late BuildContext messageContext;
+      ShellTab? requestedTab;
+      final owner = Object();
+      ShellNavigationService.registerTabSelectionHandler(
+        owner: owner,
+        handler: (tab) => requestedTab = tab,
+      );
+      addTearDown(
+        () => ShellNavigationService.unregisterTabSelectionHandler(owner),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            theme: mornye ? MornyeTheme.build(Brightness.light) : ThemeData(),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(mornye ? 2 : 1)),
+              child: AppScaffoldMessenger(child: child!),
+            ),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) {
+                messageContext = context;
+                return const Scaffold(body: SizedBox.expand());
+              },
+            ),
+          ),
+        ),
+      );
+      showAddedToQueueSnackBar(messageContext, 'Track');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('View Queue'));
+      await tester.pumpAndSettle();
+      expect(requestedTab, ShellTab.library);
+      expect(find.byType(SnackBar), findsNothing);
+      showQueuedSnackbar(messageContext, 3, 0);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(messageContext.l10n.snackbarAddedTracksToQueue(3)),
+        findsOneWidget,
+      );
+      expect(
+        find.byType(MornyeGlassPanel),
+        mornye ? findsOneWidget : findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
   }
+
+  testWidgets('rapid messages never leave a backlog or persist an action', (
+    tester,
+  ) async {
+    late BuildContext messageContext;
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (_, child) => AppScaffoldMessenger(child: child!),
+        home: Builder(
+          builder: (context) {
+            messageContext = context;
+            return const Scaffold(body: SizedBox.expand());
+          },
+        ),
+      ),
+    );
+    final controllers = [
+      for (var i = 0; i < 10; i++)
+        ScaffoldMessenger.of(messageContext).showSnackBar(
+          SnackBar(
+            content: Text('Message $i'),
+            action: SnackBarAction(label: 'Action', onPressed: () {}),
+            duration: const Duration(minutes: 1),
+          ),
+        ),
+    ];
+    await tester.pumpAndSettle();
+    expect(find.text('Message 9'), findsOneWidget);
+    expect(find.text('Message 0'), findsNothing);
+    for (final controller in controllers.take(9)) {
+      expect(await controller.closed, SnackBarClosedReason.remove);
+    }
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(await controllers.last.closed, SnackBarClosedReason.timeout);
+    expect(find.byType(SnackBar), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -513,18 +513,23 @@ class _PlaylistScreenState extends ConsumerState<PlaylistScreen>
   }
 
   Widget _buildLoveAllButton() {
-    final collectionsState = ref.watch(libraryCollectionsProvider);
-    final allLoved =
-        _tracks.isNotEmpty && _tracks.every((t) => collectionsState.isLoved(t));
-
-    return HeaderCircleButton(
-      icon: allLoved ? Icons.favorite : Icons.favorite_border,
-      tonal: true,
-      iconColor: allLoved ? Theme.of(context).colorScheme.error : null,
-      tooltip: allLoved
-          ? context.l10n.trackOptionRemoveFromLoved
-          : context.l10n.tooltipLoveAll,
-      onPressed: _tracks.isEmpty ? null : () => _loveAll(_tracks),
+    return Consumer(
+      builder: (context, ref, _) {
+        ref.watch(libraryCollectionsProvider.select((state) => state.loved));
+        final collectionsState = ref.read(libraryCollectionsProvider);
+        final allLoved =
+            _tracks.isNotEmpty &&
+            _tracks.every((t) => collectionsState.isLoved(t));
+        return HeaderCircleButton(
+          icon: allLoved ? Icons.favorite : Icons.favorite_border,
+          tonal: true,
+          iconColor: allLoved ? Theme.of(context).colorScheme.error : null,
+          tooltip: allLoved
+              ? context.l10n.trackOptionRemoveFromLoved
+              : context.l10n.tooltipLoveAll,
+          onPressed: _tracks.isEmpty ? null : () => _loveAll(_tracks),
+        );
+      },
     );
   }
 

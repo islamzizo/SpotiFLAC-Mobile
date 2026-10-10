@@ -201,7 +201,7 @@ impl ExtensionManager {
             .map(|value| value.to_string())
     }
 
-    fn provider_operation_value(
+    pub(super) fn provider_operation_value(
         &self,
         id: &str,
         method: &str,

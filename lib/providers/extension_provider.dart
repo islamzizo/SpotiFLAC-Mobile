@@ -5,13 +5,15 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:spotiflac_android/models/extension.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/extension_storage_service.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 
-part 'extension_models.dart';
+export 'package:spotiflac_android/models/extension.dart';
+
 part 'extension_provider_priority.dart';
 
 final _log = AppLogger('ExtensionProvider');
@@ -121,13 +123,18 @@ class ExtensionNotifier extends Notifier<ExtensionState> {
     if (pending != null) {
       await pending;
     } else {
-      await ref.read(settingsProvider.notifier).ensureLoaded();
-      final storage = await ExtensionStorageService.prepare();
-      await initialize(
-        storage.extensionsDir,
-        storage.dataDir,
-        masterKey: storage.masterKey,
-      );
+      try {
+        await ref.read(settingsProvider.notifier).ensureLoaded();
+        final storage = await ExtensionStorageService.prepare();
+        await initialize(
+          storage.extensionsDir,
+          storage.dataDir,
+          masterKey: storage.masterKey,
+        );
+      } catch (error) {
+        state = state.copyWith(isLoading: false, error: error.toString());
+        rethrow;
+      }
     }
     if (!state.isInitialized) {
       throw StateError(state.error ?? 'Extension system initialization failed');

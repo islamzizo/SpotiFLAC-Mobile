@@ -73,6 +73,13 @@ extension _TrackMetadataMornye on _TrackMetadataScreenState {
                                     artUri: artwork,
                                     colorScheme: scheme,
                                     iconSize: 80,
+                                    cacheWidth:
+                                        (320 *
+                                                MediaQuery.devicePixelRatioOf(
+                                                  context,
+                                                ))
+                                            .round()
+                                            .clamp(320, 1280),
                                   ),
                                 ),
                               ),
@@ -110,11 +117,11 @@ extension _TrackMetadataMornye on _TrackMetadataScreenState {
                         HeaderMetaRow(items: _headerMetadataItems(context)),
                         const SizedBox(height: 16),
                         _buildActionButtons(context, ref, scheme, _fileExists),
-                        if (_hasCheckedFile && !_fileExists)
+                        if (_fileAccessMessage(context) case final message?)
                           Padding(
                             padding: const EdgeInsets.only(top: 16),
                             child: Text(
-                              context.l10n.trackFileNotFound,
+                              message,
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: scheme.error,
                               ),

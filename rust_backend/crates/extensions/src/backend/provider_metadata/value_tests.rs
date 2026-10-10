@@ -38,7 +38,17 @@ function getConcert(id) {
         coverUrl: "https://example.invalid/artist.jpg", attribution: "Example Events",
         setList: {id: "list-1", name: "Concert Set List", coverUrl: "https://example.invalid/list.jpg"}};
 }
-registerExtension({getAlbum: collection, getPlaylist: collection, getArtist, getConcert, handleUrl});
+function searchTracks(query) {
+    if (query === "throw") throw new Error("fixture search failed");
+    return {tracks: [{id: "first", name: "First", isrc: "EXAMPLE00001"},
+        {id: "duplicate", name: "Duplicate", isrc: "example00001"},
+        {id: "second", name: "Second", isrc: "EXAMPLE00002"}]};
+}
+function customSearch(query) {
+    return query === "null" ? null : searchTracks(query).tracks;
+}
+registerExtension({getAlbum: collection, getPlaylist: collection, getArtist, getConcert, handleUrl,
+    searchTracks, customSearch});
 "#;
 
 fn fixture() -> (tempfile::TempDir, Backend) {
@@ -49,6 +59,7 @@ fn fixture() -> (tempfile::TempDir, Backend) {
         source.join("manifest.json"),
         json!({"name":ID,"displayName":"Example Metadata","version":"1",
             "description":"Generic metadata fixture","type":["metadata_provider"],
+            "searchBehavior":{"enabled":true},
             "urlHandler":{"enabled":true,"patterns":["example.invalid"]}})
         .to_string(),
     )
@@ -65,6 +76,50 @@ fn fixture() -> (tempfile::TempDir, Backend) {
     backend.load_all().unwrap();
     backend.set_enabled(ID, true).unwrap();
     (root, backend)
+}
+
+#[test]
+fn search_value_routes_preserve_public_json_dedup_limits_and_cancellation() {
+    let (_root, backend) = fixture();
+    let typed = backend
+        .manager
+        .search_metadata_providers_value_with_lease("example", 2, true, "", 30_000, None)
+        .unwrap();
+    let public = backend
+        .manager
+        .search_metadata_providers("example", 2, true, "", 30_000)
+        .unwrap();
+    assert_eq!(typed.to_string(), public);
+    assert_eq!(typed[0]["id"], "first");
+    assert_eq!(typed[1]["id"], "second");
+    assert_eq!(typed[0]["provider_id"], ID);
+    let custom: Value = serde_json::from_str(
+        &backend
+            .custom_search_json(ID, "example", "{}", None)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(custom.as_array().unwrap().len(), 3);
+    assert_eq!(custom[0]["name"], "First");
+    assert_eq!(
+        backend.custom_search_json(ID, "null", "{}", None).unwrap(),
+        "[]"
+    );
+    assert!(
+        backend
+            .custom_search_json(ID, "throw", "{}", None)
+            .unwrap_err()
+            .contains("fixture search failed")
+    );
+    let registry = CancellationRegistry::new(CancellationDomain::ExtensionRequest);
+    let lease = Arc::new(registry.acquire("example").unwrap());
+    registry.cancel("example").unwrap();
+    assert!(
+        backend
+            .manager
+            .search_metadata_providers_value_with_lease("example", 2, true, "", 30_000, Some(lease))
+            .is_err()
+    );
 }
 
 #[test]

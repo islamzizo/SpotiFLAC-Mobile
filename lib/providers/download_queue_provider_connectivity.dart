@@ -2,10 +2,6 @@
 part of 'download_queue_provider.dart';
 
 extension _DownloadQueueConnectivity on DownloadQueueNotifier {
-  bool _hasWifiConnection(List<ConnectivityResult> results) {
-    return results.contains(ConnectivityResult.wifi);
-  }
-
   void _startConnectivityMonitoring() {
     _connectivitySub?.cancel();
     _connectivitySub = Connectivity().onConnectivityChanged.listen(
@@ -34,10 +30,8 @@ extension _DownloadQueueConnectivity on DownloadQueueNotifier {
         item.errorType == DownloadErrorType.network,
   );
 
-  /// Offers a one-tap retry for network-failed items once connectivity
-  /// returns, debounced so network flapping doesn't spam snackbars.
+  /// Publishes a retry opportunity; mounted UI consumers choose presentation.
   void _maybeOfferRetryAfterReconnect(List<ConnectivityResult> results) {
-    if (results.every((result) => result == ConnectivityResult.none)) return;
     final failedCount = state.items
         .where(
           (item) =>
@@ -45,25 +39,15 @@ extension _DownloadQueueConnectivity on DownloadQueueNotifier {
               item.errorType == DownloadErrorType.network,
         )
         .length;
-    if (failedCount == 0) return;
-    final now = DateTime.now();
-    if (now.difference(_lastReconnectRetryPromptAt) <
-        const Duration(minutes: 1)) {
+    if (!_connectivityPolicy.shouldOfferRetry(
+      results: results,
+      failedCount: failedCount,
+      now: DateTime.now(),
+    )) {
       return;
     }
-    _lastReconnectRetryPromptAt = now;
-
-    final context = AppNavigationService.rootNavigatorKey.currentContext;
-    if (context == null || !context.mounted) return;
-    final l10n = context.l10n;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(l10n.queueNetworkFailedOffline(failedCount)),
-        action: SnackBarAction(
-          label: l10n.dialogRetry,
-          onPressed: () => retryAllFailed(networkOnly: true),
-        ),
-      ),
+    state = state.copyWith(
+      reconnectRetry: DownloadQueueReconnectRetry(failedCount),
     );
   }
 
@@ -95,18 +79,9 @@ extension _DownloadQueueConnectivity on DownloadQueueNotifier {
   /// Applies to every download network mode. Fire-and-forget with a light
   /// debounce so network flapping does not spam the bridge.
   void _maybeCleanupOnNetworkChange(List<ConnectivityResult> results) {
-    final previous = _lastConnectivityResults;
-    final unchanged =
-        previous != null && _connectivitySetEquals(previous, results);
-    _lastConnectivityResults = List<ConnectivityResult>.unmodifiable(results);
-    if (previous == null || unchanged) return;
-
-    final now = DateTime.now();
-    if (now.difference(_lastConnectionCleanupAt) <
-        DownloadQueueNotifier._connectionCleanupDebounce) {
+    if (!_connectivityPolicy.shouldCleanup(results, DateTime.now())) {
       return;
     }
-    _lastConnectionCleanupAt = now;
 
     _log.i('Network changed, closing idle backend connections');
     unawaited(
@@ -116,15 +91,6 @@ extension _DownloadQueueConnectivity on DownloadQueueNotifier {
     );
   }
 
-  bool _connectivitySetEquals(
-    List<ConnectivityResult> a,
-    List<ConnectivityResult> b,
-  ) {
-    final setA = a.toSet();
-    final setB = b.toSet();
-    return setA.length == setB.length && setA.containsAll(setB);
-  }
-
   void _handleConnectivityResults(List<ConnectivityResult> results) {
     _maybeCleanupOnNetworkChange(results);
     _maybeOfferRetryAfterReconnect(results);
@@ -132,7 +98,7 @@ extension _DownloadQueueConnectivity on DownloadQueueNotifier {
     final settings = ref.read(settingsProvider);
     if (settings.downloadNetworkMode != 'wifi_only') return;
 
-    if (_hasWifiConnection(results)) {
+    if (results.contains(ConnectivityResult.wifi)) {
       if (_networkPausedByWifiOnly && state.isPaused) {
         _networkPausedByWifiOnly = false;
         _log.i('WiFi restored, resuming network-paused queue');

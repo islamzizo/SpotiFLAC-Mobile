@@ -1,6 +1,62 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:xml/xml.dart';
+
+Uint8List _encodeLyricsInBackground(String raw) =>
+    Uint8List.fromList(utf8.encode(raw));
+
+ParsedLyrics _parseLyricsInBackground(String raw) => LyricsParser.parse(raw);
+
+ParsedLyrics _hydrateParsedLyricsInBackground(Map<String, dynamic> result) {
+  LyricWord word(Map<dynamic, dynamic> value) => LyricWord(
+    time: Duration(milliseconds: value['timeMs'] as int),
+    end: value['endMs'] == null
+        ? null
+        : Duration(milliseconds: value['endMs'] as int),
+    text: value['text'] as String,
+  );
+  List<LyricWord> words(dynamic value) => (value as List)
+      .map((entry) => word(entry as Map))
+      .toList(growable: false);
+  final lines = <LyricLine>[];
+  for (final value in result['lines'] as List) {
+    final row = value as Map;
+    final voice = row['voice'] as Map?;
+    lines.add(
+      LyricLine(
+        time: Duration(milliseconds: row['timeMs'] as int),
+        end: row['endMs'] == null
+            ? null
+            : Duration(milliseconds: row['endMs'] as int),
+        text: row['text'] as String,
+        words: words(row['words']),
+        romanization: row['romanization'] as String?,
+        romanizationWords: words(row['romanizationWords']),
+        translation: row['translation'] as String?,
+        voice: voice == null
+            ? null
+            : LyricVoice(
+                id: voice['id'] as String,
+                index: voice['index'] as int,
+                isGroup: voice['isGroup'] as bool,
+              ),
+        isBackground: row['isBackground'] as bool,
+        vocalGroup: row['vocalGroup'] as int?,
+      ),
+    );
+  }
+  return ParsedLyrics(
+    synced: result['synced'] as bool,
+    wordSynced: result['wordSynced'] as bool,
+    lines: lines,
+    plainText: result['plainText'] as String,
+    writers: result['writers'] as String?,
+    provider: result['provider'] as String?,
+  );
+}
 
 class LyricWord {
   final Duration time;
@@ -124,6 +180,31 @@ class LyricsParser {
     r'^\[x-(romaji-words|romaji|translation):(\d+):([^\]]*)\]$',
     caseSensitive: false,
   );
+  static final RegExp _writerCredit = RegExp(
+    r'^Written\s+by\s*:\s*(.+)$',
+    caseSensitive: false,
+  );
+
+  static bool _hasUsableTiming(List<LyricLine> lines) {
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      if (line.text.trim().isEmpty ||
+          (i == lines.length - 1 && _writerCredit.hasMatch(line.text.trim()))) {
+        continue;
+      }
+      if (line.time > Duration.zero ||
+          (line.end ?? Duration.zero) > Duration.zero ||
+          line.words.any(
+            (word) =>
+                word.text.trim().isNotEmpty &&
+                (word.time > Duration.zero ||
+                    (word.end ?? Duration.zero) > Duration.zero),
+          )) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   static ParsedLyrics parse(String? raw) {
     final text = (raw ?? '').trim();
@@ -137,6 +218,27 @@ class LyricsParser {
     }
 
     return _withCredits(text, _parseLrcOrPlain(text));
+  }
+
+  /// Production parsing runs away from rendering. The synchronous parser
+  /// remains the compatibility contract for old native builds and test hosts.
+  static Future<ParsedLyrics> parseAsyncNative(String? raw) async {
+    if (raw == null || raw.isEmpty) return ParsedLyrics.empty;
+    Map<String, dynamic> result;
+    try {
+      final bytes = await compute(_encodeLyricsInBackground, raw);
+      result = await PlatformBridge.runNativeDataJob({
+        'operation': 'parse_lyrics',
+      }, bytes: bytes);
+    } on MissingPluginException {
+      return compute(_parseLyricsInBackground, raw);
+    } on PlatformException catch (error) {
+      // Rust bounds its recursive XML tokenizer. The isolated compatibility
+      // parser retains support for valid documents beyond that native limit.
+      if (error.message?.contains('XML nesting exceeds') != true) rethrow;
+      return compute(_parseLyricsInBackground, raw);
+    }
+    return compute(_hydrateParsedLyricsInBackground, result);
   }
 
   static ParsedLyrics _withCredits(String raw, ParsedLyrics lyrics) {
@@ -176,23 +278,28 @@ class LyricsParser {
       }
     }
     var lines = lyrics.lines;
+    var plainText = lyrics.plainText;
     if (lines.isNotEmpty) {
-      final trailer = RegExp(
-        r'^Written\s+by\s*:\s*(.+)$',
-        caseSensitive: false,
-      ).firstMatch(lines.last.text.trim());
+      final trailer = _writerCredit.firstMatch(lines.last.text.trim());
       if (trailer != null) {
         writers ??= trailer.group(1)?.trim();
         lines = lines.sublist(0, lines.length - 1);
+        plainText = lines.map((line) => line.text).join('\n');
+      }
+    } else {
+      // Untimed provider results also keep the optional writer footer.
+      final plainLines = plainText.split('\n');
+      final trailer = _writerCredit.firstMatch(plainLines.last.trim());
+      if (trailer != null) {
+        writers ??= trailer.group(1)?.trim();
+        plainText = plainLines.take(plainLines.length - 1).join('\n');
       }
     }
     return ParsedLyrics(
       synced: lyrics.synced,
       wordSynced: lyrics.wordSynced,
-      lines: lines,
-      plainText: identical(lines, lyrics.lines)
-          ? lyrics.plainText
-          : lines.map((line) => line.text).join('\n'),
+      lines: lyrics.synced ? lines : const [],
+      plainText: plainText,
       writers: writers?.isNotEmpty == true ? writers : null,
       provider: provider?.isNotEmpty == true ? provider : null,
     );
@@ -341,6 +448,9 @@ class LyricsParser {
       );
     }
 
+    // Providers can put [00:00.00] on every plain-text row. Check the source
+    // before applying offsets, which must not manufacture usable timing.
+    final synced = _hasUsableTiming(parsed);
     _sortLines(parsed);
     final alignedRomanization = _alignSupplements(parsed, romanization);
     final alignedRomanizationWords = _alignSupplements(
@@ -380,8 +490,8 @@ class LyricsParser {
           }).toList();
 
     return ParsedLyrics(
-      synced: true,
-      wordSynced: sawWordTiming,
+      synced: synced,
+      wordSynced: synced && sawWordTiming,
       lines: adjusted,
       plainText: plainBuffer.where((l) => l.isNotEmpty).join('\n'),
     );
@@ -655,9 +765,10 @@ class LyricsParser {
       }
 
       _sortLines(lines);
+      final synced = _hasUsableTiming(lines);
       return ParsedLyrics(
-        synced: true,
-        wordSynced: sawWords,
+        synced: synced,
+        wordSynced: synced && sawWords,
         lines: lines,
         plainText: plain.where((l) => l.isNotEmpty).join('\n'),
       );

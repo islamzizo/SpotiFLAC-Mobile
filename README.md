@@ -67,6 +67,37 @@ Gradle builds the Rust native artifacts automatically. Tool versions are pinned 
 Start with the [Contributing Guide](CONTRIBUTING.md) for the development setup,
 project boundaries, validation commands, and pull request checklist.
 
+Build production APKs with `bash scripts/build_android.sh --production`;
+this requires the staged Discord SDK and rejects Lite. CI releases use this
+mode and require Discord on both Android and iOS. Stage the official SDK with
+`scripts/setup_discord_sdk.sh` in the build environment before releasing;
+the SDK is not committed to the repository. A fresh hosted runner must be
+provided with the SDK before these release checks can pass.
+
+For development release APKs, use `bash scripts/build_android.sh`; use `--lite` to omit
+the optional Discord SDK while keeping playback and downloads. Full builds
+remain the default. To build only ARM64, set
+`SPOTIFLAC_RUST_ANDROID_ABIS=arm64-v8a`. The script uses the Flutter version in
+`.fvmrc` and audits the selected split APKs and universal APK. For iOS Lite,
+run CocoaPods and the app build with `SPOTIFLAC_DISCORD_SDK=0`; an existing Pods
+installation must be regenerated with that setting.
+
+Android release builds, including plain `flutter build apk --release`, keep Dart
+debug data in `build/symbols/android/app.<architecture>.symbols` to reduce APK
+size. The release script also uses `--obfuscate` to shorten internal Dart names;
+when building directly, add `--obfuscate --split-debug-info=build/symbols/android`
+for the smaller APK. An explicit `--split-debug-info` path overrides the default;
+plain `--analyze-size` builds retain Flutter's normal behavior. Keep these symbols
+with the matching APK before another local build replaces them. Decode a trace
+with `flutter symbolize --debug-info=<symbols-file> --input=crash.txt`.
+
+CI and release jobs retain an `android-symbols-…` artifact with the commit, APK
+SHA-256 hashes, Dart symbols, and R8 mapping, identified by run and attempt.
+Archive it before its 90-day retention expires and match the reported APK hash
+when choosing symbols; equal version numbers do not guarantee a match.
+
+For native iOS codec checks, see the [FFmpeg capability probe](scripts/README_ios_ffmpeg_capabilities.md).
+
 ---
 
 ## Related Projects

@@ -1,7 +1,9 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:spotiflac_android/services/download_queue_codec.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart' as sqlite;
 import 'package:spotiflac_android/utils/logger.dart';
 
@@ -187,8 +189,11 @@ class AppStateDatabase {
     };
   }
 
-  Future<bool> migrateQueueFromSharedPreferences() async {
-    final prefs = await _prefs;
+  Future<bool> migrateQueueFromSharedPreferences({
+    @visibleForTesting SharedPreferences? preferencesOverride,
+    @visibleForTesting Database? databaseOverride,
+  }) async {
+    final prefs = preferencesOverride ?? await _prefs;
     if (prefs.getBool(_queueMigrationKey) == true) {
       return false;
     }
@@ -200,44 +205,15 @@ class AppStateDatabase {
     }
 
     try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! List) {
+      final nowIso = DateTime.now().toIso8601String();
+      final rows = await prepareLegacyDownloadQueueRows(raw, nowIso);
+      if (rows == null) {
         await prefs.setBool(_queueMigrationKey, true);
         return false;
       }
 
-      final nowIso = DateTime.now().toIso8601String();
-      final db = await database;
-      await db.transaction((txn) async {
-        final batch = txn.batch();
-        for (final entry in decoded.whereType<Map<Object?, Object?>>()) {
-          final map = Map<String, dynamic>.from(entry);
-          final id = map['id'] as String?;
-          if (id == null || id.isEmpty) continue;
-
-          final status = map['status'] as String? ?? 'queued';
-          if (status != 'queued' && status != 'downloading') {
-            continue;
-          }
-
-          if (status == 'downloading') {
-            map['status'] = 'queued';
-            map['progress'] = 0.0;
-            map['speedMBps'] = 0.0;
-            map['bytesReceived'] = 0;
-          }
-
-          final createdAt = map['createdAt'] as String? ?? nowIso;
-          batch.insert(_queueTable, {
-            'id': id,
-            'item_json': jsonEncode(map),
-            'status': 'queued',
-            'created_at': createdAt,
-            'updated_at': nowIso,
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-        }
-        await batch.commit(noResult: true);
-      });
+      final db = databaseOverride ?? await database;
+      await db.transaction((txn) => _writeQueueChanges(txn, rows, const []));
 
       await prefs.setBool(_queueMigrationKey, true);
       _log.i('Migrated legacy queue data to SQLite');
@@ -312,14 +288,82 @@ class AppStateDatabase {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getPendingDownloadQueueRows() async {
-    final db = await database;
-    return db.query(
+  Future<List<Map<String, dynamic>>> getPendingDownloadQueueRows({
+    @visibleForTesting Database? databaseOverride,
+  }) async {
+    final db = databaseOverride ?? await database;
+    const pageSize = 256;
+    const statuses = ['queued', 'downloading', 'finalizing', 'skipped'];
+    // Ordinary queues still need one query. Keep the channel response bounded
+    // before deciding whether a transaction/keyset scan is necessary.
+    final first = await db.query(
       _queueTable,
-      where: 'status IN (?, ?, ?)',
-      whereArgs: ['queued', 'downloading', 'finalizing'],
+      where: 'status IN (?, ?, ?, ?)',
+      whereArgs: statuses,
       orderBy: 'created_at ASC, rowid ASC',
+      limit: pageSize + 1,
     );
+    if (first.length <= pageSize) return first;
+    // Reread from one coherent snapshot: concurrent inserts, replacements, or
+    // status changes cannot skip/duplicate entries between page boundaries.
+    return db.transaction((txn) async {
+      final index = await txn.rawQuery(
+        '''
+        SELECT sqlite_version() AS version
+        FROM sqlite_master
+        WHERE type = 'index' AND name = ? AND tbl_name = ?
+      ''',
+        ['idx_${_queueTable}_created', _queueTable],
+      );
+      final indexed = index.isNotEmpty;
+      final version = indexed
+          ? index.single['version'].toString().split('.')
+          : const <String>[];
+      // Row-value comparisons arrived in SQLite 3.15; Android API 24 may still
+      // use 3.9. Its range fallback also retains the ordered created_at index.
+      final tupleSeek =
+          version.length >= 2 &&
+          (int.tryParse(version[0]) ?? 0) >= 3 &&
+          ((int.tryParse(version[0]) ?? 0) > 3 ||
+              (int.tryParse(version[1]) ?? 0) >= 15);
+      final rows = <Map<String, dynamic>>[];
+      String? lastCreated;
+      int? lastRowId;
+      while (true) {
+        final cursor = lastCreated == null
+            ? ''
+            : tupleSeek
+            ? 'AND (created_at, rowid) > (?, ?)'
+            : '${indexed ? 'AND created_at >= ? ' : ''}AND (created_at > ? OR (created_at = ? AND rowid > ?))';
+        final page = await txn.rawQuery(
+          '''
+          SELECT *, rowid AS __queue_order
+          FROM $_queueTable ${indexed ? 'INDEXED BY idx_${_queueTable}_created' : ''}
+          WHERE status IN (?, ?, ?, ?)
+          $cursor
+          ORDER BY created_at ASC, rowid ASC
+          LIMIT ?
+        ''',
+          [
+            ...statuses,
+            if (lastCreated != null) ...[
+              lastCreated,
+              if (!tupleSeek) ...[if (indexed) lastCreated, lastCreated],
+              lastRowId,
+            ],
+            pageSize,
+          ],
+        );
+        if (page.isEmpty) break;
+        lastCreated = page.last['created_at'] as String;
+        lastRowId = page.last['__queue_order'] as int;
+        for (final row in page) {
+          rows.add(Map<String, dynamic>.of(row)..remove('__queue_order'));
+        }
+        if (page.length < pageSize) break;
+      }
+      return rows;
+    });
   }
 
   Future<void> replacePendingDownloadQueueRows(
@@ -412,24 +456,85 @@ class AppStateDatabase {
   Future<void> applyPendingDownloadQueueChanges({
     required List<Map<String, dynamic>> upserts,
     required List<String> deletedIds,
+    @visibleForTesting Database? databaseOverride,
   }) async {
     if (upserts.isEmpty && deletedIds.isEmpty) return;
-    final db = await database;
-    await db.transaction((txn) async {
-      final batch = txn.batch();
-      for (final id in deletedIds) {
-        batch.delete(_queueTable, where: 'id = ?', whereArgs: [id]);
-      }
-      for (final row in upserts) {
-        batch.insert(
-          _queueTable,
-          row,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      }
-      await batch.commit(noResult: true);
-    });
+    final db = databaseOverride ?? await database;
+    await db.transaction((txn) => _writeQueueChanges(txn, upserts, deletedIds));
   }
+
+  static Future<void> _writeQueueChanges(
+    Transaction txn,
+    List<Map<String, dynamic>> upserts,
+    List<String> deletedIds,
+  ) async {
+    var batch = txn.batch();
+    var pending = 0;
+    Future<void> flushBatch() async {
+      await batch.commit(noResult: true);
+      batch = txn.batch();
+      pending = 0;
+    }
+
+    // Bound method-channel encoding for a large queue while retaining one
+    // transaction: a later failed chunk rolls back earlier chunks as well.
+    for (final id in deletedIds) {
+      batch.delete(_queueTable, where: 'id = ?', whereArgs: [id]);
+      if (++pending == 256) await flushBatch();
+    }
+    for (var index = 0; index < upserts.length;) {
+      final row = upserts[index];
+      if (upserts.length >= 64 && _canonicalQueueRow(row)) {
+        if (pending > 0) await flushBatch();
+        final arguments = <Object?>[];
+        final start = index;
+        // Five bindings per row: 192 rows stay below older SQLite's 999 limit.
+        while (index < upserts.length &&
+            index - start < 192 &&
+            _canonicalQueueRow(upserts[index])) {
+          final value = upserts[index++];
+          arguments.addAll([
+            value['id'],
+            value['item_json'],
+            value['status'],
+            value['created_at'],
+            value['updated_at'],
+          ]);
+        }
+        final count = index - start;
+        await txn.rawInsert(
+          count == 192
+              ? _fullQueueInsertStatement
+              : _queueInsertStatement(count),
+          arguments,
+        );
+        continue;
+      }
+      batch.insert(
+        _queueTable,
+        row,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      index++;
+      if (++pending == 256) await flushBatch();
+    }
+    if (pending > 0) await batch.commit(noResult: true);
+  }
+
+  static bool _canonicalQueueRow(Map<String, dynamic> row) =>
+      row.length == 5 &&
+      row.containsKey('id') &&
+      row.containsKey('item_json') &&
+      row.containsKey('status') &&
+      row.containsKey('created_at') &&
+      row.containsKey('updated_at');
+
+  static final String _fullQueueInsertStatement = _queueInsertStatement(192);
+
+  static String _queueInsertStatement(int rows) =>
+      'INSERT OR REPLACE INTO $_queueTable '
+      '(id, item_json, status, created_at, updated_at) VALUES '
+      '${List.filled(rows, '(?, ?, ?, ?, ?)').join(', ')}';
 
   Future<List<Map<String, dynamic>>> getRecentAccessRows({int? limit}) async {
     final db = await database;

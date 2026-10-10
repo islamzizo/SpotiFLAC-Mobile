@@ -5,6 +5,8 @@ import 'package:spotiflac_android/screens/now_playing_screen.dart';
 import 'package:spotiflac_android/services/app_orientation.dart';
 
 class _PlayerRoute extends NowPlayingRoute {
+  _PlayerRoute() : super(child: const SizedBox());
+
   @override
   Widget buildPage(
     BuildContext context,

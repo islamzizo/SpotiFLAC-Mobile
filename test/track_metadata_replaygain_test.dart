@@ -142,6 +142,9 @@ void main() {
       Future<void> openRemoval() async {
         await tester.tap(find.byIcon(Icons.more_vert));
         await tester.pumpAndSettle();
+        expect(find.text('Edit audio file'), findsNothing);
+        expect(find.text('Similar songs in Library'), findsNothing);
+        expect(find.text('Remove ReplayGain'), findsOneWidget);
         await tester.ensureVisible(find.text('Remove ReplayGain'));
         await tester.tap(find.text('Remove ReplayGain'));
         await tester.pumpAndSettle();

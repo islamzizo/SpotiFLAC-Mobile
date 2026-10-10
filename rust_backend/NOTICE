@@ -1,5 +1,12 @@
 # Third-party notices
 
+`crates/core/src/native_palette.rs` ports Material Color Utilities 0.13.0
+quantization (Google LLC, Apache-2.0) and Dart SDK Random compatibility
+(The Dart Authors, BSD-3-Clause). Full notices and licenses are packaged in
+`assets/licenses/native_palette.txt`. The native SQLite/TTML data jobs use
+rusqlite 0.40.2 and roxmltree 0.21.1 under their MIT licenses, packaged in
+`assets/licenses/native_data_jobs.txt`.
+
 The English title-casing control flow in
 `crates/core/src/metadata/musicbrainz/casing.rs` follows
 `golang.org/x/text/cases`. Its frozen Unicode 15 data is generated using the

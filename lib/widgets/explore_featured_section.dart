@@ -6,7 +6,7 @@ import 'package:spotiflac_android/widgets/audio_quality_badges.dart';
 /// Large editorial cards requested by a home-feed provider.
 class ExploreFeaturedSection extends StatelessWidget {
   final ExploreSection section;
-  final ValueChanged<ExploreItem> onItemTap;
+  final void Function(ExploreItem, BuildContext) onItemTap;
 
   const ExploreFeaturedSection({
     super.key,
@@ -67,93 +67,95 @@ class ExploreFeaturedSection extends StatelessWidget {
                       ),
                     ),
                   );
-                  return Semantics(
-                    button: true,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onItemTap(item),
-                      child: SizedBox(
-                        width: width,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                              height: headingHeight,
-                              child: Text(
-                                item.heading ?? '',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  height: 1.5,
-                                  fontWeight: FontWeight.w600,
-                                  color: colors.primary,
+                  return Builder(
+                    builder: (itemContext) => Semantics(
+                      button: true,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => onItemTap(item, itemContext),
+                        child: SizedBox(
+                          width: width,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                height: headingHeight,
+                                child: Text(
+                                  item.heading ?? '',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    height: 1.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: colors.primary,
+                                  ),
                                 ),
                               ),
-                            ),
-                            SizedBox(
-                              height: titleHeight,
-                              child: ExplicitTrackTitle(
-                                title: item.name,
-                                explicit: item.explicit == true,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 22,
-                                  height: 1.4,
+                              SizedBox(
+                                height: titleHeight,
+                                child: ExplicitTrackTitle(
+                                  title: item.name,
+                                  explicit: item.explicit == true,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 22,
+                                    height: 1.4,
+                                  ),
                                 ),
                               ),
-                            ),
-                            SizedBox(
-                              height: artistHeight,
-                              child: Text(
-                                item.artists,
-                                maxLines: 1,
+                              SizedBox(
+                                height: artistHeight,
+                                child: Text(
+                                  item.artists,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    height: 1.5,
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: SizedBox(
+                                  width: width,
+                                  height: imageHeight,
+                                  child: image == null || image.isEmpty
+                                      ? fallback
+                                      : CachedCoverImage(
+                                          imageUrl: image,
+                                          // Decode one axis so wide editorial art
+                                          // keeps its ratio on high-density screens.
+                                          memCacheWidth:
+                                              (width *
+                                                      MediaQuery.devicePixelRatioOf(
+                                                        context,
+                                                      ))
+                                                  .ceil()
+                                                  .clamp(320, 960),
+                                          fit: BoxFit.cover,
+                                          placeholder: (_, _) => fallback,
+                                          errorWidget: (_, _, _) => fallback,
+                                        ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                item.description ?? '',
+                                maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 16,
+                                  fontSize: 14,
                                   height: 1.5,
                                   color: colors.onSurfaceVariant,
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 8),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: SizedBox(
-                                width: width,
-                                height: imageHeight,
-                                child: image == null || image.isEmpty
-                                    ? fallback
-                                    : CachedCoverImage(
-                                        imageUrl: image,
-                                        // Decode one axis so wide editorial art
-                                        // keeps its ratio on high-density screens.
-                                        memCacheWidth:
-                                            (width *
-                                                    MediaQuery.devicePixelRatioOf(
-                                                      context,
-                                                    ))
-                                                .ceil()
-                                                .clamp(320, 960),
-                                        fit: BoxFit.cover,
-                                        placeholder: (_, _) => fallback,
-                                        errorWidget: (_, _, _) => fallback,
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              item.description ?? '',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 14,
-                                height: 1.5,
-                                color: colors.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),

@@ -27,6 +27,7 @@ void main() {
     bool disableAnimations = false,
     bool tickersEnabled = true,
     TextDirection direction = TextDirection.ltr,
+    CustomPainter? foregroundPainter,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -43,12 +44,15 @@ void main() {
                   width: width,
                   child: OverflowMarquee(
                     resetKey: title,
-                    child: ExplicitTrackTitle(
-                      title: title,
-                      explicit: explicit,
-                      style: const TextStyle(fontSize: 16),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: CustomPaint(
+                      foregroundPainter: foregroundPainter,
+                      child: ExplicitTrackTitle(
+                        title: title,
+                        explicit: explicit,
+                        style: const TextStyle(fontSize: 16),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
                 ),
@@ -131,6 +135,38 @@ void main() {
     await tester.pump(const Duration(seconds: 10));
     expect(controller(tester).offset, 0);
     expect(tester.binding.transientCallbackCount, 0);
+  });
+
+  testWidgets('scrolling retains text painting and track changes refresh it', (
+    tester,
+  ) async {
+    final counter = _PaintCounter();
+    await pumpTitle(tester, foregroundPainter: counter);
+    await startScrolling(tester);
+    final scroll = controller(tester);
+    final start = scroll.offset;
+    final paints = counter.paints;
+    expect(start, greaterThan(0));
+    for (var frame = 0; frame < 20; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(scroll.offset, greaterThan(start));
+    expect(counter.paints, paints);
+
+    await pumpTitle(
+      tester,
+      title: '$longTitle updated',
+      foregroundPainter: counter,
+    );
+    expect(scroll.offset, 0);
+    expect(counter.paints, greaterThan(paints));
+    expect(find.text('$longTitle updated'), findsNWidgets(2));
+    await startScrolling(tester);
+    final updatedPaints = counter.paints;
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(scroll.offset, greaterThan(28));
+    expect(counter.paints, updatedPaints);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('reduced motion and hidden routes stop the marquee', (
@@ -358,4 +394,14 @@ void main() {
       );
     }
   }
+}
+
+class _PaintCounter extends CustomPainter {
+  int paints = 0;
+
+  @override
+  void paint(Canvas canvas, Size size) => paints++;
+
+  @override
+  bool shouldRepaint(_PaintCounter oldDelegate) => false;
 }

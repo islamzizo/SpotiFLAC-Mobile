@@ -1,42 +1,14 @@
 package com.zarz.spotiflac
 
-import android.app.Activity
-import android.content.Context
-import android.content.Intent
 import android.net.Uri
-import android.os.Build
-import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.system.Os
 import android.system.OsConstants
-import androidx.activity.OnBackPressedCallback
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.documentfile.provider.DocumentFile
-import io.flutter.embedding.android.FlutterFragmentActivity
-import io.flutter.embedding.android.FlutterActivityLaunchConfigs.BackgroundMode
-import io.flutter.embedding.android.FlutterFragment
-import io.flutter.embedding.android.RenderMode
-import io.flutter.embedding.android.TransparencyMode
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.embedding.engine.FlutterShellArgs
-import io.flutter.plugin.common.EventChannel
-import io.flutter.plugin.common.MethodChannel
-import com.ryanheise.audioservice.AudioServicePlugin
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
 import org.json.JSONObject
-import org.json.JSONTokener
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.security.MessageDigest
+import java.io.IOException
 import java.util.Locale
 
 // SAF/MediaStore URI IO helpers: temp copies, writes, sidecars, and the
@@ -128,9 +100,6 @@ internal fun MainActivity.copyUriToTemp(
     fallbackExt: String? = null,
     displayName: String? = null,
 ): String? {
-        var tempFile: File? = null
-        var success = false
-
         try {
             val nameHint = (
                 displayName
@@ -145,16 +114,10 @@ internal fun MainActivity.copyUriToTemp(
             )
             val ext = if (extFromName.isNotBlank()) extFromName else if (extFromMime.isNotBlank()) extFromMime else (fallbackExt ?: "")
             val suffix = ext.ifBlank { ".tmp" }
-            tempFile = coreBackend.createTemporaryMediaFile(this, "saf_", suffix)
-
-            contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(tempFile).use { output ->
-                    input.copyTo(output, bufferSize = 256 * 1024)
-                }
-            } ?: return null
-
-            success = true
-            return tempFile.absolutePath
+            val tempFile = coreBackend.createTemporaryMediaFile(this, "saf_", suffix)
+            return copyToTemporaryMediaFile(tempFile) {
+                contentResolver.openInputStream(uri)
+            }?.absolutePath
         } catch (e: SecurityException) {
             // SAF permission denied - try MediaStore fallback for Samsung One UI
             // which may return MediaStore URIs from SAF tree traversal
@@ -179,12 +142,6 @@ internal fun MainActivity.copyUriToTemp(
                 "Failed copying SAF uri $uri to temp: ${e.message}",
             )
             return null
-        } finally {
-            if (!success) {
-                try {
-                    tempFile?.delete()
-                } catch (_: Exception) {}
-            }
         }
     }
 
@@ -195,32 +152,24 @@ internal fun MainActivity.copyUriToTemp(
      * that the SAF document provider cannot access.
      */
 internal fun MainActivity.copyMediaStoreUriToTemp(uri: Uri, fallbackExt: String?): String? {
-        var tempFile: File? = null
         try {
             val ext = resolveMediaStoreExt(uri, fallbackExt)
             val suffix = ext.ifBlank { ".tmp" }
-            tempFile = coreBackend.createTemporaryMediaFile(this, "ms_", suffix)
-
-            contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(tempFile).use { output ->
-                    input.copyTo(output, bufferSize = 256 * 1024)
-                }
-            } ?: run {
-                tempFile.delete()
-                return null
-            }
+            val tempFile = coreBackend.createTemporaryMediaFile(this, "ms_", suffix)
+            val copied = copyToTemporaryMediaFile(tempFile) {
+                contentResolver.openInputStream(uri)
+            } ?: return null
 
             android.util.Log.d(
                 "SpotiFLAC",
                 "MediaStore fallback succeeded for $uri",
             )
-            return tempFile.absolutePath
+            return copied.absolutePath
         } catch (e: Exception) {
             android.util.Log.w(
                 "SpotiFLAC",
                 "MediaStore fallback also failed for $uri: ${e.message}",
             )
-            try { tempFile?.delete() } catch (_: Exception) {}
             return null
         }
     }
@@ -252,7 +201,7 @@ internal fun MainActivity.buildLibraryCoverCacheKey(stablePath: String, lastModi
         return if (lastModified > 0L) "$normalizedPath|$lastModified" else normalizedPath
     }
 
-private fun isSeekableSafDescriptor(descriptor: ParcelFileDescriptor): Boolean {
+internal fun isSeekableSafDescriptor(descriptor: ParcelFileDescriptor): Boolean {
     return try {
         val position = Os.lseek(
             descriptor.fileDescriptor,
@@ -272,7 +221,9 @@ private fun MainActivity.readMetadataFromUri(
     uri: Uri,
     displayNameHint: String? = null,
     fallbackExt: String? = null,
-    acceptDirect: (JSONObject) -> Boolean = { true },
+    acceptRead: (JSONObject) -> Boolean = { true },
+    retryDirectOnFailure: Boolean = false,
+    onFailure: (String) -> Unit = {},
     read: (String, String) -> JSONObject?,
 ): JSONObject? {
     val displayName = buildUriDisplayName(uri, displayNameHint, fallbackExt)
@@ -280,16 +231,21 @@ private fun MainActivity.readMetadataFromUri(
         directRead = {
             contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
                 if (!isSeekableSafDescriptor(descriptor)) return@use null
-                read("/proc/self/fd/${descriptor.fd}", displayName)?.takeIf(acceptDirect)
+                read("/proc/self/fd/${descriptor.fd}", displayName)
             }
         },
         fallbackRead = {
-            val tempPath = copyUriToTemp(uri, fallbackExt)
+            val tempPath = copyUriToTemp(uri, fallbackExt, displayName = displayName)
             if (tempPath == null) null else try {
                 read(tempPath, displayName)
             } finally {
                 try { File(tempPath).delete() } catch (_: Exception) {}
             }
+        },
+        accept = acceptRead,
+        retryDirectOnFailure = retryDirectOnFailure,
+        onFailure = { error ->
+            onFailure(error?.message ?: "No readable audio metadata for $displayName")
         },
     )
 }
@@ -299,9 +255,18 @@ internal fun MainActivity.readAudioMetadataFromUri(
     displayNameHint: String? = null,
     fallbackExt: String? = null,
     coverCacheKey: String = "",
+    onFailure: (String) -> Unit = {},
 ): JSONObject? = readMetadataFromUri(
     uri, displayNameHint, fallbackExt,
-    acceptDirect = { !it.optBoolean("metadataFromFilename", false) },
+    acceptRead = {
+        val fromFilename = it.optBoolean("metadataFromFilename", false)
+        if (fromFilename) {
+            throw IOException("Audio tags unreadable; only filename-derived metadata available")
+        }
+        !fromFilename
+    },
+    retryDirectOnFailure = true,
+    onFailure = onFailure,
 ) { path, name ->
     if (name.endsWith(".dsf", true) || name.endsWith(".dff", true) || name.endsWith(".wv", true)) {
         DsdSource.open(path)?.use { source ->
@@ -321,7 +286,8 @@ internal fun MainActivity.readAudioMetadataFromUri(
     val obj = JSONObject(coreBackend.readAudioMetadata(
         path, name, coverCacheKey,
     ))
-    obj.takeUnless { it.has("error") }
+    if (obj.has("error")) throw IOException(obj.optString("error", "Audio metadata read failed"))
+    obj
 }
 
 /** The Hi-Res check reads only a window from the middle of the file, so a
@@ -338,6 +304,41 @@ internal fun MainActivity.readCompleteMetadataFromUri(
     displayNameHint: String? = null,
 ): JSONObject? = readMetadataFromUri(uri, displayNameHint) { path, name ->
     JSONObject(coreBackend.readFileMetadata(path, name)).takeUnless { it.has("error") }
+}
+
+/** Keep the resolved audio descriptor alive for quality and artwork reads.
+ * Only nonseekable providers need a staged audio copy. */
+internal fun MainActivity.scanCueFromUri(
+    cuePath: String,
+    audioUri: Uri,
+    audioName: String,
+    virtualPrefix: String,
+    modTime: Long,
+    cacheKey: String,
+): String {
+    val result = readMetadataFromUri(audioUri, audioName) { path, name ->
+        JSONObject().put("rows", coreBackend.scanCueForLibraryWithResolvedAudio(
+            cuePath, path, name, virtualPrefix, modTime, cacheKey,
+        ))
+    }
+    return result?.getString("rows") ?: error("Could not read resolved CUE audio")
+}
+
+/** Seekable remote documents need only tag reads, not a full audio download. */
+internal fun MainActivity.extractCoverFromUri(uri: Uri, outputPath: String) {
+    val name = buildUriDisplayName(uri)
+    contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+        if (isSeekableSafDescriptor(descriptor)) {
+            coreBackend.extractCoverToFile("/proc/self/fd/${descriptor.fd}", outputPath, name)
+            return
+        }
+    }
+    // Providers exposing a pipe cannot support random-access tag readers.
+    val tempPath = copyUriToTemp(uri, displayName = name)
+        ?: error("Failed to read document artwork")
+    try {
+        coreBackend.extractCoverToFile(tempPath, outputPath)
+    } finally { File(tempPath).delete() }
 }
 
 internal fun MainActivity.writeUriFromPath(uri: Uri, srcPath: String): Boolean {
@@ -422,11 +423,11 @@ internal fun MainActivity.writeSafSidecarLrc(audioUri: Uri, lrcContent: String):
     }
 
 internal fun MainActivity.runPostProcessingSafV2(fileUriStr: String, metadataJson: String, itemId: String): String {
-        val uri = Uri.parse(fileUriStr)
-        val doc = DocumentFile.fromSingleUri(this, uri)
-            ?: return errorJson("SAF file not found")
-
-        val tempInput = copyUriToTemp(uri) ?: return errorJson("Failed to copy SAF file to temp")
+    val uri = Uri.parse(fileUriStr)
+    val doc = DocumentFile.fromSingleUri(this, uri)
+        ?: return errorJson("SAF file not found")
+    val tempInput = copyUriToTemp(uri) ?: return errorJson("Failed to copy SAF file to temp")
+    return withOwnedTemporaryMediaFile(File(tempInput)) {
         val inputObj = JSONObject()
         inputObj.put("item_id", itemId)
         inputObj.put("path", tempInput)
@@ -439,22 +440,16 @@ internal fun MainActivity.runPostProcessingSafV2(fileUriStr: String, metadataJso
         val response = coreBackend.runPostProcessing(inputObj.toString(), metadataJson)
         val respObj = JSONObject(response)
         if (!respObj.optBoolean("success", false)) {
-            try {
-                File(tempInput).delete()
-            } catch (_: Exception) {}
-            return response
+            return@withOwnedTemporaryMediaFile response
         }
 
         val newPath = respObj.optString("new_file_path", "")
         val outputPath = if (newPath.isNotBlank()) newPath else tempInput
         val outputFile = File(outputPath)
         if (!outputFile.exists()) {
-            try {
-                File(tempInput).delete()
-            } catch (_: Exception) {}
             respObj.put("success", false)
             respObj.put("error", "postProcess output not found")
-            return respObj.toString()
+            return@withOwnedTemporaryMediaFile respObj.toString()
         }
 
         val newName = outputFile.name
@@ -468,17 +463,17 @@ internal fun MainActivity.runPostProcessingSafV2(fileUriStr: String, metadataJso
         if (!writeOk) {
             respObj.put("success", false)
             respObj.put("error", "failed to write postProcess output to SAF")
-            return respObj.toString()
+            return@withOwnedTemporaryMediaFile respObj.toString()
         }
 
         try {
             if (outputPath != tempInput) {
                 outputFile.delete()
             }
-            File(tempInput).delete()
         } catch (_: Exception) {}
 
         respObj.put("new_file_path", uri.toString())
         respObj.put("file_path", uri.toString())
-        return respObj.toString()
+        respObj.toString()
     }
+}

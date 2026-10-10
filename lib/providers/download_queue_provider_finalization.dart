@@ -1,16 +1,5 @@
 part of 'download_queue_provider.dart';
 
-/// Result of [DownloadQueueNotifier._finalizeDecryption]. [failStage] is
-/// only meaningful to the inline single-item pipeline, which surfaces a
-/// distinct error message per stage; the native-worker pipeline uses one
-/// generic message and ignores it.
-class _DecryptOutcome {
-  final String? path;
-  final String? newFileName;
-  final String? failStage;
-  const _DecryptOutcome(this.path, {this.newFileName, this.failStage});
-}
-
 class _QualityVariantFileOutcome {
   final String filePath;
   final String? fileName;
@@ -23,20 +12,6 @@ class _QualityVariantFileOutcome {
   });
 }
 
-class _AutoConversionOutcome {
-  final String filePath;
-  final String? fileName;
-  final String quality;
-  final bool converted;
-
-  const _AutoConversionOutcome({
-    required this.filePath,
-    required this.fileName,
-    required this.quality,
-    required this.converted,
-  });
-}
-
 /// AC-4 repair only applies to MP4 containers; decrypt can also emit raw
 /// FLAC, which the native MP4 box parser would reject as corrupt.
 bool _isMp4Container(String path) {
@@ -44,45 +19,31 @@ bool _isMp4Container(String path) {
   return lower.endsWith('.m4a') || lower.endsWith('.mp4');
 }
 
-Future<String> _normalizeDecryptedIsoBmffAudioPath(
-  String path,
-  Map<String, dynamic> result,
-) async {
-  if (!_isMp4Container(path)) return path;
-
-  final probedCodec = await FFmpegService.probePrimaryAudioCodec(path);
-  final reportedCodec =
-      result['audio_codec']?.toString() ??
-      result['actual_audio_codec']?.toString() ??
-      result['format']?.toString();
-  final desiredExt = isoBmffAudioExtensionForCodec(
-    probedCodec ?? reportedCodec,
-  );
-  if (path.toLowerCase().endsWith(desiredExt)) return path;
-
-  final targetPath = path.replaceFirst(
-    RegExp(r'\.(?:m4a|mp4)$', caseSensitive: false),
-    desiredExt,
-  );
-  if (targetPath == path) return path;
-  try {
-    final target = File(targetPath);
-    if (await target.exists()) {
-      _log.w(
-        'Cannot normalize ISO-BMFF audio extension; target already exists: '
-        '$targetPath',
-      );
-      return path;
-    }
-    final renamed = await File(path).rename(targetPath);
-    return renamed.path;
-  } catch (e) {
-    _log.w('Failed to normalize ISO-BMFF audio extension for $path: $e');
-    return path;
-  }
-}
-
 extension _DownloadQueueFinalization on DownloadQueueNotifier {
+  DownloadFileFinalizer get _fileFinalizer => DownloadFileFinalizer(
+    decryptFile: FFmpegService.decryptWithDescriptor,
+    probeCodec: FFmpegService.probePrimaryAudioCodec,
+    repairAc4: (path, source) async {
+      await PlatformBridge.ensureAC4Config(path, source);
+    },
+    convertAudio:
+        ({
+          required inputPath,
+          required targetFormat,
+          required bitrate,
+          required deleteOriginal,
+        }) => FFmpegService.convertAudioFormat(
+          inputPath: inputPath,
+          targetFormat: targetFormat,
+          bitrate: bitrate,
+          metadata: const {},
+          deleteOriginal: deleteOriginal,
+        ),
+    replaceSafFile: _replaceSafFileVia,
+    warn: _log.w,
+    info: _log.i,
+  );
+
   Future<void> _saveDownloadedMotionArtwork(
     Ref ref,
     DownloadItem item,
@@ -124,7 +85,7 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     }
   }
 
-  Future<_AutoConversionOutcome> _autoConvertDownloadedFile({
+  Future<DownloadConversionOutcome> _autoConvertDownloadedFile({
     required String itemId,
     required String filePath,
     required String? fileName,
@@ -136,154 +97,36 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     required String storageMode,
     String? downloadTreeUri,
     String? safRelativeDir,
-  }) async {
-    if (!settings.autoConvertDownloads) {
-      return _AutoConversionOutcome(
-        filePath: filePath,
-        fileName: fileName,
-        quality: currentQuality,
-        converted: false,
-      );
-    }
-
-    final targetFormat = normalizeAutoConvertFormat(settings.autoConvertFormat);
-    final targetBitrate = normalizeAutoConvertBitrate(
-      settings.autoConvertBitrate,
-    );
-    final targetBitrateKbps = autoConvertBitrateKbps(targetBitrate);
-    if (autoConversionAlreadySatisfied(
-      filePath: filePath,
-      fileName: fileName,
-      targetFormat: targetFormat,
-      targetBitrate: targetBitrate,
-      quality: currentQuality,
-      bitrateKbps: readPositiveBitrateKbps(
-        result['bitrate'] ?? result['actual_bitrate'],
-      ),
-    )) {
-      return _AutoConversionOutcome(
-        filePath: filePath,
-        fileName: fileName,
-        quality: currentQuality,
-        converted: false,
-      );
-    }
-
-    final baseFileName = (fileName?.trim().isNotEmpty == true
-        ? fileName!.trim()
-        : File(filePath).uri.pathSegments.last);
-    final convertedFileName = convertedOutputFileName(
-      originalFileName: baseFileName,
-      targetFormat: targetFormat,
-    );
-    final convertedQuality =
-        '${displayFormatForLossyFormat(targetFormat)} ${targetBitrateKbps}kbps';
-
-    Future<void> embedConvertedMetadata(String convertedPath) async {
-      if (!settings.embedMetadata) return;
-      try {
-        await _embedMetadataToFile(
-          convertedPath,
-          track,
-          format: metadataFormatForLossyFormat(targetFormat),
-          genre: result['genre'] as String?,
-          label: result['label'] as String?,
-          copyright: result['copyright'] as String?,
-          comment: result['comment'] as String?,
-          lyricsLrc: result['lyrics_lrc'] as String?,
-          downloadService: downloadService,
-          writeExternalLrc: storageMode != 'saf',
-        );
-      } catch (e) {
-        // The audio conversion itself is still valid. Preserve the converted
-        // file if an optional tag/cover write fails.
-        _log.w('Automatic conversion metadata embed failed: $e');
-        result['auto_conversion_metadata_warning'] = e.toString();
-      }
-    }
-
-    try {
-      updateItemStatus(itemId, DownloadStatus.finalizing, progress: 0.97);
-      String? convertedPath;
-      String? publishedFileName = convertedFileName;
-      if (storageMode == 'saf' && isContentUri(filePath)) {
-        if (downloadTreeUri == null || downloadTreeUri.isEmpty) {
-          throw StateError('Missing SAF tree for automatic conversion');
-        }
-        convertedPath = await _replaceSafFileVia(
-          uri: filePath,
-          treeUri: downloadTreeUri,
-          relativeDir: safRelativeDir ?? '',
-          avoidOverwrite:
-              convertedFileName.toLowerCase() != baseFileName.toLowerCase(),
-          onPublishedFileName: (value) => publishedFileName = value,
-          op: (tempPath, addCleanup) async {
-            final output = await FFmpegService.convertAudioFormat(
-              inputPath: tempPath,
-              targetFormat: targetFormat,
-              bitrate: targetBitrate,
-              metadata: const {},
-              deleteOriginal: false,
+  }) => _fileFinalizer.autoConvert(
+    result: DownloadResult.fromMap(result),
+    filePath: filePath,
+    fileName: fileName,
+    quality: currentQuality,
+    enabled: settings.autoConvertDownloads,
+    targetFormat: settings.autoConvertFormat,
+    targetBitrate: settings.autoConvertBitrate,
+    useSaf: storageMode == 'saf',
+    treeUri: downloadTreeUri,
+    relativeDir: safRelativeDir ?? '',
+    onStart: () =>
+        updateItemStatus(itemId, DownloadStatus.finalizing, progress: 0.97),
+    embedMetadata: settings.embedMetadata
+        ? (path, format) async {
+            await _embedMetadataToFile(
+              path,
+              track,
+              format: format,
+              genre: result['genre'] as String?,
+              label: result['label'] as String?,
+              copyright: result['copyright'] as String?,
+              comment: result['comment'] as String?,
+              lyricsLrc: result['lyrics_lrc'] as String?,
+              downloadService: downloadService,
+              writeExternalLrc: storageMode != 'saf',
             );
-            if (output == null) return null;
-            addCleanup(output);
-            await embedConvertedMetadata(output);
-            return (output, convertedFileName);
-          },
-        );
-      } else {
-        convertedPath = await FFmpegService.convertAudioFormat(
-          inputPath: filePath,
-          targetFormat: targetFormat,
-          bitrate: targetBitrate,
-          metadata: const {},
-          deleteOriginal: true,
-        );
-        if (convertedPath != null) {
-          // Deferred SAF downloads are converted in the cache before being
-          // published. Keep their logical filename instead of the temporary
-          // FFmpeg output basename (native_saf_work_...).
-          if (storageMode != 'saf') {
-            publishedFileName = File(convertedPath).uri.pathSegments.last;
           }
-          await embedConvertedMetadata(convertedPath);
-        }
-      }
-
-      if (convertedPath == null || convertedPath.isEmpty) {
-        throw StateError('FFmpeg returned no automatic conversion output');
-      }
-
-      result['file_path'] = convertedPath;
-      result['file_name'] = publishedFileName;
-      result['audio_codec'] = targetFormat;
-      result['format'] = targetFormat;
-      result['bitrate'] = targetBitrateKbps;
-      result.remove('actual_bit_depth');
-      result.remove('actual_sample_rate');
-      _log.i(
-        'Automatic conversion completed: ${autoConvertFormatLabel(targetFormat)} @ $targetBitrate',
-      );
-      return _AutoConversionOutcome(
-        filePath: convertedPath,
-        fileName: publishedFileName,
-        quality: convertedQuality,
-        converted: true,
-      );
-    } catch (e) {
-      // A successful download remains usable when the optional conversion
-      // fails. Conversion helpers only remove the source after atomic output
-      // promotion, so returning the original path is safe here.
-      result['auto_conversion_warning'] = e.toString();
-      _log.w('Automatic conversion failed; keeping downloaded source: $e');
-      return _AutoConversionOutcome(
-        filePath: filePath,
-        fileName: fileName,
-        quality: currentQuality,
-        converted: false,
-      );
-    }
-  }
+        : null,
+  );
 
   /// Builds the [DownloadHistoryItem] shared by the native-worker and inline
   /// completion paths. Fields whose source/derivation legitimately differs
@@ -367,7 +210,11 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
       albumArtist: normalizeOptionalString(trackToDownload.albumArtist),
       coverUrl: normalizeCoverReference(trackToDownload.coverUrl),
       filePath: filePath,
-      storageMode: useSaf ? 'saf' : 'app',
+      storageMode: filePath.startsWith('network://')
+          ? 'network'
+          : useSaf
+          ? 'saf'
+          : 'app',
       downloadTreeUri: useSaf ? downloadTreeUri : null,
       safRelativeDir: useSaf ? safRelativeDir : null,
       safFileName: useSaf ? safFileName : null,
@@ -630,101 +477,74 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     }
   }
 
-  /// Shared "SAF roundtrip" used by every finalize step that needs to
-  /// transform a SAF file: copies [uri] to a local temp file, lets [op]
-  /// transform it (returning the local path to publish plus the file name
-  /// to publish it under, or null to abort), writes that file back into the
-  /// SAF tree, deletes the original SAF file if its URI changed, and always
-  /// cleans up the local temp file(s). Returns the new content:// URI, or
-  /// null if the temp copy, [op], or the SAF write failed.
   Future<String?> _replaceSafFileVia({
     required String uri,
     required String treeUri,
     required String relativeDir,
-    required Future<(String path, String fileName)?> Function(
-      String tempPath,
-      void Function(String path) addCleanup,
-    )
-    op,
+    required SafFileOperation op,
     bool avoidOverwrite = false,
     String preservedSuffix = '',
     String? collisionCleanFileName,
     String? collisionVariantFileName,
     void Function(String fileName)? onPublishedFileName,
-  }) async {
-    final tempPath = await _copySafToTemp(uri);
-    if (tempPath == null) return null;
-    // Files op produces are registered here the moment they exist, so they
-    // are cleaned up even if op throws before returning.
-    final producedTemps = <String>{};
-    String? outPath;
-    try {
-      final produced = await op(tempPath, producedTemps.add);
-      if (produced == null) return null;
-      outPath = produced.$1;
-      final fileName = produced.$2;
-      final dotIndex = fileName.lastIndexOf('.');
-      final ext = dotIndex >= 0 ? fileName.substring(dotIndex) : '';
-      String? newUri;
-      if (collisionCleanFileName != null && collisionVariantFileName != null) {
-        final published = await _writeTempToSafCollisionAware(
-          treeUri: treeUri,
-          relativeDir: relativeDir,
-          cleanFileName: collisionCleanFileName,
-          variantFileName: collisionVariantFileName,
-          mimeType: _mimeTypeForExt(ext),
-          srcPath: outPath,
-          preservedSuffix: preservedSuffix,
-        );
-        newUri = published?.uri;
-        if (published != null) {
-          onPublishedFileName?.call(published.fileName);
-        }
-      } else if (avoidOverwrite) {
-        final published = await _writeTempToSafUnique(
-          treeUri: treeUri,
-          relativeDir: relativeDir,
-          fileName: fileName,
-          mimeType: _mimeTypeForExt(ext),
-          srcPath: outPath,
-          preservedSuffix: preservedSuffix,
-        );
-        newUri = published?.uri;
-        if (published != null) {
-          onPublishedFileName?.call(published.fileName);
-        }
-      } else {
-        newUri = await _writeTempToSaf(
-          treeUri: treeUri,
-          relativeDir: relativeDir,
-          fileName: fileName,
-          mimeType: _mimeTypeForExt(ext),
-          srcPath: outPath,
-        );
-        if (newUri != null) {
-          onPublishedFileName?.call(fileName);
-        }
-      }
-      if (newUri == null) return null;
-      if (newUri != uri) {
-        await _deleteSafFile(uri);
-      }
-      return newUri;
-    } finally {
-      try {
-        await File(tempPath).delete();
-      } catch (_) {}
-      if (outPath != null) {
-        producedTemps.add(outPath);
-      }
-      for (final path in producedTemps) {
-        if (path == tempPath) continue;
-        try {
-          await File(path).delete();
-        } catch (_) {}
-      }
-    }
-  }
+  }) =>
+      DownloadSafFileReplacer(
+        copyToTemp: _copySafToTemp,
+        deleteSource: _deleteSafFile,
+        publish:
+            ({
+              required treeUri,
+              required relativeDir,
+              required fileName,
+              required srcPath,
+              required avoidOverwrite,
+              required preservedSuffix,
+              collisionCleanFileName,
+              collisionVariantFileName,
+            }) async {
+              final dotIndex = fileName.lastIndexOf('.');
+              final ext = dotIndex >= 0 ? fileName.substring(dotIndex) : '';
+              if (collisionCleanFileName != null &&
+                  collisionVariantFileName != null) {
+                return _writeTempToSafCollisionAware(
+                  treeUri: treeUri,
+                  relativeDir: relativeDir,
+                  cleanFileName: collisionCleanFileName,
+                  variantFileName: collisionVariantFileName,
+                  mimeType: _mimeTypeForExt(ext),
+                  srcPath: srcPath,
+                  preservedSuffix: preservedSuffix,
+                );
+              } else if (avoidOverwrite) {
+                return _writeTempToSafUnique(
+                  treeUri: treeUri,
+                  relativeDir: relativeDir,
+                  fileName: fileName,
+                  mimeType: _mimeTypeForExt(ext),
+                  srcPath: srcPath,
+                  preservedSuffix: preservedSuffix,
+                );
+              }
+              final newUri = await _writeTempToSaf(
+                treeUri: treeUri,
+                relativeDir: relativeDir,
+                fileName: fileName,
+                mimeType: _mimeTypeForExt(ext),
+                srcPath: srcPath,
+              );
+              return newUri == null ? null : (uri: newUri, fileName: fileName);
+            },
+      ).replace(
+        uri: uri,
+        treeUri: treeUri,
+        relativeDir: relativeDir,
+        op: op,
+        avoidOverwrite: avoidOverwrite,
+        preservedSuffix: preservedSuffix,
+        collisionCleanFileName: collisionCleanFileName,
+        collisionVariantFileName: collisionVariantFileName,
+        onPublishedFileName: onPublishedFileName,
+      );
 
   Future<_QualityVariantFileOutcome> _finalizeQualityVariantFilename({
     required DownloadItem item,
@@ -928,326 +748,49 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     });
   }
 
-  /// Shared decrypt finalize used by both the inline single-item pipeline
-  /// and the native-worker pipeline. Divergences captured as parameters:
-  /// [repairAc4] (inline repairs AC-4 containers using the still-encrypted
-  /// source; native-worker does not) and [onStart] (inline logs its own
-  /// "detected" message; native-worker logs a differently worded one).
-  Future<_DecryptOutcome> _finalizeDecryption({
-    required Map<String, dynamic> result,
-    required String filePath,
-    required String storageMode,
-    String? downloadTreeUri,
-    required String safRelativeDir,
-    required String baseName,
-    required String extFallback,
-    required bool repairAc4,
-    void Function(String strategy)? onStart,
-  }) async {
-    if (result['already_exists'] == true) {
-      return _DecryptOutcome(filePath);
-    }
-
-    final descriptor = DownloadDecryptionDescriptor.fromDownloadResult(result);
-    if (descriptor == null) {
-      return _DecryptOutcome(filePath);
-    }
-    onStart?.call(descriptor.normalizedStrategy);
-
-    if (storageMode == 'saf' && isContentUri(filePath)) {
-      if (downloadTreeUri == null || downloadTreeUri.isEmpty) {
-        return const _DecryptOutcome(
-          null,
-          failStage: DownloadQueueNotifier._decryptStageSafAccess,
-        );
-      }
-      String? failStage;
-      var opStarted = false;
-      String? producedFileName;
-      final newUri = await _replaceSafFileVia(
-        uri: filePath,
-        treeUri: downloadTreeUri,
-        relativeDir: safRelativeDir,
-        op: (tempPath, addCleanup) async {
-          opStarted = true;
-          final rawDecryptedTempPath =
-              await FFmpegService.decryptWithDescriptor(
-                inputPath: tempPath,
-                descriptor: descriptor,
-                deleteOriginal: false,
-              );
-          if (rawDecryptedTempPath == null) {
-            failStage = DownloadQueueNotifier._decryptStageDecrypt;
-            return null;
-          }
-          addCleanup(rawDecryptedTempPath);
-          final decryptedTempPath = await _normalizeDecryptedIsoBmffAudioPath(
-            rawDecryptedTempPath,
-            result,
-          );
-          if (decryptedTempPath != rawDecryptedTempPath) {
-            addCleanup(decryptedTempPath);
-          }
-          if (repairAc4 && _isMp4Container(decryptedTempPath)) {
-            try {
-              await PlatformBridge.ensureAC4Config(decryptedTempPath, tempPath);
-            } catch (e) {
-              _log.w('AC-4 container repair skipped: $e');
-            }
-          }
-          final dotIndex = decryptedTempPath.lastIndexOf('.');
-          final decryptedExt = dotIndex >= 0
-              ? decryptedTempPath.substring(dotIndex).toLowerCase()
-              : extFallback;
-          const allowedExt = <String>{'.flac', '.m4a', '.mp4', '.mp3', '.opus'};
-          final finalExt = allowedExt.contains(decryptedExt)
-              ? decryptedExt
-              : extFallback;
-          final newFileName = '$baseName$finalExt';
-          producedFileName = newFileName;
-          return (decryptedTempPath, newFileName);
-        },
-      );
-      if (newUri == null) {
-        return _DecryptOutcome(
-          null,
-          failStage:
-              failStage ??
-              (opStarted
-                  ? DownloadQueueNotifier._decryptStageSafWrite
-                  : DownloadQueueNotifier._decryptStageSafAccess),
-        );
-      }
-      return _DecryptOutcome(newUri, newFileName: producedFileName);
-    }
-
-    if (repairAc4) {
-      final rawDecryptedPath = await FFmpegService.decryptWithDescriptor(
-        inputPath: filePath,
-        descriptor: descriptor,
-        deleteOriginal: false,
-      );
-      if (rawDecryptedPath == null) {
-        try {
-          await deleteFile(filePath);
-        } catch (_) {}
-        return const _DecryptOutcome(
-          null,
-          failStage: DownloadQueueNotifier._decryptStageDecrypt,
-        );
-      }
-      final decryptedPath = await _normalizeDecryptedIsoBmffAudioPath(
-        rawDecryptedPath,
-        result,
-      );
-      if (_isMp4Container(decryptedPath)) {
-        try {
-          await PlatformBridge.ensureAC4Config(decryptedPath, filePath);
-        } catch (e) {
-          _log.w('AC-4 container repair skipped: $e');
-        }
-      }
-      try {
-        await deleteFile(filePath);
-      } catch (_) {}
-      return _DecryptOutcome(decryptedPath);
-    }
-
-    final rawDecryptedPath = await FFmpegService.decryptWithDescriptor(
-      inputPath: filePath,
-      descriptor: descriptor,
-      deleteOriginal: true,
-    );
-    final decryptedPath = rawDecryptedPath == null
-        ? null
-        : await _normalizeDecryptedIsoBmffAudioPath(rawDecryptedPath, result);
-    return _DecryptOutcome(
-      decryptedPath,
-      failStage: decryptedPath == null
-          ? DownloadQueueNotifier._decryptStageDecrypt
-          : null,
-    );
-  }
-
   Future<String?> _finalizeNativeWorkerContainerConversion({
     required _NativeWorkerRequestContext context,
-    required Map<String, dynamic> result,
+    required DownloadResult result,
     required AppSettings settings,
     required Track track,
     required String filePath,
-  }) async {
-    if (context.outputExt != '.flac') {
-      return filePath;
-    }
-    final resultAudioFormat = normalizeAudioFormatValue(
-      result['audio_codec']?.toString() ??
-          result['actual_audio_codec']?.toString(),
-    );
-    final requiresContainerConversion =
-        result['requires_container_conversion'] == true ||
-        result['requiresContainerConversion'] == true ||
-        _shouldRequestContainerConversion(
+  }) =>
+      DownloadContainerFinalizer(
+        probeCodec: FFmpegService.probePrimaryAudioCodec,
+        isNativeFlac: FFmpegService.isNativeFlacFile,
+        ensureFlacExtension: FFmpegService.ensureNativeFlacExtension,
+        convertToFlac: FFmpegService.convertM4aToFlac,
+        replaceSafFile: _replaceSafFileVia,
+        debug: _log.d,
+      ).finalize(
+        result: result,
+        filePath: filePath,
+        requestedExtension: context.outputExt,
+        forceConversion: _shouldRequestContainerConversion(
           context.item.service,
           context.outputExt,
-        );
-    // M4A/MP4 identifies a container, not necessarily a lossy codec. When an
-    // extension explicitly requests conversion, probe the stream below rather
-    // than treating the container label as proof that its audio is lossy.
-    if (!requiresContainerConversion && isLossyAudioFormat(resultAudioFormat)) {
-      _log.d(
-        'Native-worker output is $resultAudioFormat; preserving native container.',
-      );
-      return filePath;
-    }
-    final resultOutputExt = _downloadResultOutputExt(
-      result,
-      filePath: filePath,
-    );
-    final lowerPath = filePath.toLowerCase();
-    final resultFileName = (result['file_name'] as String?)?.toLowerCase();
-    final mayNeedContainerConversion =
-        requiresContainerConversion ||
-        lowerPath.endsWith('.m4a') ||
-        lowerPath.endsWith('.mp4') ||
-        resultOutputExt == '.m4a' ||
-        resultOutputExt == '.mp4' ||
-        isContentUri(filePath);
-    if (!mayNeedContainerConversion) {
-      return filePath;
-    }
-    final requestedDecryptionExt =
-        DownloadDecryptionDescriptor.fromDownloadResult(
-          result,
-        )?.normalizedOutputExtension;
-    if (!requiresContainerConversion &&
-        requestedDecryptionExt != null &&
-        requestedDecryptionExt != '.flac') {
-      _log.d(
-        'Native-worker decrypted output requested $requestedDecryptionExt; preserving native container.',
-      );
-      return filePath;
-    }
-    final looksLikeM4a =
-        lowerPath.endsWith('.m4a') ||
-        lowerPath.endsWith('.mp4') ||
-        resultOutputExt == '.m4a' ||
-        resultOutputExt == '.mp4' ||
-        (resultFileName != null &&
-            (resultFileName.endsWith('.m4a') ||
-                resultFileName.endsWith('.mp4')));
-    if (!requiresContainerConversion &&
-        !looksLikeM4a &&
-        !isContentUri(filePath)) {
-      return filePath;
-    }
-
-    Future<void> embedFlacMetadata(String flacPath) async {
-      if (!settings.embedMetadata) return;
-      await _embedMetadataToFile(
-        flacPath,
-        track,
-        format: 'flac',
-        genre: result['genre'] as String?,
-        label: result['label'] as String?,
-        copyright: result['copyright'] as String?,
-        comment: result['comment'] as String?,
-        lyricsLrc: result['lyrics_lrc'] as String?,
-        downloadService: context.item.service,
-        writeExternalLrc: context.storageMode != 'saf',
-      );
-    }
-
-    void markFinalOutputAsFlac() {
-      result['audio_codec'] = 'flac';
-      result['format'] = 'flac';
-      result['actual_extension'] = '.flac';
-      result['output_extension'] = '.flac';
-    }
-
-    if (context.storageMode == 'saf' && isContentUri(filePath)) {
-      final treeUri = context.downloadTreeUri;
-      if (treeUri == null || treeUri.isEmpty) {
-        return null;
-      }
-      var preserve = false;
-      final rawFileName =
-          (result['file_name'] as String?) ?? context.safFileName ?? 'track';
-      final newFileName =
-          '${rawFileName.replaceFirst(RegExp(r'\.[^.]+$'), '')}.flac';
-      final newUri = await _replaceSafFileVia(
-        uri: filePath,
-        treeUri: treeUri,
+        ),
+        useSaf: context.storageMode == 'saf',
+        treeUri: context.downloadTreeUri,
         relativeDir: context.safRelativeDir ?? '',
-        op: (tempPath, addCleanup) async {
-          final codec = await FFmpegService.probePrimaryAudioCodec(tempPath);
-          final isAlreadyNativeFlac =
-              codec == 'flac' && await FFmpegService.isNativeFlacFile(tempPath);
-          final shouldAttemptConversion =
-              FFmpegService.isLosslessAudioCodec(codec) ||
-              (requiresContainerConversion && isInconclusiveAudioCodec(codec));
-          if (!shouldAttemptConversion) {
-            _log.d(
-              'Preserving native container; audio codec is ${codec ?? 'unknown'}, '
-              'no FLAC container conversion needed.',
-            );
-            preserve = true;
-            return null;
-          }
-          if (isAlreadyNativeFlac) {
-            _log.d(
-              'Native FLAC payload detected in temporary container; publishing '
-              'as FLAC and embedding metadata.',
-            );
-            await embedFlacMetadata(tempPath);
-            return (tempPath, newFileName);
-          }
-          final flacPath = await FFmpegService.convertM4aToFlac(tempPath);
-          if (flacPath == null) {
-            return null;
-          }
-          addCleanup(flacPath);
-          await embedFlacMetadata(flacPath);
-          return (flacPath, newFileName);
-        },
+        fallbackFileName: context.safFileName,
+        embedMetadata: settings.embedMetadata
+            ? (path) async {
+                await _embedMetadataToFile(
+                  path,
+                  track,
+                  format: 'flac',
+                  genre: result['genre'] as String?,
+                  label: result['label'] as String?,
+                  copyright: result['copyright'] as String?,
+                  comment: result['comment'] as String?,
+                  lyricsLrc: result['lyrics_lrc'] as String?,
+                  downloadService: context.item.service,
+                  writeExternalLrc: context.storageMode != 'saf',
+                );
+              }
+            : null,
       );
-      if (preserve) {
-        return filePath;
-      }
-      if (newUri == null) {
-        return null;
-      }
-      result['file_name'] = newFileName;
-      markFinalOutputAsFlac();
-      return newUri;
-    }
-
-    final codec = await FFmpegService.probePrimaryAudioCodec(filePath);
-    final isAlreadyNativeFlac =
-        codec == 'flac' && await FFmpegService.isNativeFlacFile(filePath);
-    final shouldAttemptConversion =
-        FFmpegService.isLosslessAudioCodec(codec) ||
-        (requiresContainerConversion && isInconclusiveAudioCodec(codec));
-    if (!shouldAttemptConversion) {
-      _log.d(
-        'Preserving native container; audio codec is ${codec ?? 'unknown'}, '
-        'no FLAC container conversion needed.',
-      );
-      return filePath;
-    }
-    if (isAlreadyNativeFlac) {
-      final flacPath = await FFmpegService.ensureNativeFlacExtension(filePath);
-      await embedFlacMetadata(flacPath);
-      markFinalOutputAsFlac();
-      return flacPath;
-    }
-    final flacPath = await FFmpegService.convertM4aToFlac(filePath);
-    if (flacPath == null) {
-      return null;
-    }
-    await embedFlacMetadata(flacPath);
-    markFinalOutputAsFlac();
-    return flacPath;
-  }
 
   /// Shared external-LRC finalize used by both the inline single-item
   /// pipeline (SAF only; the local-file case is already handled during
@@ -1272,7 +815,11 @@ extension _DownloadQueueFinalization on DownloadQueueNotifier {
     final shouldSaveExternalLrc =
         settings.embedMetadata &&
         settings.embedLyrics &&
-        !_shouldSkipLyrics(extensionState, track.source, service) &&
+        !DownloadMetadataResolver.shouldSkipLyrics(
+          extensionState,
+          track.source,
+          service,
+        ) &&
         (lyricsMode == 'external' || lyricsMode == 'both');
     if (!shouldSaveExternalLrc) {
       return false;

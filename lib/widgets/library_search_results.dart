@@ -19,6 +19,7 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_choice_chip.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
 import 'package:spotiflac_android/widgets/library_track_selection_bar.dart';
+import 'package:spotiflac_android/widgets/library_selection_playback_actions.dart';
 import 'package:spotiflac_android/widgets/selection_bottom_bar.dart';
 import 'package:spotiflac_android/widgets/track_card.dart';
 
@@ -61,10 +62,9 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
     if (oldWidget.query != widget.query) {
       _pages = 1;
       // A selection belongs to the results it was made in.
-      if (_selecting) {
-        _selected.clear();
-        _selectionOverlay.hide();
-      }
+      _selected.clear();
+      _suppressSelectionBar = false;
+      _selectionOverlay.hide();
     }
   }
 
@@ -112,7 +112,10 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
 
   void _exitSelection() {
     if (!mounted) return;
-    setState(_selected.clear);
+    setState(() {
+      _selected.clear();
+      _suppressSelectionBar = false;
+    });
     _selectionOverlay.hide();
   }
 
@@ -154,6 +157,10 @@ class _LibrarySearchResultsState extends ConsumerState<LibrarySearchResults> {
               .toList(growable: false)
         : const <LocalLibraryItem>[];
     return LibraryTrackSelectionBar(
+      playbackActions: LibrarySelectionPlaybackActions(
+        items: items,
+        onClose: _exitSelection,
+      ),
       selectedCount: items.length,
       allSelected: allSelected,
       onClose: _exitSelection,

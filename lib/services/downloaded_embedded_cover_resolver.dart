@@ -94,7 +94,8 @@ class DownloadedEmbeddedCoverResolver {
   static const _previewValidationBatchSize = 8;
   static const _maxPendingPreviewValidations = 64;
   static DateTime Function() _validationClock = DateTime.now;
-  static final LinkedHashSet<String> _failedExtract = LinkedHashSet<String>();
+  static final _failedExtract = <String, DateTime>{};
+  static const _documentFailureRetryDelay = Duration(seconds: 30);
 
   static Directory? _persistentCacheDirectoryOverride;
   static Future<String>? _persistentCacheRootFuture;
@@ -367,9 +368,9 @@ class DownloadedEmbeddedCoverResolver {
   static void _rememberFailedExtract(String cleanPath) {
     _failedExtract
       ..remove(cleanPath)
-      ..add(cleanPath);
+      ..[cleanPath] = _validationClock();
     while (_failedExtract.length > _maxFailedExtractEntries) {
-      _failedExtract.remove(_failedExtract.first);
+      _failedExtract.remove(_failedExtract.keys.first);
     }
   }
 
@@ -508,8 +509,17 @@ class DownloadedEmbeddedCoverResolver {
     if (!forceRefresh && cached != null) {
       return Future<String?>.value(cached.previewPath);
     }
-    if (!forceRefresh && _failedExtract.contains(cleanPath)) {
-      return Future<String?>.value();
+    if (!forceRefresh && _failedExtract.containsKey(cleanPath)) {
+      // A SAF provider may temporarily be offline or still opening its remote
+      // file. Do not turn that failure into "no artwork" for the whole session.
+      // Retry on demand, with a cooldown so scrolling cannot flood the NAS.
+      final failedAt = _failedExtract[cleanPath]!;
+      if (!isContentUri(cleanPath) ||
+          _validationClock().difference(failedAt) <
+              _documentFailureRetryDelay) {
+        return Future<String?>.value();
+      }
+      _failedExtract.remove(cleanPath);
     }
 
     final job = _PendingEmbeddedCoverExtraction(

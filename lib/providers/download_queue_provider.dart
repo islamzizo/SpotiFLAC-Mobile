@@ -3,31 +3,38 @@ import 'dart:math';
 import 'dart:convert';
 import 'dart:io';
 import 'package:spotiflac_android/utils/chunked_list.dart';
-import 'package:flutter/material.dart'
-    show ScaffoldMessenger, SnackBar, SnackBarAction, Text;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:spotiflac_android/services/network_download_staging.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/models/download_item.dart';
+import 'package:spotiflac_android/models/download_result.dart';
 import 'package:spotiflac_android/models/settings.dart';
 import 'package:spotiflac_android/models/track.dart';
-import 'package:spotiflac_android/services/app_navigation_service.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/player_motion_artwork_provider.dart';
 import 'package:spotiflac_android/providers/download_verification_retry_guard.dart';
 import 'package:spotiflac_android/providers/download_queue_state.dart';
-import 'package:spotiflac_android/services/app_state_database.dart';
+import 'package:spotiflac_android/services/download_queue_persistence.dart';
+import 'package:spotiflac_android/services/download_progress.dart';
+import 'package:spotiflac_android/services/download_file_finalizer.dart';
+import 'package:spotiflac_android/services/download_container_finalizer.dart';
+import 'package:spotiflac_android/services/download_completion_audio.dart';
+import 'package:spotiflac_android/services/download_metadata_resolver.dart';
+import 'package:spotiflac_android/services/download_metadata_embedding.dart';
+import 'package:spotiflac_android/services/download_saf_file_replacer.dart';
+import 'package:spotiflac_android/services/download_connectivity_policy.dart';
+import 'package:spotiflac_android/services/download_scheduler.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/download_request_payload.dart';
-import 'package:spotiflac_android/services/download_album_metadata.dart';
 import 'package:spotiflac_android/services/download_motion_artwork_source.dart';
 import 'package:spotiflac_android/services/ffmpeg_service.dart';
 import 'package:spotiflac_android/services/hires_check_service.dart';
 import 'package:spotiflac_android/services/replaygain_service.dart';
+import 'package:spotiflac_android/services/album_replaygain_readiness.dart';
 import 'package:spotiflac_android/services/notification_service.dart';
 import 'package:spotiflac_android/services/verification_notification.dart';
 import 'package:spotiflac_android/utils/logger.dart' hide log;
@@ -35,7 +42,6 @@ import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 import 'package:spotiflac_android/utils/audio_format_utils.dart';
-import 'package:spotiflac_android/utils/audio_conversion_utils.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/extension_auth_launcher.dart';
 import 'package:spotiflac_android/utils/download_error_type.dart';
@@ -44,10 +50,13 @@ import 'package:spotiflac_android/utils/progress_stream_poller.dart';
 
 import 'package:spotiflac_android/providers/download_history_provider.dart';
 import 'package:spotiflac_android/services/native_download_history.dart';
-import 'package:spotiflac_android/services/download_track_metadata.dart';
 
 export 'package:spotiflac_android/providers/download_history_provider.dart';
 export 'package:spotiflac_android/providers/download_queue_state.dart';
+export 'package:spotiflac_android/services/download_metadata_resolver.dart'
+    show copyTrackWithResolvedMetadata;
+export 'package:spotiflac_android/services/download_queue_persistence.dart'
+    show encodeDownloadQueueItemForPersistence, downloadQueuePersistenceStatus;
 
 export 'package:spotiflac_android/services/history_database.dart'
     show HistoryLookupRequest, HistoryBatchLookupRequest;
@@ -64,8 +73,6 @@ part 'download_queue_provider_single_item.dart';
 part 'download_queue_provider_hires_check.dart';
 
 final _log = AppLogger('DownloadQueue');
-
-typedef _PersistedQueueItemCache = Map<String, DownloadItem?>;
 
 /// Prevents asynchronous queue startup checks from overlapping before
 /// [DownloadQueueState.isProcessing] can be published.
@@ -89,27 +96,6 @@ class QueueProcessingGate {
     return shouldRunAgain;
   }
 }
-
-/// Encodes only restart-relevant queue state. Transfer progress is delivered
-/// by the native progress stream and must not rewrite SQLite every few seconds.
-String encodeDownloadQueueItemForPersistence(DownloadItem item) {
-  final persistedStatus = downloadQueuePersistenceStatus(item.status);
-  final json = item.toJson()
-    ..['status'] = persistedStatus.name
-    ..['progress'] = 0.0
-    ..['speedMBps'] = 0.0
-    ..['bytesReceived'] = 0
-    ..['bytesTotal'] = 0
-    ..['preparationStage'] = '';
-  return jsonEncode(json);
-}
-
-DownloadStatus downloadQueuePersistenceStatus(DownloadStatus status) =>
-    switch (status) {
-      DownloadStatus.downloading ||
-      DownloadStatus.finalizing => DownloadStatus.queued,
-      _ => status,
-    };
 
 /// Set on queued items when the persisted Android SAF grant fails validation.
 /// The queue UI matches on this to offer re-selecting the download folder.
@@ -319,36 +305,28 @@ final _explicitQualityFilenameTokenPattern = RegExp(
 );
 
 class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
-  Timer? _queuePersistDebounce;
-  Future<void> _queuePersistenceWrite = Future<void>.value();
-  Future<void> _queuePausePersistenceWrite = Future<void>.value();
-  final _PersistedQueueItemCache _persistedQueueItemById = {};
-  final Set<String> _nonCanonicalPersistedQueueIds = {};
+  late final _queuePersistence = DownloadQueuePersistence(
+    currentItems: () => state.items,
+    onError: (error) => _log.e('Failed to persist queue: $error'),
+  );
   final QueueProcessingGate _queueProcessingGate = QueueProcessingGate();
+  final DownloadProgressTracker _progressTracker = DownloadProgressTracker();
+  final DownloadConnectivityPolicy _connectivityPolicy =
+      DownloadConnectivityPolicy();
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   int _downloadCount = 0;
   static const _progressPollingInterval = Duration(milliseconds: 1200);
-  static const _idleProgressPollEveryTicks = 3;
   static const _progressStreamBootstrapTimeout = Duration(seconds: 3);
   static const _queueSchedulingInterval = Duration(milliseconds: 250);
-  static const _queuePersistDebounceDuration = Duration(milliseconds: 350);
   static const _nativePreparationBatchSize = 32;
   static const _nativePreparationWindowSize = 128;
   static const _nativeWorkerRunIdPrefsKey =
       'download_queue_native_worker_run_id';
-  static const _userPausedQueuePrefsKey = 'download_queue_user_paused_v1';
-  static const _bytesUiStep = 104857; // ~0.1 MiB, matches one-decimal MB UI.
-  static const _progressLogStepPercent = 10;
-  static const _serviceProgressStepPercent = 2;
-  static const _decryptStageSafAccess = 'safAccess';
-  static const _decryptStageDecrypt = 'decrypt';
-  static const _decryptStageSafWrite = 'safWrite';
   final NotificationService _notificationService = NotificationService();
-  final AppStateDatabase _appStateDb = AppStateDatabase.instance;
-  // Shared across tracks in a batch: an album's tracks embed the same cover,
-  // so fetch it once instead of once per track. LRU-capped; files are deleted
-  // on eviction and when the queue drains.
-  final Map<String, Future<String?>> _embedCoverCache = {};
+  final _metadataResolver = DownloadMetadataResolver();
+  late final _metadataEmbedding = DownloadMetadataEmbedding(
+    onReplayGain: _storeTrackReplayGainForAlbum,
+  );
   late final ProgressStreamPoller<Map<String, dynamic>> _progressPoller =
       ProgressStreamPoller<Map<String, dynamic>>(
         streamProvider: PlatformBridge.downloadProgressStream,
@@ -365,14 +343,17 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         onStreamTimeout: () =>
             _log.w('Download progress stream timeout, fallback to polling'),
         onPollError: (e) => _log.w('Progress polling failed: $e'),
-        shouldPollTick: () => _shouldPollDownloadProgressTick(),
+        shouldPollTick: () => _progressTracker.shouldPoll(state),
       );
   int _totalQueuedAtStart = 0;
   int _completedInSession = 0;
   int _failedInSession = 0;
   int _queueItemSequence = 0;
   bool _isLoaded = false;
-  final Completer<void> _queueRestored = Completer<void>();
+  Completer<void> _queueRestored = Completer<void>();
+  bool _queueStartupPending = false;
+  bool _queueStorageReady = true;
+  bool? _startupPausedOverride;
   bool _foregroundResumeScheduled = false;
   bool _iosBackgroundExecutionExpired = false;
   StreamSubscription<List<String>>? _iosBackgroundExpirationSubscription;
@@ -380,8 +361,6 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   final Map<String, Future<void>> _qualityVariantFileLocks = {};
   Future<String>? _appFolderStorageFallback;
   final Set<String> _rejectedAppFolderRoots = {};
-  int _idleProgressPollTick = 0;
-  final Map<String, int> _lastProgressLogBucketByItem = {};
 
   Future<T> _withQualityVariantFileLock<T>(
     String path,
@@ -404,22 +383,6 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   bool _networkPausedByWifiOnly = false;
-  List<ConnectivityResult>? _lastConnectivityResults;
-  DateTime _lastConnectionCleanupAt = DateTime.fromMillisecondsSinceEpoch(0);
-  DateTime _lastReconnectRetryPromptAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const _connectionCleanupDebounce = Duration(seconds: 2);
-  String? _lastServiceTrackName;
-  String? _lastServiceArtistName;
-  String? _lastServiceStatus;
-  int _lastServicePercent = -1;
-  int _lastServiceQueueCount = -1;
-  DateTime _lastServiceUpdateAt = DateTime.fromMillisecondsSinceEpoch(0);
-  String? _lastFinalizingTrackName;
-  String? _lastFinalizingArtistName;
-  String? _lastNotifTrackName;
-  String? _lastNotifArtistName;
-  int _lastNotifPercent = -1;
-  int _lastNotifQueueCount = -1;
   final Set<String> _locallyCancelledItemIds = {};
   final Set<String> _pausePendingItemIds = {};
   final DownloadVerificationRetryGuard _verificationRetryGuard =
@@ -461,25 +424,62 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       _progressPoller.stop();
       _connectivitySub?.cancel();
       _connectivitySub = null;
-      if (_queuePersistDebounce?.isActive == true) {
-        _queuePersistDebounce?.cancel();
-        unawaited(_flushQueueToStorage());
-      } else {
-        _queuePersistDebounce?.cancel();
-      }
-      _queuePersistDebounce = null;
+      _queuePersistence.dispose();
     });
 
+    _queueStorageReady = false;
+    _startQueueRestore(initializeOutputDir: true);
+    return const DownloadQueueState();
+  }
+
+  void _startQueueRestore({bool initializeOutputDir = false}) {
+    if (_queueStartupPending || _queueStorageReady || !ref.mounted) return;
+    _queueStartupPending = true;
+    final restored = _queueRestored = Completer<void>();
     Future.microtask(() async {
       try {
+        if (!ref.mounted) return;
         updateSettings(ref.read(settingsProvider));
-        await _initOutputDir();
+        if (initializeOutputDir) {
+          try {
+            await _initOutputDir();
+          } catch (error, stack) {
+            _log.e(
+              'Failed to initialize download folder: $error',
+              error,
+              stack,
+            );
+          }
+        }
         await _loadQueueFromStorage();
+      } catch (error, stack) {
+        _log.e('Failed to initialize download queue: $error', error, stack);
       } finally {
-        if (!_queueRestored.isCompleted) _queueRestored.complete();
+        if (ref.mounted && _queueStorageReady) {
+          // Native adoption can publish an older paused snapshot after a user
+          // has changed this choice while its platform calls were awaiting.
+          final paused = _startupPausedOverride;
+          if (paused != null && state.isPaused != paused) {
+            if (paused && state.isProcessing) {
+              pauseQueue(persistAcrossRestarts: false);
+            } else if (!paused) {
+              resumeQueue();
+            } else {
+              state = state.copyWith(isPaused: true);
+            }
+          }
+          _startupPausedOverride = null;
+        }
+        _queueStartupPending = false;
+        if (ref.mounted && _queueStorageReady) {
+          _saveQueueToStorage();
+          if (!state.isProcessing && !state.isPaused && state.queuedCount > 0) {
+            Future.microtask(_processQueue);
+          }
+        }
+        if (!restored.isCompleted) restored.complete();
       }
     });
-    return const DownloadQueueState();
   }
 
   /// Flush any debounced queue persistence to disk immediately. Called when
@@ -487,31 +487,21 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   /// teardown, and a pending debounce timer would silently drop the most
   /// recent queue mutations.
   Future<void> flushQueuePersistence() async {
-    if (_queuePersistDebounce?.isActive == true) {
-      _queuePersistDebounce?.cancel();
-      await _flushQueueToStorage();
+    // Startup publishes restored items before completing this gate. Capturing
+    // the initial empty state while hydration is in flight would delete the
+    // restored rows when the persistence writer reaches that empty snapshot.
+    if (!_queueStorageReady) _startQueueRestore();
+    await _queueRestored.future;
+    if (!ref.mounted) return;
+    if (!_queueStorageReady) {
+      throw StateError('Download queue restoration failed; retry the flush');
     }
-    await _queuePersistenceWrite;
-    await _queuePausePersistenceWrite;
+    await _queuePersistence.flush();
   }
 
   void _persistUserPausedQueue(bool paused) {
-    final operation = _queuePausePersistenceWrite.then((_) async {
-      final prefs = await SharedPreferences.getInstance();
-      if (paused) {
-        await prefs.setBool(_userPausedQueuePrefsKey, true);
-      } else {
-        await prefs.remove(_userPausedQueuePrefsKey);
-      }
-    });
-    _queuePausePersistenceWrite = operation.catchError((Object error) {
-      _log.w('Failed to persist queue pause state: $error');
-    });
-  }
-
-  Future<bool> _loadUserPausedQueue() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool(_userPausedQueuePrefsKey) == true;
+    if (_queueStartupPending) _startupPausedOverride = paused;
+    _queuePersistence.setUserPaused(paused);
   }
 
   /// Restarts a queue that was deliberately left pending because Android did
@@ -592,7 +582,11 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     } else if (!state.isProcessing) {
       state = state.copyWith(isPaused: true, currentDownload: null);
     }
-    unawaited(flushQueuePersistence());
+    unawaited(
+      flushQueuePersistence().catchError((Object error) {
+        _log.e('Failed to flush expired iOS queue: $error');
+      }),
+    );
     // The native expiration callback cancels Go synchronously before this
     // asynchronous event reaches Dart. If foregrounding won that race, still
     // requeue the cancelled item, then immediately let the running queue loop
@@ -603,89 +597,47 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   Future<void> _loadQueueFromStorage() async {
-    if (_isLoaded) return;
-    _isLoaded = true;
+    if (_isLoaded || !ref.mounted) return;
 
     try {
-      await _appStateDb.migrateQueueFromSharedPreferences();
-      final restorePaused = await _loadUserPausedQueue();
-      final rows = await _appStateDb.getPendingDownloadQueueRows();
-      _persistedQueueItemById.clear();
-      _nonCanonicalPersistedQueueIds.clear();
-      if (rows.isEmpty) {
-        if (restorePaused) _persistUserPausedQueue(false);
-        _log.d('No queue found in storage');
-        return;
-      }
-
-      final pendingItems = <DownloadItem>[];
-      for (final row in rows) {
-        final rowId = row['id']?.toString() ?? '';
-        if (rowId.isEmpty) continue;
-        // Keep a null sentinel until the payload has been decoded. If the row
-        // is corrupt, the next flush still knows that its database ID must be
-        // deleted instead of silently leaving it behind forever.
-        _persistedQueueItemById[rowId] = null;
-        final itemJson = row['item_json'] as String?;
-        if (itemJson == null || itemJson.isEmpty) continue;
-
-        try {
-          final decoded = jsonDecode(itemJson);
-          if (decoded is! Map) continue;
-          final persistedItem = DownloadItem.fromJson(
-            Map<String, dynamic>.from(decoded),
-          );
-          _persistedQueueItemById[rowId] = persistedItem;
-          final canonicalStatus = downloadQueuePersistenceStatus(
-            persistedItem.status,
-          ).name;
-          if (itemJson !=
-                  encodeDownloadQueueItemForPersistence(persistedItem) ||
-              row['status']?.toString() != canonicalStatus) {
-            _nonCanonicalPersistedQueueIds.add(rowId);
-          }
-          var item = persistedItem;
-          final normalizedService = _normalizeQueuedService(item.service);
-          if (normalizedService != item.service) {
-            item = item.copyWith(service: normalizedService);
-          }
-          if (item.status == DownloadStatus.downloading ||
-              item.status == DownloadStatus.finalizing) {
-            item = item.copyWith(status: DownloadStatus.queued, progress: 0);
-          }
-          if (item.status == DownloadStatus.queued ||
-              item.status == DownloadStatus.skipped) {
-            pendingItems.add(item);
-          }
-        } catch (_) {
-          continue;
-        }
-      }
-
-      if (pendingItems.isEmpty) {
-        if (restorePaused) _persistUserPausedQueue(false);
-        _log.d('No pending items to restore');
-        await _appStateDb.replacePendingDownloadQueueRows(const []);
-        _persistedQueueItemById.clear();
-        _nonCanonicalPersistedQueueIds.clear();
-        return;
-      }
+      final restorePaused = await _queuePersistence.loadUserPaused();
+      if (!ref.mounted) return;
+      final restoredItems = await _queuePersistence.restore();
+      if (!ref.mounted) return;
+      final pendingItems = restoredItems.map((item) {
+        final service = _normalizeQueuedService(item.service);
+        return service == item.service ? item : item.copyWith(service: service);
+      }).toList();
 
       final normalizedPendingItems = _normalizeRestoredQueueIds(pendingItems);
       state = state.copyWith(
-        items: normalizedPendingItems,
-        isPaused: restorePaused,
+        // Additions remain visible immediately while the database and codec
+        // worker are awaiting. Append them without deduplicating track IDs:
+        // distinct requests/quality variants are deliberately separate items.
+        items: [...normalizedPendingItems, ...state.items],
+        isPaused:
+            _startupPausedOverride ??
+            (normalizedPendingItems.isNotEmpty && restorePaused),
       );
+      _isLoaded = true;
+      _queueStorageReady = true;
       _saveQueueToStorage();
+      if (pendingItems.isEmpty) {
+        if (restorePaused && _startupPausedOverride == null) {
+          _queuePersistence.setUserPaused(false);
+        }
+        _log.d('No pending items to restore');
+        await _queuePersistence.flush();
+        return;
+      }
       _log.i(
         'Restored ${normalizedPendingItems.length} pending items from storage',
       );
       if (await _tryAdoptAndroidNativeWorkerSnapshot(normalizedPendingItems)) {
         return;
       }
-      if (!restorePaused) {
-        Future.microtask(() => _processQueue());
-      } else {
+      if (!ref.mounted) return;
+      if (state.isPaused) {
         _log.i('Restored queue in user-paused state');
       }
     } catch (e) {
@@ -694,73 +646,14 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   void _saveQueueToStorage() {
-    _queuePersistDebounce?.cancel();
-    _queuePersistDebounce = Timer(_queuePersistDebounceDuration, () {
-      _flushQueueToStorage();
-    });
-  }
-
-  Future<void> _flushQueueToStorage() async {
-    final operation = _queuePersistenceWrite.then((_) => _writeQueueChanges());
-    _queuePersistenceWrite = operation.catchError((_) {});
-    await operation;
-  }
-
-  Future<void> _writeQueueChanges() async {
-    try {
-      // skipped (user-cancelled) rows persist too, so a cancelled download can
-      // still be retried after an app restart instead of being re-searched.
-      final nowIso = DateTime.now().toIso8601String();
-      final currentItemsById = <String, DownloadItem?>{};
-      final upserts = <Map<String, dynamic>>[];
-      for (final item in state.items) {
-        if (item.status != DownloadStatus.queued &&
-            item.status != DownloadStatus.downloading &&
-            item.status != DownloadStatus.finalizing &&
-            item.status != DownloadStatus.skipped) {
-          continue;
-        }
-        currentItemsById[item.id] = item;
-        final previous = _persistedQueueItemById[item.id];
-        final mustRewrite = _nonCanonicalPersistedQueueIds.contains(item.id);
-        if (!mustRewrite && identical(previous, item)) continue;
-
-        final itemJson = encodeDownloadQueueItemForPersistence(item);
-        if (!mustRewrite &&
-            previous != null &&
-            encodeDownloadQueueItemForPersistence(previous) == itemJson) {
-          continue;
-        }
-        upserts.add({
-          'id': item.id,
-          'item_json': itemJson,
-          'status': downloadQueuePersistenceStatus(item.status).name,
-          'created_at': item.createdAt.toIso8601String(),
-          'updated_at': nowIso,
-        });
-      }
-      final deletedIds = _persistedQueueItemById.keys
-          .where((id) => !currentItemsById.containsKey(id))
-          .toList(growable: false);
-      if (upserts.isEmpty && deletedIds.isEmpty) {
-        _persistedQueueItemById
-          ..clear()
-          ..addAll(currentItemsById);
-        _nonCanonicalPersistedQueueIds.clear();
-        return;
-      }
-
-      await _appStateDb.applyPendingDownloadQueueChanges(
-        upserts: upserts,
-        deletedIds: deletedIds,
-      );
-      _persistedQueueItemById
-        ..clear()
-        ..addAll(currentItemsById);
-      _nonCanonicalPersistedQueueIds.clear();
-    } catch (e) {
-      _log.e('Failed to save queue to storage: $e');
+    // A partial startup snapshot must never enter the writer's debounce or
+    // dispose path: it would otherwise delete the restored IDs later on.
+    if (!_queueStorageReady) {
+      _startQueueRestore();
+      return;
     }
+    if (_queueStartupPending) return;
+    _queuePersistence.schedule();
   }
 
   bool _isSafMode(AppSettings settings) {
@@ -822,7 +715,10 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     bool stageSafForDeferredPublish = false,
     bool qualityVariantCollisionOnly = false,
   }) {
-    final resolvedAlbumArtist = _resolveAlbumArtistForMetadata(track, settings);
+    final resolvedAlbumArtist = DownloadMetadataResolver.albumArtistForMetadata(
+      track,
+      settings,
+    );
     final postProcessingEnabled =
         settings.useExtensionProviders &&
         extensionState.extensions.any((e) => e.enabled && e.hasPostProcessing);
@@ -884,7 +780,11 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       embedLyrics:
           settings.embedMetadata &&
           settings.embedLyrics &&
-          !_shouldSkipLyrics(extensionState, track.source, item.service),
+          !DownloadMetadataResolver.shouldSkipLyrics(
+            extensionState,
+            track.source,
+            item.service,
+          ),
       embedReplayGain: settings.embedReplayGain,
       postProcessingEnabled: postProcessingEnabled,
       autoConvertDownloads: settings.autoConvertDownloads,
@@ -987,7 +887,15 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   void updateSettings(AppSettings settings) {
-    state = state.copyWith(
+    state = _withSettings(settings);
+  }
+
+  DownloadQueueState _withSettings(
+    AppSettings settings, {
+    List<DownloadItem>? items,
+  }) {
+    return state.copyWith(
+      items: items,
       outputDir: settings.downloadDirectory.isNotEmpty
           ? settings.downloadDirectory
           : state.outputDir,
@@ -1019,6 +927,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       playlistName: playlistName,
       playlistPosition: playlistPosition,
       preserveQualityVariant: settings.allowQualityVariants,
+      networkDownloadFolder: settings.networkDownloadFolder,
     );
 
     state = state.copyWith(items: [...state.items, item]);
@@ -1031,6 +940,35 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     return id;
   }
 
+  /// Enqueues a selection without album-batch normalization or naming rules.
+  /// Equivalent to separate [addToQueue] calls, with one queue publication.
+  void addIndividualTracksToQueue(List<Track> tracks, String service) {
+    if (tracks.isEmpty) return;
+    final settings = ref.read(settingsProvider);
+    final normalizedService = _normalizeQueuedService(service);
+    final takenIds = state.items.map((item) => item.id).toSet();
+    final newItems = <DownloadItem>[];
+    for (final track in tracks) {
+      final id = _newQueueItemId(track, takenIds: takenIds);
+      takenIds.add(id);
+      newItems.add(
+        DownloadItem(
+          id: id,
+          track: track,
+          service: normalizedService,
+          createdAt: DateTime.now(),
+          preserveQualityVariant: settings.allowQualityVariants,
+          networkDownloadFolder: settings.networkDownloadFolder,
+        ),
+      );
+    }
+    state = _withSettings(settings, items: [...state.items, ...newItems]);
+    _saveQueueToStorage();
+    if (!state.isProcessing) {
+      Future.microtask(() => _processQueue());
+    }
+  }
+
   void addMultipleToQueue(
     List<Track> tracks,
     String service, {
@@ -1038,41 +976,68 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     String? playlistName,
     List<int?>? playlistPositions,
   }) {
+    addBatchesToQueue(
+      [
+        DownloadQueueBatch(
+          tracks: tracks,
+          playlistName: playlistName,
+          playlistPositions: playlistPositions,
+        ),
+      ],
+      service,
+      qualityOverride: qualityOverride,
+    );
+  }
+
+  /// Publishes several independent album/playlist batches together. Keep each
+  /// group's artist normalization, batch flag and playlist positions separate.
+  void addBatchesToQueue(
+    List<DownloadQueueBatch> batches,
+    String service, {
+    String? qualityOverride,
+  }) {
+    if (batches.isEmpty) return;
     final settings = ref.read(settingsProvider);
-    updateSettings(settings);
-
+    String? normalizedService;
     final takenIds = state.items.map((item) => item.id).toSet();
-    final shouldAssignPlaylistPositions =
-        playlistName != null && playlistName.trim().isNotEmpty;
-    final normalizedTracks = normalizeBatchAlbumArtists(tracks);
-    final fromBatch = normalizedTracks.length > 1;
-    final newItems = normalizedTracks.asMap().entries.map((entry) {
-      final track = entry.value;
-      final index = entry.key;
-      final explicitPosition =
-          playlistPositions != null &&
-              index < playlistPositions.length &&
-              (playlistPositions[index] ?? 0) > 0
-          ? playlistPositions[index]
-          : null;
-      final id = _newQueueItemId(track, takenIds: takenIds);
-      takenIds.add(id);
-      return DownloadItem(
-        id: id,
-        track: track,
-        service: _normalizeQueuedService(service),
-        createdAt: DateTime.now(),
-        qualityOverride: qualityOverride,
-        playlistName: playlistName,
-        playlistPosition:
-            explicitPosition ??
-            (shouldAssignPlaylistPositions ? index + 1 : null),
-        fromBatch: fromBatch,
-        preserveQualityVariant: settings.allowQualityVariants,
-      );
-    }).toList();
+    final newItems = <DownloadItem>[];
+    for (final batch in batches) {
+      final playlistName = batch.playlistName;
+      final playlistPositions = batch.playlistPositions;
+      final shouldAssignPlaylistPositions =
+          playlistName != null && playlistName.trim().isNotEmpty;
+      final normalizedTracks = normalizeBatchAlbumArtists(batch.tracks);
+      final fromBatch = normalizedTracks.length > 1;
+      for (var index = 0; index < normalizedTracks.length; index++) {
+        final track = normalizedTracks[index];
+        final explicitPosition =
+            playlistPositions != null &&
+                index < playlistPositions.length &&
+                (playlistPositions[index] ?? 0) > 0
+            ? playlistPositions[index]
+            : null;
+        final id = _newQueueItemId(track, takenIds: takenIds);
+        takenIds.add(id);
+        newItems.add(
+          DownloadItem(
+            id: id,
+            track: track,
+            service: normalizedService ??= _normalizeQueuedService(service),
+            createdAt: DateTime.now(),
+            qualityOverride: qualityOverride,
+            playlistName: playlistName,
+            playlistPosition:
+                explicitPosition ??
+                (shouldAssignPlaylistPositions ? index + 1 : null),
+            fromBatch: fromBatch,
+            preserveQualityVariant: settings.allowQualityVariants,
+            networkDownloadFolder: settings.networkDownloadFolder,
+          ),
+        );
+      }
+    }
 
-    state = state.copyWith(items: [...state.items, ...newItems]);
+    state = _withSettings(settings, items: [...state.items, ...newItems]);
     _saveQueueToStorage();
 
     if (!state.isProcessing) {
@@ -1088,6 +1053,9 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     String? filePath,
     String? error,
     DownloadErrorType? errorType,
+    String? preparationStage,
+    int? bytesReceived,
+    int? bytesTotal,
   }) {
     final items = state.items;
     final index = state.lookup.indexByItemId[id] ?? -1;
@@ -1101,6 +1069,9 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       filePath: filePath,
       error: error,
       errorType: errorType,
+      preparationStage: preparationStage,
+      bytesReceived: bytesReceived,
+      bytesTotal: bytesTotal,
     );
 
     if (current.status == next.status &&
@@ -1108,7 +1079,10 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         current.speedMBps == next.speedMBps &&
         current.filePath == next.filePath &&
         current.error == next.error &&
-        current.errorType == next.errorType) {
+        current.errorType == next.errorType &&
+        current.preparationStage == next.preparationStage &&
+        current.bytesReceived == next.bytesReceived &&
+        current.bytesTotal == next.bytesTotal) {
       return;
     }
 
@@ -1142,6 +1116,38 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         status == DownloadStatus.skipped) {
       _saveQueueToStorage();
     }
+  }
+
+  /// Fails requests that have not started when shared queue setup cannot
+  /// continue. Active and terminal items keep their current state.
+  void failQueuedDownloads({
+    required String error,
+    DownloadErrorType? errorType,
+  }) {
+    final items = state.items;
+    final changes = <int, DownloadItem>{};
+    for (var index = 0; index < items.length; index++) {
+      final item = items[index];
+      if (item.status != DownloadStatus.queued) continue;
+      changes[index] = item.copyWith(
+        status: DownloadStatus.failed,
+        filePath: null,
+        error: error,
+        errorType: errorType,
+      );
+    }
+    if (changes.isEmpty) return;
+
+    final updatedItems = ChunkedList<DownloadItem>.from(items).updated(changes);
+    state = state.copyWith(
+      items: updatedItems,
+      lookup: state.lookup.updatedForIndices(
+        previousItems: items,
+        nextItems: updatedItems,
+        changedIndices: changes.keys,
+      ),
+    );
+    _saveQueueToStorage();
   }
 
   void updateProgress(String id, double progress, {double? speedMBps}) {
@@ -1248,9 +1254,31 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     if (wasFailed) {
       _retriggerAlbumRgChecks();
     }
+    if (item.status != DownloadStatus.downloading &&
+        item.status != DownloadStatus.finalizing &&
+        item.networkDownloadFolder.isNotEmpty) {
+      unawaited(
+        NetworkDownloadStaging.instance.discard(id).catchError((Object e) {
+          _log.w('Could not remove network staging: $e');
+        }),
+      );
+    }
   }
 
   void clearAll() {
+    for (final item in state.items) {
+      if (item.networkDownloadFolder.isNotEmpty &&
+          item.status != DownloadStatus.downloading &&
+          item.status != DownloadStatus.finalizing) {
+        unawaited(
+          NetworkDownloadStaging.instance.discard(item.id).catchError((
+            Object e,
+          ) {
+            _log.w('Could not clear network staging: $e');
+          }),
+        );
+      }
+    }
     final wasProcessing = state.isProcessing;
     final activeIds = state.items
         .where(
@@ -1266,8 +1294,9 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
       _pausePendingItemIds.addAll(activeIds);
       _locallyCancelledItemIds.addAll(activeIds);
       for (final id in activeIds) {
-        _requestNativeCancel(id);
+        _verificationWaitCoordinator.cancelItem(id);
       }
+      unawaited(PlatformBridge.cancelDownloads(activeIds));
     }
 
     state = state.copyWith(items: [], isPaused: false, currentDownload: null);
@@ -1288,6 +1317,14 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     bool persistAcrossRestarts = true,
     Set<String> nativeCancelledItemIds = const {},
   }) {
+    if (_queueStartupPending) {
+      _startupPausedOverride = true;
+      if (!state.isProcessing) {
+        state = state.copyWith(isPaused: true, currentDownload: null);
+        if (persistAcrossRestarts) _persistUserPausedQueue(true);
+        return;
+      }
+    }
     if (state.isProcessing && !state.isPaused) {
       final nativeWorkerActive = _hasActiveAndroidNativeWorker;
       if (nativeWorkerActive) {
@@ -1327,6 +1364,11 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   void resumeQueue() {
+    if (_queueStartupPending || !_queueStorageReady) {
+      _startupPausedOverride = false;
+      _persistUserPausedQueue(false);
+      _startQueueRestore();
+    }
     if (state.isPaused) {
       if (_hasActiveAndroidNativeWorker) {
         PlatformBridge.resumeNativeDownloadWorker().catchError((_) {});
@@ -1424,19 +1466,8 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     }
 
     _log.i('Retrying ${failedIds.length} failed download(s)');
-    final resetResults = await Future.wait(
-      failedIds.map((id) async {
-        try {
-          await PlatformBridge.resetDownloadCancel(id);
-          return id;
-        } catch (e) {
-          _log.w('Failed to reset cancel flag for $id: $e');
-          return null;
-        }
-      }),
-    );
-    final retryableIds = resetResults.whereType<String>().toSet();
-    if (retryableIds.isEmpty) return;
+    final retryableIds = await PlatformBridge.resetDownloadCancels(failedIds);
+    if (!ref.mounted || retryableIds.isEmpty) return;
     _locallyCancelledItemIds.removeAll(retryableIds);
     _pausePendingItemIds.removeAll(retryableIds);
 
@@ -1524,8 +1555,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   void removeItem(String id) {
     final removedItem = state.items.where((item) => item.id == id).firstOrNull;
     _locallyCancelledItemIds.remove(id);
-    final items = state.items.where((item) => item.id != id).toList();
-    state = state.copyWith(items: items);
+    state = state.withoutItem(id);
     _saveQueueToStorage();
 
     // Clean stale album RG entries when a track is removed from the queue.
@@ -1640,11 +1670,42 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   Future<void> _processQueue() async {
+    // Wait before acquiring the single-flight processing lock. Restoration
+    // may adopt an existing native run and must be free to finish that work.
+    if (_queueStartupPending || !_queueStorageReady) {
+      _startQueueRestore();
+      await _queueRestored.future;
+      if (!ref.mounted || !_queueStorageReady || state.isPaused) return;
+    }
+    if (!ref.mounted) return;
     if (!_queueProcessingGate.tryEnter()) return;
 
     try {
       if (state.isProcessing) return;
       await _processQueueSingleFlight();
+    } catch (error, stack) {
+      _log.e('Download queue processing failed: $error', error, stack);
+      _stopProgressPolling();
+      _metadataEmbedding.clearCoverCache();
+      _stopConnectivityMonitoring();
+      if (ref.mounted) {
+        state = state.copyWith(isProcessing: false, currentDownload: null);
+      }
+      // Setup and finalization can fail outside the per-item pipeline. The
+      // queue owner still releases the execution window before another run.
+      try {
+        if (Platform.isAndroid) {
+          await PlatformBridge.stopDownloadService();
+        } else if (Platform.isIOS) {
+          await PlatformBridge.endBackgroundDownloadTask();
+        }
+      } catch (cleanupError, cleanupStack) {
+        _log.e(
+          'Failed to release download execution window: $cleanupError',
+          cleanupError,
+          cleanupStack,
+        );
+      }
     } finally {
       if (_queueProcessingGate.leave()) {
         Future.microtask(_processQueue);
@@ -1667,12 +1728,17 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     var settings = ref.read(settingsProvider);
     updateSettings(settings);
     var isSafMode = _isSafMode(settings);
+    final networkOnlyQueue = state.items
+        .where((item) => item.status == DownloadStatus.queued)
+        .every((item) => item.networkDownloadFolder.isNotEmpty);
     IosSecurityScopedAccess? iosDownloadBookmarkAccess;
 
     // Validate SAF before handing the batch to either queue implementation.
     // Never silently redirect a user-selected SAF destination into private app
     // storage: keep the selection intact so the UI can request access again.
-    if (Platform.isAndroid && settings.storageMode == 'saf') {
+    if (!networkOnlyQueue &&
+        Platform.isAndroid &&
+        settings.storageMode == 'saf') {
       var safAccessible = settings.downloadTreeUri.isNotEmpty;
       if (safAccessible) {
         try {
@@ -1688,20 +1754,15 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         _log.w(
           'SAF grant is missing or no longer writable; download location must be reselected',
         );
-        for (final item in state.items) {
-          if (item.status == DownloadStatus.queued) {
-            updateItemStatus(
-              item.id,
-              DownloadStatus.failed,
-              error: safPermissionLostErrorMessage,
-              errorType: DownloadErrorType.permission,
-            );
-          }
-        }
+        failQueuedDownloads(
+          error: safPermissionLostErrorMessage,
+          errorType: DownloadErrorType.permission,
+        );
         return;
       }
     }
     if (Platform.isAndroid &&
+        !networkOnlyQueue &&
         !isSafMode &&
         state.outputDir.isNotEmpty &&
         !await _isDirectoryWritable(Directory(state.outputDir))) {
@@ -1799,12 +1860,13 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     // iOS: Validate that outputDir is writable (not iCloud Drive which native code
     // can't access), unless a bookmark makes this app-Documents path-shape
     // check irrelevant (see shouldValidateIosOutputDir).
-    if (shouldValidateIosOutputDir(
-      isIOS: Platform.isIOS,
-      isSafMode: isSafMode,
-      outputDir: state.outputDir,
-      downloadDirectoryBookmark: settings.downloadDirectoryBookmark,
-    )) {
+    if (!networkOnlyQueue &&
+        shouldValidateIosOutputDir(
+          isIOS: Platform.isIOS,
+          isSafMode: isSafMode,
+          outputDir: state.outputDir,
+          downloadDirectoryBookmark: settings.downloadDirectoryBookmark,
+        )) {
       final isICloudPath =
           state.outputDir.contains('Mobile Documents') ||
           state.outputDir.contains('CloudDocs') ||
@@ -1838,6 +1900,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
     _log.d('Download storage mode: ${isSafMode ? 'SAF' : 'filesystem'}');
 
     if (!isSafMode &&
+        !networkOnlyQueue &&
         Platform.isIOS &&
         settings.downloadDirectoryBookmark.isNotEmpty) {
       iosDownloadBookmarkAccess =
@@ -1855,15 +1918,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         _log.w(
           'The saved download folder may have been moved, deleted, or its access grant lost',
         );
-        for (final item in state.items) {
-          if (item.status == DownloadStatus.queued) {
-            updateItemStatus(
-              item.id,
-              DownloadStatus.failed,
-              error: downloadFolderAccessLostErrorMessage,
-            );
-          }
-        }
+        failQueuedDownloads(error: downloadFolderAccessLostErrorMessage);
         state = state.copyWith(isProcessing: false);
         await PlatformBridge.endBackgroundDownloadTask();
         return;
@@ -1885,7 +1940,7 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
         stoppedWhilePaused && _networkPausedByWifiOnly;
 
     _stopProgressPolling();
-    _clearEmbedCoverCache();
+    _metadataEmbedding.clearCoverCache();
     if (!keepConnectivityMonitoring) {
       _stopConnectivityMonitoring();
     }
@@ -1967,86 +2022,37 @@ class DownloadQueueNotifier extends Notifier<DownloadQueueState> {
   }
 
   Future<void> _runQueueLoop() async {
-    final activeDownloads = <String, Future<void>>{};
-
     _startMultiProgressPolling();
-
-    while (true) {
-      if (state.isPaused) {
-        if (activeDownloads.isEmpty) {
-          _log.d('Queue is paused and no active download remains');
-          break;
-        }
-        await Future.any([
-          Future.wait(activeDownloads.values),
-          Future<void>.delayed(_queueSchedulingInterval),
-        ]);
-        continue;
-      }
-
-      final maxConcurrent = ref
-          .read(settingsProvider)
-          .concurrentDownloads
-          .clamp(1, 3);
-      if (activeDownloads.length >= maxConcurrent) {
-        // Keep pause/settings changes responsive without rescanning the full
-        // queue while every worker slot is already occupied.
-        await Future.any([
-          Future.any(activeDownloads.values),
-          Future<void>.delayed(_queueSchedulingInterval),
-        ]);
-        continue;
-      }
-
-      final availableSlots = maxConcurrent - activeDownloads.length;
-      final queuedItems = state.items
-          .where(
-            (item) =>
-                item.status == DownloadStatus.queued &&
-                !_pausePendingItemIds.contains(item.id),
-          )
-          .take(availableSlots)
-          .toList(growable: false);
-
-      if (queuedItems.isEmpty && activeDownloads.isEmpty) {
-        _log.d('No more items to process');
-        break;
-      }
-
-      for (final item in queuedItems) {
-        if (state.isPaused) break;
-
-        updateItemStatus(item.id, DownloadStatus.downloading);
-
-        final future = _downloadSingleItem(item).whenComplete(() {
-          activeDownloads.remove(item.id);
-          PlatformBridge.clearItemProgress(item.id).catchError((_) {});
-        });
-
-        activeDownloads[item.id] = future;
-        _log.d('Started download: ${item.track.name}');
-      }
-
-      if (activeDownloads.isNotEmpty) {
-        await Future.any([
-          Future.any(activeDownloads.values),
-          Future<void>.delayed(_queueSchedulingInterval),
-        ]);
-      } else {
-        await Future<void>.delayed(_queueSchedulingInterval);
-      }
+    try {
+      await DownloadScheduler<DownloadItem>(
+        queuedItems: () => state.queuedItems.where(
+          (item) => !_pausePendingItemIds.contains(item.id),
+        ),
+        idOf: (item) => item.id,
+        isPaused: () => state.isPaused,
+        concurrency: () => ref.read(settingsProvider).concurrentDownloads,
+        checkInterval: _queueSchedulingInterval,
+        start: (item) {
+          updateItemStatus(item.id, DownloadStatus.downloading);
+          _log.d('Started download: ${item.track.name}');
+          return _downloadSingleItem(item);
+        },
+        onFinished: (id) =>
+            PlatformBridge.clearItemProgress(id).catchError((_) {}),
+      ).run();
+      _log.d(
+        state.isPaused
+            ? 'Queue is paused and no active download remains'
+            : 'No more items to process',
+      );
+    } finally {
+      _stopProgressPolling();
+      final remainingIds = state.items.map((item) => item.id).toSet();
+      _locallyCancelledItemIds.removeWhere((id) => !remainingIds.contains(id));
+      _pausePendingItemIds.removeWhere((id) => !remainingIds.contains(id));
+      _verificationRetryGuard.retainItems(remainingIds);
+      _rateLimitRetriedItemIds.removeWhere((id) => !remainingIds.contains(id));
     }
-
-    if (activeDownloads.isNotEmpty) {
-      await Future.wait(activeDownloads.values);
-    }
-
-    _stopProgressPolling();
-    final remainingIds = state.items.map((item) => item.id).toSet();
-    _locallyCancelledItemIds.removeWhere((id) => !remainingIds.contains(id));
-    _pausePendingItemIds.removeWhere((id) => !remainingIds.contains(id));
-    _verificationRetryGuard.retainItems(remainingIds);
-    _rateLimitRetriedItemIds.removeWhere((id) => !remainingIds.contains(id));
   }
 }
 

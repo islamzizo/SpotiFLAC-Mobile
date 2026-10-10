@@ -14,8 +14,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/providers/repo_provider.dart';
-import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/extension_auth_launcher.dart';
+import 'package:spotiflac_android/utils/extension_action_forms.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/widgets/app_sliver_header.dart';
 
@@ -258,6 +258,7 @@ class _ExtensionDetailPageState extends ConsumerState<ExtensionDetailPage> {
                       final index = entry.key;
                       final setting = entry.value;
                       return _SettingItem(
+                        key: ValueKey(setting.key),
                         setting: setting,
                         value: _settings[setting.key] ?? setting.defaultValue,
                         showDivider: index < extension.settings.length - 1,
@@ -1013,6 +1014,7 @@ class _SettingItem extends StatefulWidget {
   final Future<void> Function(Map<String, dynamic> payload)? onActionPayload;
 
   const _SettingItem({
+    super.key,
     required this.setting,
     required this.value,
     required this.onChanged,
@@ -1031,8 +1033,9 @@ class _SettingItemState extends State<_SettingItem> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-
-    Widget trailing;
+    Widget? trailing;
+    Widget? footer;
+    VoidCallback? onTap;
     switch (widget.setting.type) {
       case 'boolean':
         trailing = AppSwitch(
@@ -1040,150 +1043,54 @@ class _SettingItemState extends State<_SettingItem> {
           semanticLabel: widget.setting.label,
           onChanged: widget.onChanged,
         );
+        onTap = () => widget.onChanged(!(widget.value as bool? ?? false));
         break;
       case 'select':
-        trailing = context.isMornye
-            ? ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.sizeOf(context).width * 0.42,
-                ),
-                child: TextButton(
-                  onPressed: widget.setting.options?.isNotEmpty == true
-                      ? _showOptions
-                      : null,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          widget.value as String? ?? '',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Icon(
-                        CupertinoIcons.chevron_up_chevron_down,
-                        size: 16,
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            : DropdownButton<String>(
-                value: widget.value as String?,
-                items: widget.setting.options?.map((opt) {
-                  return DropdownMenuItem(value: opt, child: Text(opt));
-                }).toList(),
-                onChanged: widget.onChanged,
-                underline: const SizedBox(),
-              );
+        onTap = widget.setting.options?.isNotEmpty == true
+            ? _showOptions
+            : null;
+        footer = Text(
+          widget.value?.toString() ?? context.l10n.extensionSettingNotSet,
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: colorScheme.primary),
+        );
         break;
       case 'button':
-        trailing = _isLoading
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
+        onTap = _isLoading ? null : () => _invokeAction(context);
+        if (_isLoading) {
+          trailing = const SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator.adaptive(strokeWidth: 2),
+          );
+        }
+        break;
+      case 'string':
+      case 'number':
+        onTap = () => _showEditDialog(context);
+        footer = widget.setting.key == 'oauth_login_url'
+            ? _OauthLoginLinkPreview(
+                value: widget.value?.toString(),
+                colorScheme: colorScheme,
               )
-            : FilledButton.tonal(
-                onPressed: () => _invokeAction(context),
-                child: Text(widget.setting.label),
+            : Text(
+                widget.value?.toString() ?? context.l10n.extensionSettingNotSet,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: colorScheme.primary),
               );
         break;
-      default:
-        trailing = Icon(
-          context.isMornye ? CupertinoIcons.chevron_right : Icons.chevron_right,
-          color: colorScheme.onSurfaceVariant,
-        );
     }
-
-    if (widget.setting.type == 'button') {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (widget.setting.description != null) ...[
-                        Text(
-                          widget.setting.description!,
-                          style: Theme.of(context).textTheme.bodyMedium
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                    ],
-                  ),
-                ),
-                trailing,
-              ],
-            ),
-          ),
-          if (widget.showDivider) const _ExtensionDivider(indent: 16),
-        ],
-      );
-    }
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        InkWell(
-          onTap:
-              widget.setting.type == 'string' || widget.setting.type == 'number'
-              ? () => _showEditDialog(context)
-              : null,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.setting.label,
-                        style: Theme.of(context).textTheme.bodyLarge,
-                      ),
-                      if (widget.setting.description != null) ...[
-                        const SizedBox(height: 2),
-                        Text(
-                          widget.setting.description!,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
-                      ],
-                      if (widget.setting.type == 'string' ||
-                          widget.setting.type == 'number') ...[
-                        const SizedBox(height: 4),
-                        if (widget.setting.key == 'oauth_login_url')
-                          _OauthLoginLinkPreview(
-                            value: widget.value?.toString(),
-                            colorScheme: colorScheme,
-                          )
-                        else
-                          Text(
-                            widget.value?.toString() ??
-                                context.l10n.extensionSettingNotSet,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: colorScheme.primary),
-                          ),
-                      ],
-                    ],
-                  ),
-                ),
-                trailing,
-              ],
-            ),
-          ),
-        ),
-        if (widget.showDivider) const _ExtensionDivider(indent: 16),
-      ],
+    return SettingsItem(
+      title: widget.setting.label,
+      subtitle: widget.setting.description?.isNotEmpty == true
+          ? widget.setting.description
+          : null,
+      footer: footer,
+      trailing: trailing,
+      onTap: onTap,
+      showDivider: widget.showDivider,
     );
   }
 
@@ -1223,10 +1130,12 @@ class _SettingItemState extends State<_SettingItem> {
     setState(() => _isLoading = true);
 
     try {
-      final result = await PlatformBridge.invokeExtensionAction(
+      final result = await runExtensionActionWithForms(
+        context,
         widget.extensionId,
         widget.setting.action!,
       );
+      if (result == null) return;
 
       if (context.mounted) {
         // Go may return either a flat map or { success, result: { ... } }.

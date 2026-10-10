@@ -85,10 +85,14 @@
 	<true/>
 	
 	<!-- Network Access -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect to your music servers and network storage to browse and play your music.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
 	
 	<!-- File Sharing - Allow access via Files app -->
@@ -114,6 +118,7 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>spotiflac</string>
+				<string>discord-1549854098801692862</string>
 			</array>
 		</dict>
 	</array>
@@ -122,6 +127,7 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>spotify</string>
+		<string>discord</string>
 		<string>deezer</string>
 		<string>tidal</string>
 		<string>youtube-music</string>

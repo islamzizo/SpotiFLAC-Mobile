@@ -302,6 +302,7 @@ class SettingsItem extends StatelessWidget {
   final String title;
   final Widget? titleTrailing;
   final String? subtitle;
+  final Widget? footer;
   final Widget? trailing;
   final VoidCallback? onTap;
   final bool showDivider;
@@ -314,6 +315,7 @@ class SettingsItem extends StatelessWidget {
     required this.title,
     this.titleTrailing,
     this.subtitle,
+    this.footer,
     this.trailing,
     this.onTap,
     this.showDivider = true,
@@ -383,6 +385,10 @@ class SettingsItem extends StatelessWidget {
                                       color: colorScheme.onSurfaceVariant,
                                     ),
                           ),
+                        ],
+                        if (footer != null) ...[
+                          const SizedBox(height: 8),
+                          footer!,
                         ],
                       ],
                     ),

@@ -16,7 +16,6 @@ import 'package:spotiflac_android/screens/settings/download_fallback_extensions_
 import 'package:spotiflac_android/screens/settings/extension_detail_page.dart';
 import 'package:spotiflac_android/screens/settings/metadata_provider_priority_page.dart';
 import 'package:spotiflac_android/screens/settings/provider_priority_page.dart';
-import 'package:spotiflac_android/services/extension_storage_service.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/app_action_button.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
@@ -40,14 +39,11 @@ class _ExtensionsPageState extends ConsumerState<ExtensionsPage> {
   Future<void> _initializeExtensions() async {
     final extState = ref.read(extensionProvider);
     if (!extState.isInitialized) {
-      final storage = await ExtensionStorageService.prepare();
-      await ref
-          .read(extensionProvider.notifier)
-          .initialize(
-            storage.extensionsDir,
-            storage.dataDir,
-            masterKey: storage.masterKey,
-          );
+      try {
+        await ref.read(extensionProvider.notifier).ensureInitialized();
+      } catch (_) {
+        // The provider exposes preparation failures in the existing error UI.
+      }
     } else {
       ref.read(extensionProvider.notifier).refreshEnabledExtensionHealth();
     }

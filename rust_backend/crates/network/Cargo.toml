@@ -24,8 +24,10 @@ hickory-proto.workspace = true
 cookie.workspace = true
 url.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 rustls-platform-verifier.workspace = true

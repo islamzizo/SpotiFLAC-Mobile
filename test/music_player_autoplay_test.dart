@@ -17,6 +17,15 @@ PlayableMedia track(
   genre: genre,
 );
 
+class _NoNoise implements Random {
+  @override
+  double nextDouble() => 0;
+  @override
+  int nextInt(int max) => 0;
+  @override
+  bool nextBool() => false;
+}
+
 void main() {
   test('Autoplay prefers related unplayed Library tracks and deduplicates', () {
     final seed = track('seed', genre: 'Rock');
@@ -56,6 +65,54 @@ void main() {
       ),
       isEmpty,
     );
+  });
+
+  test('recency uses the latest source or normalized song match', () {
+    final source = track('source-match', artist: 'A', source: '/same.flac');
+    final song = track(' Song ', artist: ' ARTIST ');
+    final older = track('older', artist: 'D');
+    final unplayed = track('new', artist: 'E');
+    final selected = selectAutoplayTracks(
+      seed: track('seed', artist: 'Seed'),
+      candidates: [source, song, older, unplayed],
+      upcoming: [],
+      recent: [
+        track('source-match', artist: ' a ', source: '/copy.flac'),
+        older,
+        track(' song ', artist: 'artist', source: '/other.flac'),
+        track('renamed', artist: 'different', source: '/same.flac'),
+      ],
+      dismissedSources: {},
+      random: _NoNoise(),
+    );
+    expect(selected, [unplayed, older, song, source]);
+  });
+
+  test('bounded ranking retains its seeded ordering with a full history', () {
+    PlayableMedia song(int id) => PlayableMedia(
+      id: '$id',
+      source: '/music/$id.flac',
+      title: ' Song $id ',
+      artist: ' Artist ${id % 24} ',
+      album: ' Album ${id % 35} ',
+      genre: ' Genre ${id % 8} ',
+    );
+    final selected = selectAutoplayTracks(
+      seed: song(1000),
+      candidates: List.generate(384, song),
+      upcoming: [song(16), song(17)],
+      recent: List.generate(200, (i) => song(i + 192)),
+      dismissedSources: {'/music/18.flac'},
+      random: Random(1),
+    );
+    expect(selected.map((item) => item.id), [
+      '160',
+      '40',
+      '96',
+      '80',
+      '90',
+      '20',
+    ]);
   });
 
   test('Autoplay preference and recommendation provenance survive restore', () {

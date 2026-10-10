@@ -13,17 +13,13 @@ String _tableDefinition(String path, String table) {
 
 void main() {
   test(
-    'ReplayGain filter excludes unknown rows and follows tag add/remove in both databases',
+    'ReplayGain filter includes unindexed candidates and follows tag add/remove in both databases',
     () async {
-      final historyPredicate = confirmedMissingReplayGainSqlPredicate(
+      final historyPredicate = missingReplayGainSqlPredicate(
         hasReplayGainExpr: 'has_replaygain',
-        replayGainKnownExpr:
-            'COALESCE(replaygain_metadata_scan_version, 0) >= 1',
       );
-      final localPredicate = confirmedMissingReplayGainSqlPredicate(
+      final localPredicate = missingReplayGainSqlPredicate(
         hasReplayGainExpr: 'has_replaygain',
-        replayGainKnownExpr:
-            'COALESCE(audio_metadata_scan_version, 0) >= ${LibraryDatabase.audioMetadataScanVersion}',
       );
       // Use the production table definitions and filter predicates with real
       // SQLite. This catches missing schema columns and NULL/default semantics.
@@ -40,18 +36,22 @@ for table, version, known, predicate in [
     ('library', 'audio_metadata_scan_version', data['scanVersion'], data['localPredicate']),
 ]:
     for name, gain, scanned in [('unknown', 0, 0), ('legacy', 0, known - 1),
-                                ('tagged', 1, known), ('missing', 0, known)]:
+                                ('tagged', 1, known), ('missing', 0, known),
+                                ('legacy-tagged', 1, 0)]:
         db.execute(f'INSERT INTO {table} (id, track_name, artist_name, album_name, file_path, '
                    + ('downloaded_at, service' if table == 'history' else 'scanned_at, source_id')
                    + f', has_replaygain, {version}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
                    (name, 'Track', 'Artist', 'Album', '/'+name+'.flac', '2026-01-01', 'test', gain, scanned))
     def matches():
         return [row[0] for row in db.execute(f'SELECT id FROM {table} WHERE {predicate} ORDER BY id')]
-    assert matches() == ['missing'], (table, matches())
+    assert matches() == ['legacy', 'missing', 'unknown'], (table, matches())
     db.execute(f"UPDATE {table} SET has_replaygain = 1 WHERE id = 'missing'")
-    assert matches() == [], (table, matches())
+    assert matches() == ['legacy', 'unknown'], (table, matches())
     db.execute(f"UPDATE {table} SET has_replaygain = 0 WHERE id = 'tagged'")
-    assert matches() == ['tagged'], (table, matches())
+    assert matches() == ['legacy', 'tagged', 'unknown'], (table, matches())
+    # An entirely unindexed collection without ReplayGain must not look empty.
+    db.execute(f'UPDATE {table} SET has_replaygain = 0, {version} = 0')
+    assert len(matches()) == 5, (table, matches())
 print('both databases passed')
 ''',
         jsonEncode({
@@ -60,7 +60,7 @@ print('both databases passed')
             'history',
           ),
           'library': _tableDefinition(
-            'lib/services/library_database.dart',
+            'lib/services/library_schema.dart',
             'library',
           ),
           'historyPredicate': historyPredicate,

@@ -37,8 +37,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.LinkedHashMap
@@ -108,6 +106,7 @@ class MainActivity: FlutterFragmentActivity() {
         "safExists",
         "safExistsBatch",
         "isSafTreeAccessible",
+        "probeSafTreeReadAccess",
         "safDelete",
         "safStat",
         "resolveSafFile",
@@ -488,7 +487,7 @@ class MainActivity: FlutterFragmentActivity() {
         }
     }
 
-    private fun bridgeJsonResult(payload: String): Any {
+    internal fun bridgeJsonResult(payload: String): Any {
         // Decide on char count where possible: UTF-8 size is >= length and
         // <= 3*length, so only the ambiguous band needs the full encode —
         // avoids duplicating multi-MB payloads just to measure them.
@@ -884,11 +883,23 @@ class MainActivity: FlutterFragmentActivity() {
         channel.invokeMethod("extensionSessionGrantCompleted", payload)
     }
 
+    internal fun reportLibraryScanError(path: String, operation: String, message: String) {
+        android.util.Log.e("SpotiFLAC", "Library scan: $operation [$path]: $message")
+        val payload = mapOf(
+            "path" to path,
+            "operation" to operation,
+            "message" to message,
+        )
+        runOnUiThread {
+            backendChannel?.invokeMethod("libraryScanError", payload)
+        }
+    }
+
     /**
      * Opens a short-lived descriptor lease for zero-copy SAF playback. The
-     * returned proc path has no URI scheme, so MediaPlayer opens it in this
-     * process and duplicates the descriptor before the Dart side closes the
-     * lease. A small hard cap protects against abandoned method calls.
+     * returned proc path identifies the lease. The Android audio plugin must
+     * duplicate this descriptor, never reopen it (AppFuse rejects reopening).
+     * A small hard cap protects against abandoned method calls.
      */
     private fun openSafPlaybackLease(uriStr: String): Map<String, String>? {
         if (!uriStr.startsWith("content://")) return null
@@ -899,6 +910,10 @@ class MainActivity: FlutterFragmentActivity() {
             null
         } ?: return null
 
+        if (!isSeekableSafDescriptor(descriptor)) {
+            descriptor.close()
+            return null
+        }
         val token = UUID.randomUUID().toString()
         synchronized(playbackLeaseLock) {
             while (playbackLeases.size >= 4) {
@@ -1212,6 +1227,61 @@ class MainActivity: FlutterFragmentActivity() {
                             }
                             result.success(response)
                         }
+                        "probeSafTreeReadAccess" -> {
+                            val uriStr = call.argument<String>("tree_uri") ?: ""
+                            val readable = withContext(Dispatchers.IO) {
+                                probeSafTreeReadAccess(
+                                    hasReadPermission = {
+                                        val uri = Uri.parse(uriStr)
+                                        val root = DocumentsContract.buildDocumentUriUsingTree(
+                                            uri,
+                                            DocumentsContract.getTreeDocumentId(uri),
+                                        )
+                                        checkUriPermission(
+                                            root,
+                                            android.os.Process.myPid(),
+                                            android.os.Process.myUid(),
+                                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                    },
+                                    readRoot = {
+                                        val uri = Uri.parse(uriStr)
+                                        val root = DocumentsContract.buildDocumentUriUsingTree(
+                                            uri,
+                                            DocumentsContract.getTreeDocumentId(uri),
+                                        )
+                                        val rootPresent = contentResolver.query(
+                                            root,
+                                            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+                                            null, null, null,
+                                        )?.use { cursor ->
+                                            when {
+                                                cursor.moveToFirst() -> true
+                                                cursor.extras.getBoolean(DocumentsContract.EXTRA_LOADING, false) -> null
+                                                else -> false
+                                            }
+                                        }
+                                        if (rootPresent == true) {
+                                            true
+                                        } else {
+                                            // A reconnecting remote provider may not have
+                                            // queryDocument metadata yet. A completed child
+                                            // listing is stronger evidence of read access.
+                                            val directory = DocumentFile.fromTreeUri(this@MainActivity, uri)
+                                            if (directory != null && listSafChildrenOrThrow(directory).isNotEmpty()) {
+                                                true
+                                            } else {
+                                                rootPresent
+                                            }
+                                        }
+                                    },
+                                    onFailure = { error ->
+                                        android.util.Log.w("SpotiFLAC", "SAF library read probe failed", error)
+                                    },
+                                )
+                            }
+                            result.success(readable)
+                        }
                         "isSafTreeAccessible" -> {
                             val uriStr = call.argument<String>("tree_uri") ?: ""
                             val accessible = withContext(Dispatchers.IO) {
@@ -1244,21 +1314,7 @@ class MainActivity: FlutterFragmentActivity() {
                         "safStat" -> {
                             val uriStr = call.argument<String>("uri") ?: ""
                             val response = withContext(Dispatchers.IO) {
-                                val uri = Uri.parse(uriStr)
-                                val doc = DocumentFile.fromSingleUri(this@MainActivity, uri)
-                                val obj = JSONObject()
-                                if (doc != null && doc.exists()) {
-                                    obj.put("exists", true)
-                                    obj.put("size", doc.length())
-                                    obj.put("modified", doc.lastModified())
-                                    obj.put("mime_type", doc.type ?: contentResolver.getType(uri) ?: "")
-                                } else {
-                                    obj.put("exists", false)
-                                    obj.put("size", 0)
-                                    obj.put("modified", 0)
-                                    obj.put("mime_type", "")
-                                }
-                                obj.toString()
+                                querySafDocumentStat(contentResolver, Uri.parse(uriStr)).toString()
                             }
                             result.success(response)
                         }
@@ -1689,15 +1745,8 @@ class MainActivity: FlutterFragmentActivity() {
                             val response = withContext(Dispatchers.IO) {
                                 try {
                                     if (audioPath.startsWith("content://")) {
-                                        val uri = Uri.parse(audioPath)
-                                        val tempPath = copyUriToTemp(uri)
-                                            ?: return@withContext """{"success":false,"error":"Failed to copy SAF file to temp"}"""
-                                        try {
-                                            coreBackend.extractCoverToFile(tempPath, outputPath)
-                                            """{"success":true}"""
-                                        } finally {
-                                            try { File(tempPath).delete() } catch (_: Exception) {}
-                                        }
+                                        extractCoverFromUri(Uri.parse(audioPath), outputPath)
+                                        """{"success":true}"""
                                     } else {
                                         coreBackend.extractCoverToFile(audioPath, outputPath)
                                         """{"success":true}"""

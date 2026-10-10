@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:spotiflac_android/l10n/l10n.dart';
-import 'package:spotiflac_android/providers/runtime_profile_provider.dart';
 import 'package:spotiflac_android/widgets/audio_output_button.dart';
 
 /// Landscape opens on the player. Lyrics can hide their bottom actions until
@@ -304,7 +302,7 @@ class _MornyeLandscapePlayerState extends State<MornyeLandscapePlayer> {
 }
 
 /// Let lyrics pass behind the footer without leaving readable text underneath
-/// its controls. The mask and bounded blur recede when those controls hide.
+/// its controls. A single opacity mask recedes when those controls hide.
 class _LandscapeLyricsViewport extends ConsumerWidget {
   const _LandscapeLyricsViewport({
     required this.controlsVisible,
@@ -316,10 +314,6 @@ class _LandscapeLyricsViewport extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // Three stacked backdrop passes re-filter the moving lyrics every frame.
-    final blur =
-        !MediaQuery.highContrastOf(context) &&
-        ref.watch(mornyeLiquidGlassProvider);
     return ClipRect(
       key: const ValueKey('landscape-lyrics-viewport'),
       child: TweenAnimationBuilder<double>(
@@ -344,38 +338,13 @@ class _LandscapeLyricsViewport extends ConsumerWidget {
                 ],
                 stops: [
                   0,
-                  (1 - 96 / bounds.height).clamp(0, 1),
+                  (1 - 112 / bounds.height).clamp(0, 1),
                   (1 - 48 / bounds.height).clamp(0, 1),
                   1,
                 ],
               ).createShader(bounds),
               child: child,
             ),
-            if (blur && progress > 0)
-              // Increasing, clipped passes soften the edge without placing a
-              // mask/opacity layer between the filters and their backdrop.
-              for (final (height, sigma) in const [
-                (96.0, 2.0),
-                (80.0, 4.0),
-                (64.0, 8.0),
-              ])
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: height,
-                  child: IgnorePointer(
-                    child: ClipRect(
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(
-                          sigmaX: sigma * progress,
-                          sigmaY: sigma * progress,
-                        ),
-                        child: const SizedBox.expand(),
-                      ),
-                    ),
-                  ),
-                ),
           ],
         ),
       ),

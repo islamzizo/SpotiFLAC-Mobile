@@ -27,71 +27,96 @@ final themeProvider = NotifierProvider<ThemeNotifier, ThemeSettings>(() {
 });
 
 class ThemeNotifier extends Notifier<ThemeSettings> {
-  final Future<SharedPreferences> _prefs = SharedPreferences.getInstance();
+  ThemeNotifier({Future<SharedPreferences>? preferences})
+    : _prefs = preferences ?? SharedPreferences.getInstance();
+
+  final Future<SharedPreferences> _prefs;
+  late Future<void> _loadFuture;
+  Future<void> _saveChain = Future<void>.value();
+  final _loadingEdits = <ThemeSettings Function(ThemeSettings)>[];
+  bool _loaded = false;
 
   @override
   ThemeSettings build() {
-    _loadFromStorage();
+    _loadFuture = _loadFromStorage();
     return ref.read(initialThemeSettingsProvider);
   }
 
   Future<void> _loadFromStorage() async {
     try {
       final prefs = await _prefs;
-      state = loadBootstrapThemeSettings(prefs);
+      var loaded = loadBootstrapThemeSettings(prefs);
+      for (final edit in _loadingEdits) {
+        loaded = edit(loaded);
+      }
+      if (ref.mounted) state = loaded;
     } catch (e) {
       debugPrint('Error loading theme settings: $e');
+    } finally {
+      _loaded = true;
+      _loadingEdits.clear();
     }
   }
 
-  Future<void> _saveToStorage() async {
+  void _editState(ThemeSettings Function(ThemeSettings) edit) {
+    if (!_loaded) _loadingEdits.add(edit);
+    state = edit(state);
+  }
+
+  Future<void> _saveToStorage() => _saveChain = _saveChain.then((_) async {
     try {
+      await _loadFuture;
       final prefs = await _prefs;
-      await prefs.setString(kThemeModeKey, state.themeMode.name);
-      await prefs.setBool(kUseDynamicColorKey, state.useDynamicColor);
-      await prefs.setInt(kSeedColorKey, state.seedColorValue);
-      await prefs.setBool(kUseAmoledKey, state.useAmoled);
-      await prefs.setString(kThemeStyleKey, state.style.name);
-      await prefs.setString(kMornyeAccentKey, state.mornyeAccent.name);
-      await prefs.setBool(kUseSystemFontKey, state.useSystemFont);
-      await prefs.setDouble(kMornyeGlassClarityKey, state.mornyeGlassClarity);
+      if (!ref.mounted) return;
+      final snapshot = state;
+      await prefs.setString(kThemeModeKey, snapshot.themeMode.name);
+      await prefs.setBool(kUseDynamicColorKey, snapshot.useDynamicColor);
+      await prefs.setInt(kSeedColorKey, snapshot.seedColorValue);
+      await prefs.setBool(kUseAmoledKey, snapshot.useAmoled);
+      await prefs.setString(kThemeStyleKey, snapshot.style.name);
+      await prefs.setString(kMornyeAccentKey, snapshot.mornyeAccent.name);
+      await prefs.setBool(kUseSystemFontKey, snapshot.useSystemFont);
+      await prefs.setDouble(
+        kMornyeGlassClarityKey,
+        snapshot.mornyeGlassClarity,
+      );
     } catch (e) {
       debugPrint('Error saving theme settings: $e');
     }
-  }
+  });
 
   Future<void> setThemeMode(ThemeMode mode) async {
-    state = state.copyWith(themeMode: mode);
+    _editState((current) => current.copyWith(themeMode: mode));
     await _saveToStorage();
   }
 
   Future<void> setStyle(AppThemeStyle style) async {
-    state = state.copyWith(style: style);
+    _editState((current) => current.copyWith(style: style));
     await _saveToStorage();
   }
 
   Future<void> setUseDynamicColor(bool value) async {
-    state = state.copyWith(useDynamicColor: value);
+    _editState((current) => current.copyWith(useDynamicColor: value));
     await _saveToStorage();
   }
 
   Future<void> setSeedColor(Color color) async {
-    state = state.copyWith(seedColorValue: color.toARGB32());
+    _editState((current) => current.copyWith(seedColorValue: color.toARGB32()));
     await _saveToStorage();
   }
 
   Future<void> setUseAmoled(bool value) async {
-    state = state.copyWith(useAmoled: value);
+    _editState((current) => current.copyWith(useAmoled: value));
     await _saveToStorage();
   }
 
   Future<void> setMornyeAccent(MornyeAccent accent) async {
-    state = state.copyWith(mornyeAccent: accent);
+    _editState((current) => current.copyWith(mornyeAccent: accent));
     await _saveToStorage();
   }
 
   Future<void> setUseSystemFont(bool value) async {
-    state = state.copyWith(useSystemFont: value);
+    _editState((current) => current.copyWith(useSystemFont: value));
     await _saveToStorage();
   }
 
@@ -99,7 +124,7 @@ class ThemeNotifier extends Notifier<ThemeSettings> {
     double value, {
     bool persist = true,
   }) async {
-    state = state.copyWith(mornyeGlassClarity: value);
+    _editState((current) => current.copyWith(mornyeGlassClarity: value));
     if (persist) await _saveToStorage();
   }
 }

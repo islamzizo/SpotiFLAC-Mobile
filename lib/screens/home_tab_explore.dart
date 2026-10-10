@@ -84,7 +84,10 @@ extension _HomeTabExploreUI on _HomeTabState {
                 ),
                 index: index,
                 staggerDelay: const Duration(milliseconds: 50),
-                child: _buildExploreItem(item, colorScheme),
+                child: Builder(
+                  builder: (itemContext) =>
+                      _buildExploreItem(itemContext, item, colorScheme),
+                ),
               );
             },
           ),
@@ -167,7 +170,11 @@ extension _HomeTabExploreUI on _HomeTabState {
     );
   }
 
-  Widget _buildExploreItem(ExploreItem item, ColorScheme colorScheme) {
+  Widget _buildExploreItem(
+    BuildContext itemContext,
+    ExploreItem item,
+    ColorScheme colorScheme,
+  ) {
     final isArtist = item.type == 'artist';
     final isTablet = MediaQuery.sizeOf(context).shortestSide >= 600;
     final cardSize = _exploreCardSize(context);
@@ -177,7 +184,7 @@ extension _HomeTabExploreUI on _HomeTabState {
       button: true,
       label: context.l10n.a11yOpenItem(item.type, item.name),
       child: GestureDetector(
-        onTap: () => _navigateToExploreItem(item),
+        onTap: () => _navigateToExploreItem(item, itemContext),
         child: SizedBox(
           width: cardSize,
           child: Padding(
@@ -305,12 +312,15 @@ extension _HomeTabExploreUI on _HomeTabState {
     );
   }
 
-  void _navigateToExploreItem(ExploreItem item) async {
+  void _navigateToExploreItem(
+    ExploreItem item,
+    BuildContext itemContext,
+  ) async {
     final extensionId = _providerIdForExploreItem(item);
 
     switch (item.type) {
       case 'track':
-        _showTrackBottomSheet(item);
+        _showTrackBottomSheet(item, itemContext);
         return;
       case 'album':
         if (extensionId == null) {
@@ -371,7 +381,42 @@ extension _HomeTabExploreUI on _HomeTabState {
     }
   }
 
-  void _showTrackBottomSheet(ExploreItem item) {
+  void _showTrackBottomSheet(ExploreItem item, BuildContext itemContext) {
+    if (context.isMornye) {
+      final box = itemContext.findRenderObject();
+      final anchor = box is RenderBox && box.hasSize
+          ? box.localToGlobal(Offset.zero) & box.size
+          : null;
+      showMornyeContextMenu<void>(
+        context: itemContext,
+        // Featured cards can exceed the menu helper's page-size heuristic.
+        anchor: anchor,
+        builder: (menuContext) => MornyeContextMenu(
+          groups: [
+            [
+              MornyeMenuAction(
+                icon: mornyeIconFor(Icons.download),
+                label: menuContext.l10n.downloadTitle,
+                onPressed: () {
+                  Navigator.pop(menuContext);
+                  _handleExploreTrackPrimaryAction(item);
+                },
+              ),
+              MornyeMenuAction(
+                icon: mornyeIconFor(Icons.album),
+                label: menuContext.l10n.homeGoToAlbum,
+                onPressed: () {
+                  Navigator.pop(menuContext);
+                  _navigateToTrackAlbum(item);
+                },
+              ),
+            ],
+          ],
+        ),
+      );
+      return;
+    }
+
     final colorScheme = Theme.of(context).colorScheme;
 
     showModalBottomSheet<void>(

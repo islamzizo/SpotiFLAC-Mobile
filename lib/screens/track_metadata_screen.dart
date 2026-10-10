@@ -3,22 +3,15 @@ import 'dart:io';
 import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:spotiflac_android/widgets/app_alert_dialog.dart';
-import 'package:flutter/cupertino.dart'
-    show
-        CupertinoButton,
-        CupertinoIcons,
-        CupertinoTextField,
-        CupertinoActivityIndicator;
-import 'package:spotiflac_android/widgets/app_action_button.dart';
-import 'package:spotiflac_android/widgets/app_choice_chip.dart';
-import 'package:spotiflac_android/widgets/app_switch.dart';
+import 'package:flutter/cupertino.dart' show CupertinoButton, CupertinoIcons;
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
 import 'package:spotiflac_android/widgets/app_snack_bar.dart';
+import 'package:spotiflac_android/widgets/re_enrich_review_sheet.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:path/path.dart' as p;
 import 'package:spotiflac_android/services/conversion_library_service.dart';
+import 'package:spotiflac_android/services/deleted_library_files.dart';
+import 'package:spotiflac_android/services/file_access_check.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/re_enrich_result.dart';
@@ -30,7 +23,6 @@ import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/playback_provider.dart';
 import 'package:spotiflac_android/providers/music_player_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
-import 'package:spotiflac_android/providers/extension_provider.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/music_player_service.dart'
     show readPlaybackFileMetadataWithRetry;
@@ -47,7 +39,6 @@ import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
 import 'package:spotiflac_android/utils/mime_utils.dart';
 import 'package:spotiflac_android/utils/image_cache_utils.dart';
-import 'package:spotiflac_android/utils/extension_auth_launcher.dart';
 
 import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/utils/user_facing_error.dart';
@@ -61,7 +52,6 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/theme/mornye_icons.dart';
 import 'package:spotiflac_android/widgets/album_detail_header.dart'
     show HeaderMetaRow, HeaderMetaItem, HeaderCircleButton, HeaderFilledButton;
-import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 import 'package:spotiflac_android/widgets/mornye_context_menu.dart';
 import 'package:spotiflac_android/widgets/mornye_metadata_row.dart';
 import 'package:spotiflac_android/widgets/player_artwork.dart';
@@ -75,8 +65,7 @@ import 'package:spotiflac_android/widgets/metadata_barcode.dart';
 import 'package:spotiflac_android/widgets/settings_group.dart';
 import 'package:spotiflac_android/constants/music_services.dart';
 import 'package:spotiflac_android/screens/collapsing_header_scroll_mixin.dart';
-import 'package:spotiflac_android/screens/downloaded_album_screen.dart';
-import 'package:spotiflac_android/screens/local_album_screen.dart';
+import 'package:spotiflac_android/screens/track_metadata_edit_sheet.dart';
 import 'package:spotiflac_android/utils/clickable_metadata.dart';
 
 part 'track_metadata_screen_cover.dart';
@@ -84,13 +73,21 @@ part 'track_metadata_screen_display.dart';
 part 'track_metadata_screen_menu.dart';
 part 'track_metadata_mornye.dart';
 
-part 'track_metadata_edit_sheet.dart';
 part 'track_metadata_cards.dart';
 part 'track_metadata_lyrics.dart';
 part 'track_metadata_convert.dart';
 part 'track_metadata_actions.dart';
 
 final _log = AppLogger('TrackMetadata');
+
+class _MetadataItem {
+  final String label;
+  final String value;
+  final String rawValue;
+
+  _MetadataItem(this.label, this.value, {String? rawValue})
+    : rawValue = rawValue ?? value;
+}
 
 class _EmbeddedCoverPreviewCacheEntry {
   final String previewPath;
@@ -156,9 +153,19 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
   static final Map<String, _EmbeddedCoverPreviewCacheEntry>
   _embeddedCoverPreviewCache = {};
 
-  bool _fileExists = false;
-  bool _hasCheckedFile = false;
-  int? _fileSize;
+  FileAccessCheck? _fileAccess;
+  bool get _fileExists => _fileAccess is FileAccessFound;
+  bool get _isNetworkItem => cleanFilePath.startsWith('network://');
+  int? get _fileSize => switch (_fileAccess) {
+    FileAccessFound(:final stat) => stat.size,
+    _ => null,
+  };
+
+  String? _fileAccessMessage(BuildContext context) => switch (_fileAccess) {
+    FileAccessMissing() => context.l10n.trackFileNotFound,
+    FileAccessUnavailable() => context.l10n.trackFileUnavailable,
+    _ => null,
+  };
   String? _lyrics;
   String? _rawLyrics;
   bool _lyricsLoading = false;
@@ -192,7 +199,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
     _currentDownloadItem = widget.item;
     _currentLocalLibraryItem = widget.localItem;
     _currentNavigationIndex = widget.navigationIndex;
-    _checkFile();
+    unawaited(_checkFile());
   }
 
   @override
@@ -215,48 +222,25 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
     final generation = _metadataLoadGeneration;
     final filePath = cleanFilePath;
 
-    bool exists = false;
-    int? size;
-    try {
-      final stat = await fileStat(filePath);
-      if (stat != null) {
-        exists = true;
-        size = stat.size;
-      }
-    } catch (_) {}
-
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        (exists != _fileExists || size != _fileSize || !_hasCheckedFile)) {
-      setState(() {
-        _fileExists = exists;
-        _fileSize = size;
-        _hasCheckedFile = true;
-      });
+    final check = await checkFileAccess(filePath);
+    if (!mounted ||
+        generation != _metadataLoadGeneration ||
+        filePath != cleanFilePath) {
+      return;
     }
-
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        exists &&
-        _lyrics == null &&
-        !_lyricsLoading) {
-      _checkEmbeddedLyrics();
+    if (check case FileAccessUnavailable(:final error, :final stack)) {
+      _log.e('Unable to inspect track file: $filePath', error, stack);
     }
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        exists &&
-        !_isCueVirtualTrack &&
-        !_hasLoadedResolvedAudioMetadata) {
+    setState(() => _fileAccess = check);
+    if (!_fileExists) return;
+
+    if (_lyrics == null && !_lyricsLoading) {
+      unawaited(_checkEmbeddedLyrics());
+    }
+    if (!_isCueVirtualTrack && !_hasLoadedResolvedAudioMetadata) {
       unawaited(_refreshResolvedAudioMetadataFromFile());
     }
-    if (mounted &&
-        generation == _metadataLoadGeneration &&
-        filePath == cleanFilePath &&
-        exists &&
-        !_hasPath(_embeddedCoverPreviewPath)) {
+    if (!_isNetworkItem && !_hasPath(_embeddedCoverPreviewPath)) {
       // The information card reports artwork embedded in the audio file, not
       // a resized Library thumbnail or remote cover. The shared resolver owns
       // extraction; this screen only caches validation data and dimensions.
@@ -300,9 +284,9 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
     _hasLoadedResolvedAudioMetadata = true;
 
     try {
-      final metadata = await PlatformBridge.readDisplayAudioMetadata(
-        sourcePath,
-      );
+      final metadata = _isNetworkItem
+          ? await readPlaybackFileMetadataWithRetry(sourcePath)
+          : await PlatformBridge.readDisplayAudioMetadata(sourcePath);
       if (!mounted ||
           generation != _metadataLoadGeneration ||
           sourcePath != cleanFilePath) {
@@ -656,9 +640,7 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
           _currentDownloadItem = null;
           _currentLocalLibraryItem = widget.localNavigationItems![targetIndex];
         }
-        _fileExists = false;
-        _hasCheckedFile = false;
-        _fileSize = null;
+        _fileAccess = null;
         _lyrics = null;
         _rawLyrics = null;
         _lyricsLoading = false;
@@ -844,14 +826,16 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
                   : null,
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: HeaderFilledButton(
-              icon: CupertinoIcons.trash,
-              label: context.l10n.trackMetadataDelete,
-              onPressed: () => _confirmDelete(context, ref, colorScheme),
+          if (!_isNetworkItem) ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: HeaderFilledButton(
+                icon: CupertinoIcons.trash,
+                label: context.l10n.trackMetadataDelete,
+                onPressed: () => _confirmDelete(context, ref, colorScheme),
+              ),
             ),
-          ),
+          ],
         ],
       );
     }
@@ -873,25 +857,28 @@ class _TrackMetadataScreenState extends ConsumerState<TrackMetadataScreen>
             ),
           ),
         ),
-        const SizedBox(width: 12),
-
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _confirmDelete(context, ref, colorScheme),
-            icon: Icon(Icons.delete_outline, color: colorScheme.error),
-            label: Text(
-              context.l10n.trackMetadataDelete,
-              style: TextStyle(color: colorScheme.error),
-            ),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+        if (!_isNetworkItem) ...[
+          const SizedBox(width: 12),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => _confirmDelete(context, ref, colorScheme),
+              icon: Icon(Icons.delete_outline, color: colorScheme.error),
+              label: Text(
+                context.l10n.trackMetadataDelete,
+                style: TextStyle(color: colorScheme.error),
               ),
-              side: BorderSide(color: colorScheme.error.withValues(alpha: 0.5)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                side: BorderSide(
+                  color: colorScheme.error.withValues(alpha: 0.5),
+                ),
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }

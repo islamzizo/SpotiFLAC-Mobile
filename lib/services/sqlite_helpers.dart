@@ -103,6 +103,36 @@ String normalizeLookupText(String? value) {
   return (value ?? '').trim().toLowerCase();
 }
 
+/// Retry only lock contention while acquiring BEGIN, before the callback runs.
+/// History download writers can also lock transactions on an attached Library
+/// connection. Never replay a body or COMMIT failure: it may have side effects
+/// or an already durable result. Persistent locks still surface after 3 attempts.
+Future<T> transactionWithBusyRetry<T>(
+  Database db,
+  Future<T> Function(Transaction txn) action, {
+  bool? exclusive,
+}) async {
+  for (var attempt = 0; ; attempt++) {
+    var entered = false;
+    try {
+      return await db.transaction((txn) {
+        entered = true;
+        return action(txn);
+      }, exclusive: exclusive);
+    } on DatabaseException catch (error) {
+      final code = error.getResultCode();
+      final message = error.toString().toLowerCase();
+      final busy = code != null
+          ? (code & 0xff) == 5 || (code & 0xff) == 6
+          : message.contains('database is locked') ||
+                message.contains('database table is locked');
+      if (entered || !busy || attempt >= 2) rethrow;
+      _log.w('Database busy before transaction; retry ${attempt + 1}/2');
+      await Future<void>.delayed(Duration(milliseconds: 100 << attempt));
+    }
+  }
+}
+
 /// Returns a literal phrase suitable for the trigram FTS5 MATCH operator.
 ///
 /// The trigram tokenizer cannot answer one- or two-character searches, so
@@ -308,6 +338,42 @@ Future<void> createPathKeyTable(DatabaseExecutor db, String table) async {
   await db.execute(
     'CREATE INDEX IF NOT EXISTS idx_${table}_key ON $table(path_key)',
   );
+}
+
+/// Finds every index entry for these physical files, including SAF aliases.
+/// Keep extensions: deleting a FLAC must not remove a surviving Opus variant.
+Future<List<String>> findPhysicalFileRowIds(
+  DatabaseExecutor db,
+  String table,
+  Iterable<String> filePaths,
+) async {
+  final keys = {
+    for (final path in filePaths) ...buildPhysicalPathMatchKeys(path),
+  };
+  final values = keys.toList();
+  final ids = <String>{};
+  const chunkSize = 450;
+  for (var start = 0; start < values.length; start += chunkSize) {
+    final chunk = values.sublist(
+      start,
+      (start + chunkSize).clamp(0, values.length),
+    );
+    final placeholders = List.filled(chunk.length, '?').join(',');
+    final rows = await db.rawQuery('''
+      SELECT DISTINCT item.id, item.file_path
+      FROM $table item
+      JOIN ${table}_path_keys keys ON keys.item_id = item.id
+      WHERE keys.path_key IN ($placeholders)
+    ''', chunk);
+    for (final row in rows) {
+      if (buildPhysicalPathMatchKeys(
+        row['file_path'] as String?,
+      ).any(keys.contains)) {
+        ids.add(row['id'] as String);
+      }
+    }
+  }
+  return ids.toList();
 }
 
 Future<void> backfillPathKeys(

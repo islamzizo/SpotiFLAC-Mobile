@@ -1,122 +1,10 @@
 // ignore_for_file: invalid_use_of_protected_member, invalid_use_of_visible_for_testing_member
 part of 'download_queue_provider.dart';
 
-class _ProgressUpdate {
-  final DownloadStatus status;
-  final double progress;
-  final double? speedMBps;
-  final int? bytesReceived;
-  final int? bytesTotal;
-  final String preparationStage;
-
-  const _ProgressUpdate({
-    required this.status,
-    required this.progress,
-    this.speedMBps,
-    this.bytesReceived,
-    this.bytesTotal,
-    this.preparationStage = '',
-  });
-}
-
 extension _DownloadQueueProgress on DownloadQueueNotifier {
-  bool _shouldLogDownloadProgress(
-    String itemId,
-    double progress, {
-    bool preparing = false,
-  }) {
-    final bucket = preparing
-        ? -1
-        : (() {
-            final percent = (progress * 100).floor().clamp(0, 100).toInt();
-            if (percent == 100) return 100;
-            return (percent ~/ DownloadQueueNotifier._progressLogStepPercent) *
-                DownloadQueueNotifier._progressLogStepPercent;
-          })();
-    if (_lastProgressLogBucketByItem[itemId] == bucket) {
-      return false;
-    }
-    _lastProgressLogBucketByItem[itemId] = bucket;
-    return true;
-  }
-
-  double _normalizeProgressForUi(double value) {
-    final clamped = value.clamp(0.0, 1.0).toDouble();
-    if (clamped <= 0) return 0;
-    if (clamped >= 1) return 1;
-    final rounded = double.parse(clamped.toStringAsFixed(2));
-    return rounded == 0 ? 0.01 : rounded;
-  }
-
-  double _normalizeSpeedForUi(double value) {
-    if (value <= 0) return 0;
-    return double.parse(value.toStringAsFixed(1));
-  }
-
-  int _normalizeBytesForUi(int value) {
-    if (value <= 0) return 0;
-    return (value ~/ DownloadQueueNotifier._bytesUiStep) *
-        DownloadQueueNotifier._bytesUiStep;
-  }
-
-  bool _shouldUpdateProgressNotification({
-    required String trackName,
-    required String artistName,
-    required int progress,
-    required int total,
-    required int queueCount,
-  }) {
-    final safeTotal = total > 0 ? total : 1;
-    final percent = ((progress * 100) / safeTotal).round().clamp(0, 100);
-    final changed =
-        trackName != _lastNotifTrackName ||
-        artistName != _lastNotifArtistName ||
-        percent != _lastNotifPercent ||
-        queueCount != _lastNotifQueueCount;
-    if (!changed) {
-      return false;
-    }
-
-    _lastNotifTrackName = trackName;
-    _lastNotifArtistName = artistName;
-    _lastNotifPercent = percent;
-    _lastNotifQueueCount = queueCount;
-    return true;
-  }
-
   void _startMultiProgressPolling() {
-    _idleProgressPollTick = 0;
+    _progressTracker.resetPolling();
     _progressPoller.start(useStream: Platform.isAndroid || Platform.isIOS);
-  }
-
-  /// Idle-cadence gate for the fallback polling timer: polls every tick while
-  /// a download is active, but only every [_idleProgressPollEveryTicks]th
-  /// tick while idle-but-queued, and not at all while paused/empty.
-  bool _shouldPollDownloadProgressTick() {
-    // The lookup's maintained counters replace two full-queue scans per tick.
-    final lookup = state.lookup;
-    final hasItems = state.items.isNotEmpty;
-    final hasActiveItems =
-        hasItems &&
-        (lookup.activeDownloadsCount > 0 || lookup.finalizingCount > 0);
-
-    if (!hasActiveItems) {
-      // With nothing downloading or finalizing, every entry counted by
-      // queuedCount has the queued status.
-      final hasQueuedItems = hasItems && lookup.queuedCount > 0;
-      if (state.isPaused || !hasQueuedItems) {
-        _idleProgressPollTick = 0;
-        return false;
-      }
-
-      _idleProgressPollTick =
-          (_idleProgressPollTick + 1) %
-          DownloadQueueNotifier._idleProgressPollEveryTicks;
-      return _idleProgressPollTick == 0;
-    }
-
-    _idleProgressPollTick = 0;
-    return true;
   }
 
   void _processAllDownloadProgress(Map<String, dynamic> allProgress) {
@@ -126,38 +14,15 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
     final items = rawItems is Map ? rawItems : const <Object?, Object?>{};
     final currentItems = state.items;
     final lookup = state.lookup;
-    _lastProgressLogBucketByItem.removeWhere((itemId, _) {
-      final item = lookup.byItemId[itemId];
-      return item == null ||
-          item.status == DownloadStatus.completed ||
-          item.status == DownloadStatus.failed ||
-          item.status == DownloadStatus.skipped;
-    });
+    _progressTracker.pruneLogs(lookup);
     final queuedCount = lookup.queuedCount;
     final downloadingCount = lookup.activeDownloadsCount;
-    DownloadItem? firstDownloading;
+    final firstDownloading = lookup.firstDownloading;
+    final firstFinalizing = lookup.firstFinalizing;
     bool hasFinalizingItem = lookup.finalizingCount > 0;
-    String? finalizingTrackName;
-    String? finalizingArtistName;
-    if (downloadingCount > 0 || hasFinalizingItem) {
-      for (final item in currentItems) {
-        if (firstDownloading == null &&
-            item.status == DownloadStatus.downloading) {
-          firstDownloading = item;
-        }
-        if (finalizingTrackName == null &&
-            item.status == DownloadStatus.finalizing) {
-          hasFinalizingItem = true;
-          finalizingTrackName = item.track.name;
-          finalizingArtistName = item.track.artistName;
-        }
-        if ((downloadingCount == 0 || firstDownloading != null) &&
-            (!hasFinalizingItem || finalizingTrackName != null)) {
-          break;
-        }
-      }
-    }
-    final progressUpdates = <String, _ProgressUpdate>{};
+    String? finalizingTrackName = firstFinalizing?.track.name;
+    String? finalizingArtistName = firstFinalizing?.track.artistName;
+    final replacements = <int, DownloadItem>{};
 
     for (final entry in items.entries) {
       final itemId = entry.key.toString();
@@ -188,131 +53,57 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
       if (rawItemProgress is! Map) {
         continue;
       }
-      final itemProgress = rawItemProgress;
-      final bytesReceived =
-          (itemProgress['bytes_received'] as num?)?.toInt() ?? 0;
-      final bytesTotal = (itemProgress['bytes_total'] as num?)?.toInt() ?? 0;
-      final speedMBps = (itemProgress['speed_mbps'] as num?)?.toDouble() ?? 0.0;
-      final isDownloading = itemProgress['is_downloading'] as bool? ?? false;
-      final status = itemProgress['status'] as String? ?? 'downloading';
-      final progressFromBackend =
-          (itemProgress['progress'] as num?)?.toDouble() ?? 0.0;
-      final hasRealProgress =
-          status != 'preparing' &&
-          (bytesReceived > 0 || bytesTotal > 0 || progressFromBackend > 0);
-
-      if (status == 'finalizing') {
-        progressUpdates[itemId] = const _ProgressUpdate(
-          status: DownloadStatus.finalizing,
-          progress: 1.0,
-        );
+      final sample = DownloadProgressSample.fromNative(rawItemProgress);
+      final next = sample.applyTo(localItem);
+      if (!identical(next, localItem)) {
+        replacements[lookup.indexByItemId[itemId]!] = next;
+      }
+      if (sample.status == 'finalizing') {
         hasFinalizingItem = true;
         finalizingTrackName = localItem.track.name;
         finalizingArtistName = localItem.track.artistName;
         continue;
       }
 
-      if (status == 'preparing') {
-        progressUpdates[itemId] = _ProgressUpdate(
-          status: DownloadStatus.downloading,
-          progress: 0.0,
-          speedMBps: 0,
-          bytesReceived: 0,
-          bytesTotal: 0,
-          preparationStage: itemProgress['stage']?.toString() ?? '',
-        );
-
+      if (sample.status == 'preparing') {
         if (LogBuffer.loggingEnabled &&
-            _shouldLogDownloadProgress(itemId, 0, preparing: true)) {
+            _progressTracker.shouldLog(itemId, 0, preparing: true)) {
           _log.d('Preparing [$itemId]: waiting for real download bytes');
         }
         continue;
       }
 
-      if (isDownloading || hasRealProgress) {
-        double percentage = 0.0;
-        if (bytesTotal > 0) {
-          percentage = bytesReceived / bytesTotal;
+      if (sample.hasProgress &&
+          LogBuffer.loggingEnabled &&
+          _progressTracker.shouldLog(itemId, sample.progress)) {
+        final percentage = sample.progress;
+        final mbReceived = sample.bytesReceived / (1024 * 1024);
+        final mbTotal = sample.bytesTotal / (1024 * 1024);
+        final speedMBps = sample.speedMBps;
+        if (sample.bytesTotal > 0) {
+          _log.d(
+            'Progress [$itemId]: ${(percentage * 100).toStringAsFixed(1)}% (${mbReceived.toStringAsFixed(2)}/${mbTotal.toStringAsFixed(2)} MB) @ ${speedMBps.toStringAsFixed(2)} MB/s',
+          );
         } else {
-          percentage = progressFromBackend;
-        }
-        final normalizedProgress = _normalizeProgressForUi(percentage);
-        final normalizedSpeed = _normalizeSpeedForUi(speedMBps);
-        final normalizedBytes = _normalizeBytesForUi(bytesReceived);
-
-        progressUpdates[itemId] = _ProgressUpdate(
-          status: DownloadStatus.downloading,
-          progress: normalizedProgress,
-          speedMBps: normalizedSpeed,
-          bytesReceived: normalizedBytes,
-          bytesTotal: bytesTotal,
-        );
-
-        if (LogBuffer.loggingEnabled &&
-            _shouldLogDownloadProgress(itemId, percentage)) {
-          final mbReceived = bytesReceived / (1024 * 1024);
-          final mbTotal = bytesTotal / (1024 * 1024);
-          if (bytesTotal > 0) {
-            _log.d(
-              'Progress [$itemId]: ${(percentage * 100).toStringAsFixed(1)}% (${mbReceived.toStringAsFixed(2)}/${mbTotal.toStringAsFixed(2)} MB) @ ${speedMBps.toStringAsFixed(2)} MB/s',
-            );
-          } else {
-            _log.d(
-              'Progress [$itemId]: ${(percentage * 100).toStringAsFixed(1)}% (stream/unknown size) @ ${speedMBps.toStringAsFixed(2)} MB/s',
-            );
-          }
+          _log.d(
+            'Progress [$itemId]: ${(percentage * 100).toStringAsFixed(1)}% (stream/unknown size) @ ${speedMBps.toStringAsFixed(2)} MB/s',
+          );
         }
       }
     }
 
-    if (progressUpdates.isNotEmpty) {
-      final replacements = <int, DownloadItem>{};
-
-      for (final entry in progressUpdates.entries) {
-        final index = lookup.indexByItemId[entry.key];
-        if (index == null) continue;
-        final current = currentItems[index];
-        if (current.status == DownloadStatus.skipped ||
-            current.status == DownloadStatus.completed ||
-            current.status == DownloadStatus.failed) {
-          continue;
-        }
-        final update = entry.value;
-        if (current.status == DownloadStatus.finalizing &&
-            update.status != DownloadStatus.finalizing) {
-          continue;
-        }
-        final next = current.copyWith(
-          status: update.status,
-          progress: update.progress,
-          speedMBps: update.speedMBps ?? current.speedMBps,
-          bytesReceived: update.bytesReceived ?? current.bytesReceived,
-          bytesTotal: update.bytesTotal ?? current.bytesTotal,
-          preparationStage: update.preparationStage,
-        );
-        if (current.status != next.status ||
-            current.progress != next.progress ||
-            current.speedMBps != next.speedMBps ||
-            current.bytesReceived != next.bytesReceived ||
-            current.bytesTotal != next.bytesTotal ||
-            current.preparationStage != next.preparationStage) {
-          replacements[index] = next;
-        }
-      }
-
-      if (replacements.isNotEmpty) {
-        final updatedItems = ChunkedList<DownloadItem>.from(
-          currentItems,
-        ).updated(replacements);
-        state = state.copyWith(
-          items: updatedItems,
-          lookup: state.lookup.updatedForIndices(
-            previousItems: currentItems,
-            nextItems: updatedItems,
-            changedIndices: replacements.keys,
-          ),
-        );
-      }
+    if (replacements.isNotEmpty) {
+      final updatedItems = ChunkedList<DownloadItem>.from(
+        currentItems,
+      ).updated(replacements);
+      state = state.copyWith(
+        items: updatedItems,
+        lookup: state.lookup.updatedForIndices(
+          previousItems: currentItems,
+          nextItems: updatedItems,
+          changedIndices: replacements.keys,
+        ),
+      );
     }
 
     if (hasFinalizingItem && finalizingTrackName != null) {
@@ -326,19 +117,18 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
           queueCount: queuedCount,
           status: 'finalizing',
         );
-      } else if (finalizingTrackName != _lastFinalizingTrackName ||
-          safeArtistName != _lastFinalizingArtistName) {
+      } else if (_progressTracker.shouldNotifyFinalizing(
+        finalizingTrackName,
+        safeArtistName,
+      )) {
         _notificationService.showDownloadFinalizing(
           trackName: finalizingTrackName,
           artistName: safeArtistName,
         );
-        _lastFinalizingTrackName = finalizingTrackName;
-        _lastFinalizingArtistName = safeArtistName;
       }
       return;
     }
-    _lastFinalizingTrackName = null;
-    _lastFinalizingArtistName = null;
+    _progressTracker.shouldNotifyFinalizing(null, '');
 
     if (items.isNotEmpty) {
       if (downloadingCount > 0 && firstDownloading != null) {
@@ -378,7 +168,7 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
         final serviceStatus = notifTotal <= 0 ? 'preparing' : 'downloading';
 
         if (!Platform.isAndroid &&
-            _shouldUpdateProgressNotification(
+            _progressTracker.shouldNotify(
               trackName: trackName,
               artistName: artistName,
               progress: notifProgress,
@@ -416,43 +206,17 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
     required int queueCount,
     String status = 'downloading',
   }) {
-    final now = DateTime.now();
-    final progressBucket = total <= 0
-        ? -1
-        : (() {
-            final progressPercent = ((progress * 100) / total)
-                .round()
-                .clamp(0, 100)
-                .toInt();
-            return progressPercent == 100
-                ? 100
-                : ((progressPercent ~/
-                              DownloadQueueNotifier
-                                  ._serviceProgressStepPercent) *
-                          DownloadQueueNotifier._serviceProgressStepPercent)
-                      .clamp(0, 100)
-                      .toInt();
-          })();
-
-    final didContentChange =
-        trackName != _lastServiceTrackName ||
-        artistName != _lastServiceArtistName ||
-        status != _lastServiceStatus ||
-        queueCount != _lastServiceQueueCount ||
-        progressBucket != _lastServicePercent;
-    final allowHeartbeat =
-        now.difference(_lastServiceUpdateAt) >= const Duration(seconds: 5);
-
-    if (!didContentChange && !allowHeartbeat) {
+    if (!_progressTracker.shouldUpdateService(
+      trackName: trackName,
+      artistName: artistName,
+      progress: progress,
+      total: total,
+      queueCount: queueCount,
+      status: status,
+      now: DateTime.now(),
+    )) {
       return;
     }
-
-    _lastServiceTrackName = trackName;
-    _lastServiceArtistName = artistName;
-    _lastServiceStatus = status;
-    _lastServicePercent = progressBucket;
-    _lastServiceQueueCount = queueCount;
-    _lastServiceUpdateAt = now;
 
     PlatformBridge.updateDownloadServiceProgress(
       trackName: trackName,
@@ -466,19 +230,6 @@ extension _DownloadQueueProgress on DownloadQueueNotifier {
 
   void _stopProgressPolling() {
     _progressPoller.stop();
-    _idleProgressPollTick = 0;
-    _lastProgressLogBucketByItem.clear();
-    _lastServiceTrackName = null;
-    _lastServiceArtistName = null;
-    _lastServiceStatus = null;
-    _lastServicePercent = -1;
-    _lastServiceQueueCount = -1;
-    _lastServiceUpdateAt = DateTime.fromMillisecondsSinceEpoch(0);
-    _lastFinalizingTrackName = null;
-    _lastFinalizingArtistName = null;
-    _lastNotifTrackName = null;
-    _lastNotifArtistName = null;
-    _lastNotifPercent = -1;
-    _lastNotifQueueCount = -1;
+    _progressTracker.reset();
   }
 }

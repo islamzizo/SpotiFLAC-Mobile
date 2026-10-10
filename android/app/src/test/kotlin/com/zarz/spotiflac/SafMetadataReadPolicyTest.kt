@@ -8,6 +8,78 @@ import org.junit.Test
 import java.io.File
 
 class SafMetadataReadPolicyTest {
+    @Test fun exhaustedReadsReportTheFailureOnce() {
+        val failures = mutableListOf<String?>()
+        val result = readSafMetadataWithFallback<String>(
+            directRead = { throw java.io.IOException("Invalid audio header") },
+            fallbackRead = { null },
+            retryDirectOnFailure = true,
+            onFailure = { failures.add(it?.message) },
+        )
+        assertNull(result)
+        assertEquals(listOf("Invalid audio header"), failures)
+    }
+
+    @Test fun recoveredReadsDoNotReportAScanError() {
+        var failures = 0
+        val result = readSafMetadataWithFallback(
+            directRead = { throw SecurityException("Descriptor unavailable") },
+            fallbackRead = { "valid metadata" },
+            onFailure = { failures++ },
+        )
+        assertEquals("valid metadata", result)
+        assertEquals(0, failures)
+    }
+
+    @Test fun rejectsTemporaryWorkspaceMetadataAndRetriesDescriptorOnce() {
+        val guessed = mapOf(
+            "metadataFromFilename" to true,
+            "albumName" to "native-media-work",
+            "trackName" to "Artist",
+            "artistName" to "Song",
+        )
+        val tags = mapOf("trackName" to "Song", "artistName" to "Artist", "albumName" to "Album")
+        var reads = 0
+        var copies = 0
+        val result = readSafMetadataWithFallback(
+            directRead = { if (++reads == 1) guessed else tags },
+            fallbackRead = { copies++; guessed },
+            accept = { it["metadataFromFilename"] != true },
+            retryDirectOnFailure = true,
+        )
+        assertEquals(tags, result)
+        assertEquals(2, reads)
+        assertEquals(1, copies)
+    }
+
+    @Test fun persistentNasReadFailureDoesNotPublishGuessedMetadataOrLoop() {
+        var reads = 0
+        var copies = 0
+        val guessed = mapOf("metadataFromFilename" to true, "albumName" to "native-media-work")
+        val result = readSafMetadataWithFallback(
+            directRead = { reads++; guessed },
+            fallbackRead = { copies++; guessed },
+            accept = { it["metadataFromFilename"] != true },
+            retryDirectOnFailure = true,
+        )
+        assertNull(result)
+        assertEquals(2, reads)
+        assertEquals(1, copies)
+    }
+
+    @Test fun validCopiedTagsDoNotTriggerAnotherRemoteRead() {
+        var reads = 0
+        val tags = mapOf<String, Any>("trackName" to "Song", "albumName" to "Album")
+        val result = readSafMetadataWithFallback(
+            directRead = { reads++; throw java.io.IOException("Provider not ready") },
+            fallbackRead = { tags },
+            accept = { it["metadataFromFilename"] != true },
+            retryDirectOnFailure = true,
+        )
+        assertEquals(tags, result)
+        assertEquals(1, reads)
+    }
+
     @Test fun lyricsReadUsesSafCopyAndDeletesItAfterSuccessOrFailure() {
         for (fails in listOf(false, true)) {
             val temporary = File.createTempFile("lyrics_", ".flac")

@@ -82,4 +82,50 @@ void main() {
       expect(await metadata.exists(), isTrue);
     },
   );
+
+  test('mobile budget uses a single native operation with exact age', () async {
+    final directory = await Directory.systemTemp.createTemp('native-budget-');
+    addTearDown(() => directory.delete(recursive: true));
+    final payload = await File('${directory.path}/keep').writeAsBytes([1]);
+    final deleted = await trimCacheToByteBudget(
+      directory,
+      maxBytes: 100,
+      targetBytes: 50,
+      minimumAge: const Duration(microseconds: 60000001),
+      nativeJobRunner: (request, {requestId}) async {
+        expect(request, {
+          'operation': 'cache_trim_budget',
+          'directory': directory.absolute.path,
+          'max_bytes': 100,
+          'target_bytes': 50,
+          'minimum_age_us': 60000001,
+        });
+        return {'deleted': 7};
+      },
+    );
+    expect(deleted, 7);
+    expect(await payload.exists(), isTrue);
+  });
+
+  test(
+    'invalid native budget results never trigger destructive fallback',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'invalid-budget-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final payload = await File('${directory.path}/keep').writeAsBytes([1]);
+      await payload.setLastModified(DateTime(2020));
+      await expectLater(
+        trimCacheToByteBudget(
+          directory,
+          maxBytes: 0,
+          targetBytes: 0,
+          nativeJobRunner: (request, {requestId}) async => {'deleted': -1},
+        ),
+        throwsStateError,
+      );
+      expect(await payload.exists(), isTrue);
+    },
+  );
 }

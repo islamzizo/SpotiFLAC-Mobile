@@ -159,8 +159,7 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
       return;
     }
 
-    final updatedItems = [...items];
-    final persistedUpdates = <Map<String, dynamic>>[];
+    final persistedUpdates = <HistoryMaintenanceUpdate>[];
     var changed = false;
     var repairedCount = 0;
     var verifiedCount = 0;
@@ -218,23 +217,19 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
               : item.safFileName,
           safRepaired: true,
         );
-        updatedItems[index] = updated;
         changed = true;
         if (newUri == item.filePath) {
           verifiedCount++;
         } else {
           repairedCount++;
         }
-        persistedUpdates.add(updated.toJson());
+        persistedUpdates.add(
+          HistoryMaintenanceUpdate(original: item, updated: updated),
+        );
       }
 
       if (changed) {
-        await _db.upsertBatch(persistedUpdates);
-        state = state.copyWith(
-          items: updatedItems,
-          loadedIndexVersion: state.loadedIndexVersion + 1,
-          lookupItems: _lookupItemsWithUpdates(updatedItems),
-        );
+        await applyMaintenanceUpdates(persistedUpdates);
         _historyLog.i(
           'SAF repair pass: verified=$verifiedCount, repaired=$repairedCount, checked=${selectedIndexes.length}',
         );
@@ -558,8 +553,7 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
         return;
       }
 
-      List<DownloadHistoryItem>? updatedItems;
-      final persistedUpdates = <Map<String, dynamic>>[];
+      final persistedUpdates = <HistoryMaintenanceUpdate>[];
       var refreshedCount = 0;
 
       for (final index in selectedIndexes) {
@@ -690,19 +684,14 @@ extension _HistoryStartupMaintenance on DownloadHistoryNotifier {
           hasReplayGain: resolvedHasReplayGain,
           replayGainMetadataScanVersion: resolvedReplayGainScanVersion,
         );
-        updatedItems ??= [...items];
-        updatedItems[index] = updated;
-        persistedUpdates.add(updated.toJson());
+        persistedUpdates.add(
+          HistoryMaintenanceUpdate(original: item, updated: updated),
+        );
         refreshedCount++;
       }
 
-      if (persistedUpdates.isNotEmpty && updatedItems != null) {
-        await _db.upsertBatch(persistedUpdates);
-        state = state.copyWith(
-          items: updatedItems,
-          loadedIndexVersion: state.loadedIndexVersion + 1,
-          lookupItems: _lookupItemsWithUpdates(updatedItems),
-        );
+      if (persistedUpdates.isNotEmpty) {
+        await applyMaintenanceUpdates(persistedUpdates);
       }
 
       await _writeStartupCursor(

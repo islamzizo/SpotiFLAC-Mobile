@@ -11,6 +11,8 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   audioQuality: json['audioQuality'] as String? ?? 'LOSSLESS',
   filenameFormat: json['filenameFormat'] as String? ?? '{title} - {artist}',
   downloadDirectory: json['downloadDirectory'] as String? ?? '',
+  networkDownloadFolder: json['networkDownloadFolder'] as String? ?? '',
+  networkDownloadLabel: json['networkDownloadLabel'] as String? ?? '',
   downloadDirectoryBookmark: json['downloadDirectoryBookmark'] as String? ?? '',
   storageMode: json['storageMode'] as String? ?? 'app',
   downloadTreeUri: json['downloadTreeUri'] as String? ?? '',
@@ -22,7 +24,30 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   embedLyrics: json['embedLyrics'] as bool? ?? true,
   embedReplayGain: json['embedReplayGain'] as bool? ?? false,
   playbackNormalization: json['playbackNormalization'] as bool? ?? false,
+  pauseOnMute: json['pauseOnMute'] as bool? ?? true,
+  playOnHeadphonesConnected:
+      json['playOnHeadphonesConnected'] as bool? ?? false,
   autoMix: json['autoMix'] as bool? ?? false,
+  autoMixDuration: json['autoMixDuration'] == null
+      ? 0
+      : autoMixDurationFromJson(json['autoMixDuration']),
+  autoMixEffect:
+      $enumDecodeNullable(
+        _$AutoMixEffectEnumMap,
+        json['autoMixEffect'],
+        unknownValue: AutoMixEffect.auto,
+      ) ??
+      AutoMixEffect.auto,
+  autoMixSpeed: json['autoMixSpeed'] == null
+      ? 1
+      : autoMixSpeedFromJson(json['autoMixSpeed']),
+  autoMixPitch: json['autoMixPitch'] == null
+      ? 0
+      : autoMixPitchFromJson(json['autoMixPitch']),
+  autoMixEcho: json['autoMixEcho'] as bool? ?? false,
+  autoMixLowPass: json['autoMixLowPass'] as bool? ?? false,
+  discordRichPresenceEnabled:
+      json['discordRichPresenceEnabled'] as bool? ?? false,
   usbBitPerfect: json['usbBitPerfect'] as bool? ?? false,
   usbDirect: json['usbDirect'] as bool? ?? false,
   usbDsdOverPcm: json['usbDsdOverPcm'] as bool? ?? false,
@@ -68,6 +93,9 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   locale: json['locale'] as String? ?? 'system',
   lyricsMode: json['lyricsMode'] as String? ?? 'embed',
   keepScreenOnLyrics: json['keepScreenOnLyrics'] as bool? ?? true,
+  motionArtworkEnabled: json['motionArtworkEnabled'] as bool? ?? true,
+  listeningStatisticsEnabled:
+      json['listeningStatisticsEnabled'] as bool? ?? true,
   autoConvertDownloads: json['autoConvertDownloads'] as bool? ?? false,
   redownloadFakeHiRes: json['redownloadFakeHiRes'] as bool? ?? false,
   autoConvertFormat: json['autoConvertFormat'] as String? ?? 'mp3',
@@ -99,14 +127,14 @@ AppSettings _$AppSettingsFromJson(Map<String, dynamic> json) => AppSettings(
   lyricsIncludeRomanizationNetease:
       json['lyricsIncludeRomanizationNetease'] as bool? ?? false,
   lyricsMultiPersonWordByWord:
-      json['lyricsMultiPersonWordByWord'] as bool? ?? false,
-  lyricsAppleElrcWordSync: json['lyricsAppleElrcWordSync'] as bool? ?? false,
+      json['lyricsMultiPersonWordByWord'] as bool? ?? true,
+  lyricsAppleElrcWordSync: json['lyricsAppleElrcWordSync'] as bool? ?? true,
   musixmatchLanguage: json['musixmatchLanguage'] as String? ?? '',
   lastSeenVersion: json['lastSeenVersion'] as String? ?? '',
   deduplicateDownloads: json['deduplicateDownloads'] as bool? ?? true,
   allowQualityVariants: json['allowQualityVariants'] as bool? ?? false,
   saveDownloadHistory: json['saveDownloadHistory'] as bool? ?? true,
-  playerMode: json['playerMode'] as String? ?? 'external',
+  playerMode: json['playerMode'] as String? ?? 'internal',
   playerShowPronunciation: json['playerShowPronunciation'] as bool? ?? true,
   playerShowTranslation: json['playerShowTranslation'] as bool? ?? true,
 );
@@ -118,6 +146,8 @@ Map<String, dynamic> _$AppSettingsToJson(
   'audioQuality': instance.audioQuality,
   'filenameFormat': instance.filenameFormat,
   'downloadDirectory': instance.downloadDirectory,
+  'networkDownloadFolder': instance.networkDownloadFolder,
+  'networkDownloadLabel': instance.networkDownloadLabel,
   'downloadDirectoryBookmark': instance.downloadDirectoryBookmark,
   'storageMode': instance.storageMode,
   'downloadTreeUri': instance.downloadTreeUri,
@@ -128,7 +158,16 @@ Map<String, dynamic> _$AppSettingsToJson(
   'embedLyrics': instance.embedLyrics,
   'embedReplayGain': instance.embedReplayGain,
   'playbackNormalization': instance.playbackNormalization,
+  'pauseOnMute': instance.pauseOnMute,
+  'playOnHeadphonesConnected': instance.playOnHeadphonesConnected,
   'autoMix': instance.autoMix,
+  'autoMixDuration': instance.autoMixDuration,
+  'autoMixEffect': _$AutoMixEffectEnumMap[instance.autoMixEffect]!,
+  'autoMixSpeed': instance.autoMixSpeed,
+  'autoMixPitch': instance.autoMixPitch,
+  'autoMixEcho': instance.autoMixEcho,
+  'autoMixLowPass': instance.autoMixLowPass,
+  'discordRichPresenceEnabled': instance.discordRichPresenceEnabled,
   'usbBitPerfect': instance.usbBitPerfect,
   'usbDirect': instance.usbDirect,
   'usbDsdOverPcm': instance.usbDsdOverPcm,
@@ -166,6 +205,8 @@ Map<String, dynamic> _$AppSettingsToJson(
   'locale': instance.locale,
   'lyricsMode': instance.lyricsMode,
   'keepScreenOnLyrics': instance.keepScreenOnLyrics,
+  'motionArtworkEnabled': instance.motionArtworkEnabled,
+  'listeningStatisticsEnabled': instance.listeningStatisticsEnabled,
   'autoConvertDownloads': instance.autoConvertDownloads,
   'redownloadFakeHiRes': instance.redownloadFakeHiRes,
   'autoConvertFormat': instance.autoConvertFormat,
@@ -197,4 +238,13 @@ Map<String, dynamic> _$AppSettingsToJson(
   'playerMode': instance.playerMode,
   'playerShowPronunciation': instance.playerShowPronunciation,
   'playerShowTranslation': instance.playerShowTranslation,
+};
+
+const _$AutoMixEffectEnumMap = {
+  AutoMixEffect.auto: 'auto',
+  AutoMixEffect.crossfade: 'crossfade',
+  AutoMixEffect.muffled: 'muffled',
+  AutoMixEffect.echo: 'echo',
+  AutoMixEffect.pitch: 'pitch',
+  AutoMixEffect.custom: 'custom',
 };

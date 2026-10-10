@@ -22,6 +22,34 @@ bool isForegroundServiceStartNotAllowed(Object error) {
 Object? _decodeJsonInBackground(String json) => jsonDecode(json);
 String _encodeJsonInBackground(Object? value) => jsonEncode(value);
 
+class _NativeDataJobState {
+  bool dispatched = false;
+  bool cancelled = false;
+}
+
+String _encodeBoundedLookupCacheInBackground(Map<String, dynamic> entries) {
+  final result = StringBuffer('{');
+  var bytes = 2; // Opening and closing braces.
+  var count = 0;
+  for (final entry in entries.entries) {
+    final fragment =
+        '${_encodeJsonInBackground(entry.key)}:${_encodeJsonInBackground(entry.value)}';
+    final entryBytes = utf8.encode(fragment).length;
+    final separatorBytes = count == 0 ? 0 : 1;
+    if (entryBytes > PlatformBridge._persistentCacheMaxEntryBytes ||
+        bytes + separatorBytes + entryBytes >
+            PlatformBridge._persistentCacheMaxBytes) {
+      continue;
+    }
+    if (count > 0) result.write(',');
+    result.write(fragment);
+    bytes += separatorBytes + entryBytes;
+    count++;
+  }
+  result.write('}');
+  return result.toString();
+}
+
 Object? _decodeJsonFileInBackground(String path) {
   final contents = File(path).readAsStringSync();
   return contents.isEmpty ? null : jsonDecode(contents);
@@ -142,8 +170,13 @@ bool shouldResetRestoredInstallation({
 class _BridgeCacheEntry {
   final Map<String, dynamic> value;
   final DateTime expiresAt;
+  final int bytes;
 
-  const _BridgeCacheEntry({required this.value, required this.expiresAt});
+  const _BridgeCacheEntry({
+    required this.value,
+    required this.expiresAt,
+    required this.bytes,
+  });
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
@@ -151,8 +184,13 @@ class _BridgeCacheEntry {
 class _BridgeListCacheEntry {
   final List<Map<String, dynamic>> value;
   final DateTime expiresAt;
+  final int bytes;
 
-  const _BridgeListCacheEntry({required this.value, required this.expiresAt});
+  const _BridgeListCacheEntry({
+    required this.value,
+    required this.expiresAt,
+    required this.bytes,
+  });
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
 }
@@ -176,6 +214,61 @@ class PlatformBridge {
 
   static const _channel = MethodChannel('com.zarz.spotiflac/backend');
 
+  static int _nativeDataJobSerial = 0;
+  static final _nativeDataJobs = <String, Set<_NativeDataJobState>>{};
+
+  /// A single background native operation. Binary inputs never become base64
+  /// JSON, and large request/result codecs stay off the UI isolate.
+  static Future<Map<String, dynamic>> runNativeDataJob(
+    Map<String, dynamic> request, {
+    Uint8List? bytes,
+    String? requestId,
+  }) async {
+    final id =
+        requestId ??
+        'data_${DateTime.now().microsecondsSinceEpoch}_${_nativeDataJobSerial++}';
+    final state = _NativeDataJobState();
+    final states = _nativeDataJobs.putIfAbsent(id, () => {});
+    states.add(state);
+    try {
+      final encoded = await compute(_encodeJsonInBackground, request);
+      if (state.cancelled) {
+        throw PlatformException(
+          code: 'CANCELLED',
+          message: 'Native data job cancelled',
+        );
+      }
+      state.dispatched = true;
+      Object? result;
+      try {
+        result = await _channel.invokeMethod('runNativeDataJob', {
+          'request_json': encoded,
+          'request_id': id,
+          'bytes': ?bytes,
+        });
+      } finally {
+        state.dispatched = false;
+      }
+      return await _decodeRequiredMapResultAsync(result, 'runNativeDataJob');
+    } finally {
+      states.remove(state);
+      if (states.isEmpty) _nativeDataJobs.remove(id);
+    }
+  }
+
+  static Future<void> cancelNativeDataJob(String requestId) async {
+    final states = _nativeDataJobs[requestId];
+    if (states == null) return;
+    for (final state in states) {
+      state.cancelled = true;
+    }
+    if (states.any((state) => state.dispatched)) {
+      await _channel.invokeMethod<void>('cancelNativeDataJob', {
+        'request_id': requestId,
+      });
+    }
+  }
+
   static Future<void> setScreenAwake(bool enabled) async {
     if (defaultTargetPlatform != TargetPlatform.android &&
         defaultTargetPlatform != TargetPlatform.iOS) {
@@ -190,6 +283,12 @@ class PlatformBridge {
   static const _urlHandleCacheTtl = Duration(minutes: 5);
   static const _customSearchCacheTtl = Duration(minutes: 2);
   static const _bridgeCacheMaxEntries = 256;
+  // Bound retained JSON containers as well as strings. Entry counts alone do
+  // not bound album/playlist responses, which can contain thousands of tracks.
+  static const _bridgeCacheMaxEntryBytes = 4 * 1024 * 1024;
+  static const _bridgeCacheMaxBytes = 8 * 1024 * 1024;
+  static const _persistentCacheMaxEntryBytes = 1024 * 1024;
+  static const _persistentCacheMaxBytes = 2 * 1024 * 1024;
   static const _lookupCachePersistDebounce = Duration(milliseconds: 500);
   static const _metadataPersistentCacheKey = 'bridge_metadata_lookup_cache_v1';
   static const _downloadProgressEvents = EventChannel(
@@ -259,6 +358,15 @@ class PlatformBridge {
     _backendEventHandlerInstalled = true;
     _channel.setMethodCallHandler((call) async {
       switch (call.method) {
+        case 'libraryScanError':
+          final args = call.arguments;
+          if (args is Map) {
+            final path = args['path']?.toString() ?? '';
+            final operation = args['operation']?.toString() ?? 'scan';
+            final message = args['message']?.toString() ?? 'Unknown error';
+            AppLogger('LocalLibrary').e('$operation [$path]: $message');
+          }
+          return null;
         case 'extensionSessionGrantCompleted':
           final args = call.arguments;
           if (args is Map) {
@@ -388,20 +496,43 @@ class PlatformBridge {
     Duration ttl,
     String persistentCacheKey,
   ) {
-    _pruneExpiredBridgeCache(cache);
-    while (cache.length >= _bridgeCacheMaxEntries && cache.isNotEmpty) {
-      cache.remove(cache.keys.first);
-    }
-    cache[key] = _BridgeCacheEntry(
-      // Loader results stay private; every caller receives its own deep copy.
-      value: value,
-      expiresAt: DateTime.now().add(ttl),
-    );
+    _putMemoryCachedMap(cache, key, value, ttl);
     _scheduleLookupCachePersist(
       cache,
       persistentCacheKey,
       _lookupCacheGeneration,
     );
+  }
+
+  /// Conservative retained-size estimate, with early exit for oversized JSON.
+  /// Avoids allocating another encoded response just to decide cache admission.
+  static int _payloadBytes(Object? value) {
+    var bytes = 0;
+    void visit(Object? item) {
+      if (bytes > _bridgeCacheMaxEntryBytes) return;
+      if (item is String) {
+        bytes += 32 + item.length * 2;
+      } else if (item is Map) {
+        bytes += 64;
+        for (final entry in item.entries) {
+          bytes += 48;
+          visit(entry.key);
+          visit(entry.value);
+          if (bytes > _bridgeCacheMaxEntryBytes) break;
+        }
+      } else if (item is List) {
+        bytes += 32 + item.length * 8;
+        for (final entry in item) {
+          visit(entry);
+          if (bytes > _bridgeCacheMaxEntryBytes) break;
+        }
+      } else {
+        bytes += 16;
+      }
+    }
+
+    visit(value);
+    return bytes;
   }
 
   static void _pruneExpiredBridgeCache(Map<String, _BridgeCacheEntry> cache) {
@@ -486,6 +617,10 @@ class PlatformBridge {
   ) async {
     final raw = prefs.getString(prefsKey);
     if (raw == null || raw.isEmpty) return;
+    if (raw.length > _persistentCacheMaxBytes) {
+      await prefs.remove(prefsKey);
+      return;
+    }
 
     final decoded = await _decodeJsonStringAsync(raw);
     if (generation != _lookupCacheGeneration) return;
@@ -505,9 +640,17 @@ class PlatformBridge {
       final expiresAt = DateTime.fromMillisecondsSinceEpoch(expiresAtMs);
       if (!expiresAt.isAfter(now)) continue;
 
+      final map = Map<String, dynamic>.from(value);
+      final bytes = _payloadBytes(map) + key.length * 2;
+      if (bytes > _bridgeCacheMaxEntryBytes) continue;
+      if (target.values.fold<int>(0, (sum, item) => sum + item.bytes) + bytes >
+          _bridgeCacheMaxBytes) {
+        break;
+      }
       target[key] = _BridgeCacheEntry(
-        value: Map<String, dynamic>.from(value),
+        value: map,
         expiresAt: expiresAt,
+        bytes: bytes,
       );
     }
   }
@@ -519,16 +662,25 @@ class PlatformBridge {
   ) async {
     try {
       _pruneExpiredBridgeCache(cache);
-      final data = <String, dynamic>{
-        for (final entry in cache.entries)
-          entry.key: {
-            'expires_at': entry.value.expiresAt.millisecondsSinceEpoch,
-            'value': entry.value.value,
-          },
-      };
-      final encoded = data.length >= 32
-          ? await compute(_encodeJsonInBackground, data)
-          : jsonEncode(data);
+      final data = <String, dynamic>{};
+      var bytes = 64;
+      for (final entry in cache.entries.toList().reversed) {
+        final cost = entry.value.bytes + 128;
+        if (cost > _persistentCacheMaxEntryBytes ||
+            bytes + cost > _persistentCacheMaxBytes) {
+          continue;
+        }
+        bytes += cost;
+        data[entry.key] = {
+          'expires_at': entry.value.expiresAt.millisecondsSinceEpoch,
+          'value': entry.value.value,
+        };
+      }
+      // Escaping and multibyte UTF-8 can outgrow the retained-size estimate.
+      // Enforce both encoded limits in the isolate, without UI-side encoding.
+      final encoded = bytes >= _backgroundJsonDecodeThresholdBytes
+          ? await compute(_encodeBoundedLookupCacheInBackground, data)
+          : _encodeBoundedLookupCacheInBackground(data);
       if (generation != _lookupCacheGeneration) return;
       final prefs = await SharedPreferences.getInstance();
       if (generation != _lookupCacheGeneration) return;
@@ -722,10 +874,51 @@ class PlatformBridge {
     await _channel.invokeMethod('cancelDownload', {'item_id': itemId});
   }
 
+  /// Cancels the selected attempts and clears their native progress. Failures
+  /// are best effort, as for individual queue cancellation; later chunks still
+  /// run, without issuing thousands of concurrent channel requests.
+  static Future<void> cancelDownloads(Iterable<String> itemIds) async {
+    final ids = itemIds.toSet().toList(growable: false);
+    for (var start = 0; start < ids.length; start += 256) {
+      final end = start + 256 < ids.length ? start + 256 : ids.length;
+      try {
+        await _channel.invokeMethod('cancelDownloads', {
+          'item_ids': ids.sublist(start, end),
+        });
+      } catch (error) {
+        _log.w('Failed to cancel ${end - start} downloads: $error');
+      }
+    }
+  }
+
   /// Drops a stale pre-registered cancel flag for an item with no active
   /// download, so a user-initiated retry does not abort instantly.
   static Future<void> resetDownloadCancel(String itemId) async {
     await _channel.invokeMethod('resetDownloadCancel', {'item_id': itemId});
+  }
+
+  /// Returns only IDs whose native reset succeeded. Bound each request so a
+  /// large retry selection does not flood the channel or hold the native lock.
+  static Future<Set<String>> resetDownloadCancels(
+    Iterable<String> itemIds,
+  ) async {
+    final ids = itemIds.toSet().toList(growable: false);
+    final reset = <String>{};
+    for (var start = 0; start < ids.length; start += 256) {
+      final end = start + 256 < ids.length ? start + 256 : ids.length;
+      final chunk = ids.sublist(start, end);
+      try {
+        await _channel.invokeMethod('resetDownloadCancels', {
+          'item_ids': chunk,
+        });
+        reset.addAll(chunk);
+      } catch (error) {
+        _log.w(
+          'Failed to reset cancel flags for ${chunk.length} downloads: $error',
+        );
+      }
+    }
+    return reset;
   }
 
   /// iOS only: run a verification/OAuth page inside ASWebAuthenticationSession.
@@ -831,6 +1024,26 @@ class PlatformBridge {
           _ => null,
         },
     };
+  }
+
+  /// Read access for a Library source, independent of download write access.
+  /// Null means the provider could not confirm access (loading/query failure).
+  static Future<bool?> probeSafTreeReadAccess(String treeUri) async {
+    try {
+      Future<bool?> probe() => _channel.invokeMethod<bool>(
+        'probeSafTreeReadAccess',
+        {'tree_uri': treeUri},
+      );
+      final readable = await probe();
+      if (readable != false) return readable;
+      // A busy provider can briefly return an empty root after a write.
+      // Confirm a negative before hiding all tracks from this source.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      return await probe();
+    } catch (e) {
+      _log.w('Failed to probe SAF library read access: $e');
+      return null;
+    }
   }
 
   /// Whether the persisted SAF grant for [treeUri] is still usable: the
@@ -1614,17 +1827,6 @@ class PlatformBridge {
     );
   }
 
-  static Future<Map<String, dynamic>> getGoLogsSince(int index) async {
-    final result = await _channel.invokeMethod('getLogsSince', {
-      'index': index,
-    });
-    return _decodeRequiredMapResult(result, 'getGoLogsSince');
-  }
-
-  static Future<void> clearGoLogs() async {
-    await _channel.invokeMethod('clearLogs');
-  }
-
   /// Ask the native backend to release unused memory. Best-effort:
   /// safe to call on memory pressure or when the app is backgrounded.
   static Future<void> releaseNativeMemory({bool underPressure = false}) async {
@@ -1641,10 +1843,6 @@ class PlatformBridge {
     try {
       await _channel.invokeMethod('setMetadataLanguage', {'tag': tag});
     } catch (_) {}
-  }
-
-  static Future<void> setGoLoggingEnabled(bool enabled) async {
-    await _channel.invokeMethod('setLoggingEnabled', {'enabled': enabled});
   }
 
   static Future<void> initExtensionSystem(
@@ -1700,7 +1898,7 @@ class PlatformBridge {
 
   static Future<List<Map<String, dynamic>>> getInstalledExtensions() async {
     final result = await _channel.invokeMethod('getInstalledExtensions');
-    return _decodeMapListResult(result, 'getInstalledExtensions');
+    return _decodeMapListResultAsync(result, 'getInstalledExtensions');
   }
 
   static Future<void> setExtensionEnabled(
@@ -1775,17 +1973,20 @@ class PlatformBridge {
 
   static Future<Map<String, dynamic>> invokeExtensionAction(
     String extensionId,
-    String actionName,
-  ) async {
+    String actionName, {
+    Map<String, dynamic>? input,
+  }) async {
+    // Log action identity only. Input may contain account credentials or OTP.
     _log.d('invokeExtensionAction: $extensionId.$actionName');
     final result = await _channel.invokeMethod('invokeExtensionAction', {
       'extension_id': extensionId,
       'action': actionName,
+      if (input != null) 'arguments_json': jsonEncode([input]),
     });
     if (result == null || (result as String).isEmpty) {
       return {'success': true};
     }
-    return _decodeRequiredMapResult(result, 'invokeExtensionAction');
+    return _decodeRequiredMapResultAsync(result, 'invokeExtensionAction');
   }
 
   static Future<List<Map<String, dynamic>>> searchTracksWithMetadataProviders(
@@ -1800,7 +2001,10 @@ class PlatformBridge {
       'searchTracksWithMetadataProviders',
       {'query': query, 'limit': limit, 'include_extensions': includeExtensions},
     );
-    return _decodeMapListResult(result, 'searchTracksWithMetadataProviders');
+    return _decodeMapListResultAsync(
+      result,
+      'searchTracksWithMetadataProviders',
+    );
   }
 
   static Future<List<Map<String, dynamic>>> searchTracksWithMetadataProvider(
@@ -1813,7 +2017,10 @@ class PlatformBridge {
       'searchTracksWithMetadataProvider',
       {'extension_id': extensionId, 'query': query, 'limit': limit},
     );
-    return _decodeMapListResult(result, 'searchTracksWithMetadataProvider');
+    return _decodeMapListResultAsync(
+      result,
+      'searchTracksWithMetadataProvider',
+    );
   }
 
   static Future<List<Map<String, dynamic>>> findCollectionAcrossExtensions({
@@ -1832,7 +2039,7 @@ class PlatformBridge {
       'findCollectionAcrossExtensions',
       requestJson,
     );
-    return _decodeMapListResult(result, 'findCollectionAcrossExtensions');
+    return _decodeMapListResultAsync(result, 'findCollectionAcrossExtensions');
   }
 
   static Future<void> cleanupExtensions() async {
@@ -2022,12 +2229,19 @@ class PlatformBridge {
     Duration ttl,
   ) {
     _pruneExpiredBridgeCache(cache);
-    while (cache.length >= _bridgeCacheMaxEntries && cache.isNotEmpty) {
-      cache.remove(cache.keys.first);
+    cache.remove(key);
+    final bytes = _payloadBytes(value) + key.length * 2;
+    if (bytes > _bridgeCacheMaxEntryBytes) return;
+    var retained = cache.values.fold<int>(0, (sum, item) => sum + item.bytes);
+    while (cache.isNotEmpty &&
+        (cache.length >= _bridgeCacheMaxEntries ||
+            retained + bytes > _bridgeCacheMaxBytes)) {
+      retained -= cache.remove(cache.keys.first)!.bytes;
     }
     cache[key] = _BridgeCacheEntry(
       value: value,
       expiresAt: DateTime.now().add(ttl),
+      bytes: bytes,
     );
   }
 
@@ -2052,12 +2266,19 @@ class PlatformBridge {
     Duration ttl,
   ) {
     _pruneExpiredBridgeListCache(cache);
-    while (cache.length >= _bridgeCacheMaxEntries && cache.isNotEmpty) {
-      cache.remove(cache.keys.first);
+    cache.remove(key);
+    final bytes = _payloadBytes(value) + key.length * 2;
+    if (bytes > _bridgeCacheMaxEntryBytes) return;
+    var retained = cache.values.fold<int>(0, (sum, item) => sum + item.bytes);
+    while (cache.isNotEmpty &&
+        (cache.length >= _bridgeCacheMaxEntries ||
+            retained + bytes > _bridgeCacheMaxBytes)) {
+      retained -= cache.remove(cache.keys.first)!.bytes;
     }
     cache[key] = _BridgeListCacheEntry(
       value: value,
       expiresAt: DateTime.now().add(ttl),
+      bytes: bytes,
     );
   }
 
@@ -2132,7 +2353,10 @@ class PlatformBridge {
           'extension_id': extensionId,
           'request_id': requestId,
         });
-        return _decodeNullableMapResult(result, 'getExtensionHomeFeed');
+        return await _decodeNullableMapResultAsync(
+          result,
+          'getExtensionHomeFeed',
+        );
       } catch (e) {
         _log.e('getExtensionHomeFeed failed: $e');
         return null;
@@ -2220,6 +2444,7 @@ class PlatformBridge {
     bool Function()? isCancelled,
   }) async {
     // Stable support-directory path lets native SAF scans resume after process death.
+    _ensureBackendEventHandler();
     final scanDir = await getApplicationSupportDirectory();
     await scanDir.create(recursive: true);
     final identity = jsonEncode(<String, dynamic>{
@@ -2303,6 +2528,7 @@ class PlatformBridge {
     String treeUri,
     Map<String, int> existingFiles,
   ) async {
+    _ensureBackendEventHandler();
     final result = await _channel.invokeMethod('scanSafTreeIncremental', {
       'tree_uri': treeUri,
       'existing_files': jsonEncode(existingFiles),
@@ -2314,6 +2540,7 @@ class PlatformBridge {
     String treeUri,
     String snapshotPath,
   ) async {
+    _ensureBackendEventHandler();
     final result = await _channel.invokeMethod(
       'scanSafTreeIncrementalFromSnapshot',
       {'tree_uri': treeUri, 'snapshot_path': snapshotPath},
@@ -2646,7 +2873,7 @@ class PlatformBridge {
     final result = await _channel.invokeMethod('getRepoExtensions', {
       'force_refresh': forceRefresh,
     });
-    return _decodeMapListResult(result, 'getRepoExtensions');
+    return _decodeMapListResultAsync(result, 'getRepoExtensions');
   }
 
   static Future<String> downloadRepoExtension(

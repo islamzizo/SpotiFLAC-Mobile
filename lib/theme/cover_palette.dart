@@ -3,8 +3,36 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:material_color_utilities/quantize/quantizer_celebi.dart';
+import 'package:material_color_utilities/score/score.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/widgets/cached_cover_image.dart';
+
+Future<List<List<int>>> _quantizePaletteInIsolate(Uint8List bytes) async {
+  final result = await QuantizerCelebi().quantize(
+    bytes.buffer.asUint32List(bytes.offsetInBytes, bytes.lengthInBytes ~/ 4),
+    128,
+  );
+  return [
+    for (final entry in result.colorToCount.entries) [entry.key, entry.value],
+  ];
+}
+
+/// Score remains pinned to Flutter's Material implementation. Quantization
+/// runs on the native worker; the byte-order conversion matches ColorScheme.
+int paletteSeedFromColorCounts(List<List<int>> colors) {
+  final populations = <int, int>{};
+  for (final pair in colors) {
+    final abgr = pair[0];
+    final argb =
+        (abgr & 0xff00ff00) | ((abgr & 255) << 16) | ((abgr >> 16) & 255);
+    populations[argb] = pair[1];
+  }
+  return Score.score(populations, desired: 1).first;
+}
 
 /// Colour scheme derived from cover art, used to theme detail-screen headers.
 ///
@@ -19,6 +47,7 @@ class CoverPalette {
   static final Map<String, ColorScheme> _cache = <String, ColorScheme>{};
   static final Map<String, Color> _sourceColors = {};
   static final Map<String, Future<ColorScheme?>> _pending = {};
+  static final Map<String, String> _sourceKeys = {};
   static final List<String> _cacheOrder = <String>[];
   static const int _maxEntries = 32;
 
@@ -27,11 +56,14 @@ class CoverPalette {
 
   /// Includes the local file version so replacing artwork at the same path
   /// cannot reuse a palette derived from the previous image.
-  static String cacheKeyFor(String source, Brightness brightness) {
+  static Future<String> cacheKeyFor(
+    String source,
+    Brightness brightness,
+  ) async {
     var versionedSource = source;
     if (!_isNetworkSource(source)) {
       try {
-        final stat = File(source).statSync();
+        final stat = await File(source).stat();
         if (stat.type != FileSystemEntityType.notFound) {
           versionedSource =
               '$source|${stat.modified.microsecondsSinceEpoch}|${stat.size}';
@@ -45,14 +77,12 @@ class CoverPalette {
 
   /// Cached scheme for [source], or null when it has not been resolved yet.
   static ColorScheme? peek(String source, Brightness brightness) =>
-      _cache[cacheKeyFor(source, brightness)];
+      _cache[_sourceKeys['$source|${brightness.name}']];
 
   /// Average cover colour before Material's accent selection or tonal mapping.
   /// Near-monochrome covers stay neutral instead of acquiring a seed hue.
   static Color? sourceColor(String source, Brightness brightness) =>
-      _sourceColors[cacheKeyFor(source, brightness)];
-
-  static ColorScheme? _peekByKey(String key) => _cache[key];
+      _sourceColors[_sourceKeys['$source|${brightness.name}']];
 
   /// Resolves the scheme for [source] (a network URL or a local file path).
   /// Returns null when the image cannot be decoded.
@@ -61,15 +91,48 @@ class CoverPalette {
     Brightness brightness, {
     String? cacheKey,
   }) {
-    final key = cacheKey ?? cacheKeyFor(source, brightness);
-    final cached = _cache[key];
-    if (cached != null) return Future.value(cached);
+    final sourceKey = '$source|${brightness.name}';
     return _pending.putIfAbsent(
-      key,
-      () => _resolve(source, brightness, key).whenComplete(() {
-        _pending.remove(key);
-      }),
+      sourceKey,
+      () =>
+          (() async {
+            final key = cacheKey ?? await cacheKeyFor(source, brightness);
+            final previous = _sourceKeys.remove(sourceKey);
+            // FileImage keys contain the path, not its modification time. A new
+            // palette key also needs a fresh decode after an in-place cover edit.
+            if ((!_cache.containsKey(key) ||
+                    (previous != null && previous != key)) &&
+                !_isNetworkSource(source)) {
+              if (previous != null && previous != key) {
+                await _evictDecodedImage(FileImage(File(source)));
+              }
+              await _evictDecodedImage(
+                ResizeImage(
+                  FileImage(File(source)),
+                  width: 112,
+                  height: 112,
+                  policy: ResizeImagePolicy.fit,
+                ),
+              );
+            }
+            _sourceKeys[sourceKey] = key;
+            while (_sourceKeys.length > _maxEntries) {
+              _sourceKeys.remove(_sourceKeys.keys.first);
+            }
+            return _cache[key] ?? await _resolve(source, brightness, key);
+          })().whenComplete(() {
+            _pending.remove(sourceKey);
+          }),
     );
+  }
+
+  static Future<void> _evictDecodedImage(ImageProvider provider) async {
+    final key = await provider.obtainKey(ImageConfiguration.empty);
+    // A first palette request can overlap the header's initial precache. Do
+    // not cancel that pending decode while removing an older retained bitmap.
+    if (!PaintingBinding.instance.imageCache.statusForKey(key).pending) {
+      await provider.evict();
+    }
   }
 
   static Future<ColorScheme?> _resolve(
@@ -82,7 +145,7 @@ class CoverPalette {
       provider = cachedCoverImageProvider(source);
     } else {
       final file = File(source);
-      if (!file.existsSync()) return null;
+      if (!await file.exists()) return null;
       provider = FileImage(file);
     }
 
@@ -94,10 +157,7 @@ class CoverPalette {
         height: 112,
         policy: ResizeImagePolicy.fit,
       );
-      final scheme = await ColorScheme.fromImageProvider(
-        provider: sample,
-        brightness: brightness,
-      );
+      final scheme = await _schemeFromSample(sample, brightness);
       final sourceColor = await _sampleSourceColor(sample);
       if (sourceColor != null) _sourceColors[key] = sourceColor;
       _cache[key] = scheme;
@@ -113,6 +173,83 @@ class CoverPalette {
       // to the app scheme.
       return null;
     }
+  }
+
+  static Future<ColorScheme> _schemeFromSample(
+    ImageProvider provider,
+    Brightness brightness,
+  ) async {
+    final result = Completer<Uint8List>();
+    final stream = provider.resolve(
+      const ImageConfiguration(size: Size(112, 112)),
+    );
+    late ImageStreamListener listener;
+    late Timer loadFailureTimeout;
+    listener = ImageStreamListener(
+      (info, _) async {
+        loadFailureTimeout.cancel();
+        stream.removeListener(listener);
+        ui.Picture? picture;
+        ui.Image? image;
+        try {
+          final source = info.image;
+          // Mirror Flutter's image-to-palette canvas/readback. Decoding,
+          // filtering and premultiplied alpha remain with Flutter's renderer.
+          final recorder = ui.PictureRecorder();
+          paintImage(
+            canvas: Canvas(recorder),
+            rect: Rect.fromLTWH(
+              0,
+              0,
+              source.width.toDouble(),
+              source.height.toDouble(),
+            ),
+            image: source,
+            filterQuality: FilterQuality.none,
+          );
+          picture = recorder.endRecording();
+          image = await picture.toImage(source.width, source.height);
+          final data = await image.toByteData();
+          if (data == null) throw StateError('Palette readback failed');
+          result.complete(
+            data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes),
+          );
+        } catch (error, stack) {
+          result.completeError(error, stack);
+        } finally {
+          image?.dispose();
+          picture?.dispose();
+          info.dispose();
+        }
+      },
+      onError: (Object error, StackTrace? stack) {
+        loadFailureTimeout.cancel();
+        stream.removeListener(listener);
+        result.completeError(error, stack);
+      },
+    );
+    loadFailureTimeout = Timer(const Duration(seconds: 5), () {
+      stream.removeListener(listener);
+      result.completeError(TimeoutException('Palette image loading timed out'));
+    });
+    stream.addListener(listener);
+    final bytes = await result.future;
+    late final List<List<int>> colors;
+    try {
+      final response = await PlatformBridge.runNativeDataJob({
+        'operation': 'palette',
+      }, bytes: bytes);
+      colors = [
+        for (final pair in response['colors'] as List)
+          [for (final value in pair as List) (value as num).toInt()],
+      ];
+    } on MissingPluginException {
+      // Desktop tests and unsupported hosts retain exact Material output,
+      // with the same expensive quantizer moved off the UI isolate.
+      colors = await compute(_quantizePaletteInIsolate, bytes);
+    }
+    final seed = await compute(paletteSeedFromColorCounts, colors);
+    return ColorScheme.fromSeed(seedColor: Color(seed), brightness: brightness);
   }
 
   static Future<Color?> _sampleSourceColor(ImageProvider provider) {
@@ -216,7 +353,8 @@ class CoverPaletteBuilder extends StatefulWidget {
 
 class _CoverPaletteBuilderState extends State<CoverPaletteBuilder> {
   ColorScheme? _scheme;
-  String? _resolvedKey;
+  String? _resolvedSource;
+  Brightness? _resolvedBrightness;
   int _resolveGeneration = 0;
 
   @override
@@ -238,29 +376,24 @@ class _CoverPaletteBuilderState extends State<CoverPaletteBuilder> {
     final brightness = Theme.of(context).brightness;
     if (source == null || source.isEmpty) {
       _resolveGeneration++;
-      _resolvedKey = null;
+      _resolvedSource = null;
+      _resolvedBrightness = null;
       _scheme = null;
       return;
     }
-    final key = CoverPalette.cacheKeyFor(source, brightness);
-    if (_resolvedKey == key) return;
-
     final requestGeneration = ++_resolveGeneration;
-    _resolvedKey = key;
-
-    final cached = CoverPalette._peekByKey(key);
-    if (cached != null) {
-      _scheme = cached;
-      return;
+    if (_resolvedSource != source || _resolvedBrightness != brightness) {
+      _resolvedSource = source;
+      _resolvedBrightness = brightness;
+      _scheme = CoverPalette.peek(source, brightness);
     }
-    _scheme = null;
 
-    CoverPalette.resolve(source, brightness, cacheKey: key).then((scheme) {
+    CoverPalette.resolve(source, brightness).then((scheme) {
       if (!mounted) return;
-      if (_resolveGeneration != requestGeneration || _resolvedKey != key) {
+      if (_resolveGeneration != requestGeneration) {
         return;
       }
-      setState(() => _scheme = scheme);
+      if (_scheme != scheme) setState(() => _scheme = scheme);
     });
   }
 

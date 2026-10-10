@@ -282,6 +282,9 @@ impl Backend {
             if !manifest.has_type("download_provider") {
                 continue;
             }
+            let account_mode = self
+                .account_download_enabled(&id)
+                .map_err(|error| error.to_string())?;
             let availability = if direct {
                 source_availability
                     .clone()
@@ -297,6 +300,9 @@ impl Backend {
                     Ok(value) => value,
                     Err(error) => {
                         let response = failure(&id, &error, "", 0);
+                        if account_mode {
+                            return Ok(response);
+                        }
                         if response["error_type"] == "verification_required" {
                             self.cache_prepared(&key, &request, true);
                             return Ok(failure(
@@ -311,7 +317,7 @@ impl Backend {
                     }
                 }
             };
-            let stop = availability["skip_fallback"] == true;
+            let stop = availability["skip_fallback"] == true || account_mode;
             if availability["available"] != true {
                 if stop {
                     return Ok(stopped(&id, &availability, ""));
@@ -339,6 +345,18 @@ impl Backend {
             let message = text(&response, "error");
             let kind = text(&response, "error_type");
             let retry = response["retry_after_seconds"].as_i64().unwrap_or_default();
+            if account_mode
+                || self
+                    .account_download_enabled(&id)
+                    .map_err(|error| error.to_string())?
+            {
+                return Ok(failure(
+                    &id,
+                    &format!("Download failed: {message}"),
+                    kind,
+                    retry,
+                ));
+            }
             if kind == "verification_required" {
                 self.cache_prepared(&key, &request, true);
                 return Ok(failure(
@@ -824,10 +842,15 @@ impl Backend {
         let mut response = success(request, &result, &path, false, manifest, &check)?;
         let mut resolved = request.clone();
         resolved.output_ext = text(&response, "actual_extension").to_owned();
-        let mut final_path = output_path(&resolved, &directory, text(&response, "album"), &check)?;
         if !request.output_path.is_empty() {
-            final_path = request.output_path.clone();
+            // SAF uses a local working path too. Keep its directory and stem,
+            // but use the provider's actual container before final publication.
+            resolved.output_path = Path::new(&request.output_path)
+                .with_extension(resolved.output_ext.trim_start_matches('.'))
+                .to_string_lossy()
+                .into_owned();
         }
+        let final_path = output_path(&resolved, &directory, text(&response, "album"), &check)?;
         // Keep the original lock for an unchanged destination. Release it
         // before acquiring a different path lock to avoid lock-order cycles.
         let destination = files.resolve_legacy(&final_path)?;
@@ -856,7 +879,7 @@ impl Backend {
         // ReplayGain, decryption/conversion, external LRC and extension hooks
         // are executed by the existing Android/Dart finalizers. This is the
         // Go backend's local FLAC embed step; provider lyrics are reused.
-        let embed = request.embed_metadata && returned.to_ascii_lowercase().ends_with(".flac");
+        let embed = request.embed_metadata && resolved.output_ext == ".flac";
         let cover = if embed {
             let url = [text(&response, "cover_url"), &request.cover_url]
                 .into_iter()
@@ -1470,8 +1493,18 @@ fn probe_result(
         let mut header = [0; 8];
         // Quality is probed only for FLAC/MP4. Missing album folders may use
         // tags from any supported container, including undecoded audio.
-        let quality = file.read_exact(&mut header).is_ok()
-            && (&header[..4] == b"fLaC" || &header[4..] == b"ftyp");
+        let has_header = file.read_exact(&mut header).is_ok();
+        let container = if has_header && &header[..4] == b"fLaC" {
+            "flac"
+        } else if has_header && &header[4..] == b"ftyp" {
+            "m4a"
+        } else {
+            ""
+        };
+        let quality = !container.is_empty();
+        if quality {
+            result["actual_container"] = container.into();
+        }
         let album = album_pending && text(result, "album").trim().is_empty();
         if (quality || album)
             && file.seek(SeekFrom::Start(0)).is_ok()
@@ -1681,14 +1714,37 @@ fn success(
             response[key] = value.clone();
         }
     }
+    let container = text(result, "actual_container")
+        .trim()
+        .trim_start_matches('.');
+    let container = if [
+        "flac", "m4a", "mp4", "mp3", "opus", "ogg", "aac", "wav", "aiff", "aif", "aifc",
+    ]
+    .iter()
+    .any(|extension| container.eq_ignore_ascii_case(extension))
+    {
+        container
+    } else {
+        ""
+    };
     let extension = [
         text(result, "actual_extension"),
         text(result, "output_extension"),
+        container,
     ]
     .into_iter()
     .map(|value| value.trim().to_lowercase())
-    .find(|value| !value.is_empty())
-    .unwrap_or_default();
+    .find(|value| !value.is_empty() && !value.contains(['/', '\\']))
+    .unwrap_or_else(|| {
+        // Providers may only return a renamed file_path, without explicit
+        // format fields. The planned path still carries the requested quality.
+        [text(result, "file_path"), path]
+            .into_iter()
+            .filter_map(|path| Path::new(path).extension())
+            .map(|extension| extension.to_string_lossy().trim().to_lowercase())
+            .find(|extension| !extension.is_empty())
+            .unwrap_or_default()
+    });
     if !extension.is_empty() {
         let extension = format!(".{}", extension.trim_start_matches('.'));
         response["actual_extension"] = if extension == ".mp4" {
@@ -1701,16 +1757,8 @@ fn success(
     if !text(result, "isrc").trim().is_empty() {
         named.isrc = text(result, "isrc").trim().into();
     }
-    let extension = if text(&response, "actual_extension").is_empty() {
-        Path::new(path)
-            .extension()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        text(&response, "actual_extension").into()
-    };
-    response["resolved_file_name"] = filename(&named, &extension, check)?.into();
+    response["resolved_file_name"] =
+        filename(&named, text(&response, "actual_extension"), check)?.into();
     response["resolved_album_folder"] = album_folder(request, text(&response, "album")).into();
     Ok(response)
 }
@@ -1770,3 +1818,11 @@ fn storage_failure(kind: &str, message: &str) -> bool {
 #[cfg(test)]
 #[path = "download_latency_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "download_account_tests.rs"]
+mod account_tests;
+
+#[cfg(test)]
+#[path = "download_container_tests.rs"]
+mod container_tests;

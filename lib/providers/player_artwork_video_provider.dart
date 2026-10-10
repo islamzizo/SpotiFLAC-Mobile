@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:video_player/video_player.dart';
 
 /// The mini player prepares the current offline cover, paused and silent.
@@ -16,11 +17,19 @@ final playerArtworkVideoProvider = FutureProvider.autoDispose
         File.fromUri(uri),
         videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
       );
-      ref.onDispose(() => unawaited(controller.dispose()));
-      await controller.initialize();
-      if (!ref.mounted) return controller;
-      await controller.setVolume(0);
-      if (!ref.mounted) return controller;
-      await controller.setLooping(true);
-      return controller;
+      Future<void>? disposal;
+      Future<void> disposeController() => disposal ??= controller.dispose();
+      ref.onDispose(() => unawaited(disposeController()));
+      try {
+        await controller.initialize();
+        if (!ref.mounted) return controller;
+        await controller.setVolume(0);
+        if (!ref.mounted) return controller;
+        await controller.setLooping(true);
+        await restoreMusicAudioSessionAfterVideo();
+        return controller;
+      } catch (_) {
+        unawaited(disposeController());
+        rethrow;
+      }
     });

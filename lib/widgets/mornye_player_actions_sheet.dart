@@ -17,56 +17,29 @@ class MornyePlayerNavigationMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = MornyeTheme.fromContext(context, brightness: Brightness.dark);
-    final art = mediaItem.artUri;
-    final source = art?.scheme == 'file' ? art!.toFilePath() : art?.toString();
-    return Theme(
-      data: theme.copyWith(
-        colorScheme: theme.colorScheme.copyWith(primary: Colors.grey),
-      ),
-      child: CoverPaletteBuilder(
-        imageSource: source,
-        builder: (context, _) {
-          final dominant = HSLColor.fromColor(
-            source == null
-                ? Colors.grey
-                : CoverPalette.sourceColor(source, Brightness.dark) ??
-                      Colors.grey,
-          );
-          final surface = dominant
-              .withSaturation(dominant.saturation.clamp(0.0, 0.28))
-              .withLightness(0.28)
-              .toColor();
-          return Theme(
-            data: theme.copyWith(
-              colorScheme: theme.colorScheme.copyWith(
-                surfaceContainerHigh: surface,
+    return _MornyePlayerMenuSurface(
+      mediaItem: mediaItem,
+      child: MornyeContextMenu(
+        inheritSurface: true,
+        dense: true,
+        groups: [
+          [
+            if ((mediaItem.artist ?? '').trim().isNotEmpty)
+              MornyeMenuAction(
+                icon: CupertinoIcons.mic,
+                label: context.l10n.mornyeGoToArtist,
+                subtitle: mediaItem.artist,
+                onPressed: () => Navigator.of(context).pop('artist'),
               ),
-            ),
-            child: MornyeContextMenu(
-              inheritSurface: true,
-              dense: true,
-              groups: [
-                [
-                  if ((mediaItem.artist ?? '').trim().isNotEmpty)
-                    MornyeMenuAction(
-                      icon: CupertinoIcons.mic,
-                      label: context.l10n.mornyeGoToArtist,
-                      subtitle: mediaItem.artist,
-                      onPressed: () => Navigator.of(context).pop('artist'),
-                    ),
-                  if ((mediaItem.album ?? '').trim().isNotEmpty)
-                    MornyeMenuAction(
-                      icon: CupertinoIcons.square_stack,
-                      label: context.l10n.homeGoToAlbum,
-                      subtitle: mediaItem.album,
-                      onPressed: () => Navigator.of(context).pop('album'),
-                    ),
-                ],
-              ],
-            ),
-          );
-        },
+            if ((mediaItem.album ?? '').trim().isNotEmpty)
+              MornyeMenuAction(
+                icon: CupertinoIcons.square_stack,
+                label: context.l10n.homeGoToAlbum,
+                subtitle: mediaItem.album,
+                onPressed: () => Navigator.of(context).pop('album'),
+              ),
+          ],
+        ],
       ),
     );
   }
@@ -91,71 +64,76 @@ class MornyePlayerActionsSheet extends ConsumerWidget {
         (state) => track != null && state.isLoved(track),
       ),
     );
-    return MornyeContextMenu(
-      quickActions: [
-        _action(
-          context,
-          'favorite',
-          loved ? context.l10n.mornyeFavorited : context.l10n.mornyeFavorite,
-          CupertinoIcons.star_fill,
-          selected: loved,
-        ),
-        _action(
-          context,
-          'share',
-          context.l10n.trackMetadataShare,
-          CupertinoIcons.share_solid,
-        ),
-      ],
-      groups: [
-        [
+    return _MornyePlayerMenuSurface(
+      mediaItem: mediaItem,
+      child: MornyeContextMenu(
+        inheritSurface: true,
+        dense: true,
+        quickActions: [
           _action(
             context,
-            'playlist',
-            context.l10n.collectionAddToPlaylist,
-            CupertinoIcons.text_badge_plus,
+            'favorite',
+            loved ? context.l10n.mornyeFavorited : context.l10n.mornyeFavorite,
+            CupertinoIcons.star_fill,
+            selected: loved,
+          ),
+          _action(
+            context,
+            'share',
+            context.l10n.trackMetadataShare,
+            CupertinoIcons.share_solid,
           ),
         ],
-        [
-          if ((mediaItem.album ?? '').trim().isNotEmpty)
+        groups: [
+          [
             _action(
               context,
-              'album',
-              context.l10n.homeGoToAlbum,
-              CupertinoIcons.square_stack,
-              subtitle: mediaItem.album,
+              'playlist',
+              context.l10n.collectionAddToPlaylist,
+              CupertinoIcons.text_badge_plus,
             ),
-          if ((mediaItem.artist ?? '').trim().isNotEmpty)
+          ],
+          [
+            if ((mediaItem.album ?? '').trim().isNotEmpty)
+              _action(
+                context,
+                'album',
+                context.l10n.homeGoToAlbum,
+                CupertinoIcons.square_stack,
+                subtitle: mediaItem.album,
+              ),
+            if ((mediaItem.artist ?? '').trim().isNotEmpty)
+              _action(
+                context,
+                'artist',
+                context.l10n.mornyeGoToArtist,
+                CupertinoIcons.mic,
+                subtitle: mediaItem.artist,
+              ),
             _action(
               context,
-              'artist',
-              context.l10n.mornyeGoToArtist,
-              CupertinoIcons.mic,
-              subtitle: mediaItem.artist,
+              'details',
+              context.l10n.nowPlayingDetails,
+              CupertinoIcons.info,
             ),
-          _action(
-            context,
-            'details',
-            context.l10n.nowPlayingDetails,
-            CupertinoIcons.info,
-          ),
+          ],
+          [
+            _action(
+              context,
+              'sleepTimer',
+              context.l10n.nowPlayingSleepTimer,
+              CupertinoIcons.moon_zzz,
+              subtitle: sleepTimerSubtitle,
+            ),
+            _action(
+              context,
+              'external',
+              context.l10n.nowPlayingOpenInExternalPlayer,
+              CupertinoIcons.arrow_up_right_square,
+            ),
+          ],
         ],
-        [
-          _action(
-            context,
-            'sleepTimer',
-            context.l10n.nowPlayingSleepTimer,
-            CupertinoIcons.moon_zzz,
-            subtitle: sleepTimerSubtitle,
-          ),
-          _action(
-            context,
-            'external',
-            context.l10n.nowPlayingOpenInExternalPlayer,
-            CupertinoIcons.arrow_up_right_square,
-          ),
-        ],
-      ],
+      ),
     );
   }
 
@@ -173,4 +151,44 @@ class MornyePlayerActionsSheet extends ConsumerWidget {
     selected: selected,
     onPressed: () => Navigator.of(context).pop(value),
   );
+}
+
+/// Reuse the cached cover palette; no per-frame background capture is needed.
+class _MornyePlayerMenuSurface extends StatelessWidget {
+  const _MornyePlayerMenuSurface({
+    required this.mediaItem,
+    required this.child,
+  });
+
+  final MediaItem mediaItem;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final art = mediaItem.artUri;
+    final source = art?.scheme == 'file' ? art!.toFilePath() : art?.toString();
+    return CoverPaletteBuilder(
+      imageSource: source,
+      builder: (context, _) {
+        final dominant = HSLColor.fromColor(
+          source == null
+              ? Colors.grey
+              : CoverPalette.sourceColor(source, Brightness.dark) ??
+                    Colors.grey,
+        );
+        final surface = dominant
+            .withSaturation(dominant.saturation.clamp(0.0, 0.34))
+            .withLightness(0.28)
+            .toColor();
+        return Theme(
+          data: MornyeTheme.fromContext(
+            context,
+            brightness: Brightness.dark,
+            chromeSurface: surface,
+          ),
+          child: child,
+        );
+      },
+    );
+  }
 }

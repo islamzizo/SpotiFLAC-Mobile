@@ -51,11 +51,11 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
       final settings = _includeSettings
           ? ref.read(settingsProvider).toJson()
           : null;
-      var collections = <String, dynamic>{};
+      String? collectionsJson;
       var covers = <String, Map<String, String>>{};
       if (_includeCollections) {
         final notifier = ref.read(libraryCollectionsProvider.notifier);
-        collections = await notifier.exportCollections();
+        collectionsJson = await notifier.exportCollectionsJson();
         covers = await notifier.exportPlaylistCoverFiles();
       }
       final extensions = _includeExtensions
@@ -72,7 +72,8 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
         includeHistory: _includeHistory,
         loadHistoryPage: (limit, offset) =>
             HistoryDatabase.instance.getAll(limit: limit, offset: offset),
-        collections: collections,
+        collections: const {},
+        collectionsJson: collectionsJson,
         playlistCoverFiles: covers,
         extensions: extensions,
       );
@@ -142,7 +143,9 @@ class _BackupRestorePageState extends ConsumerState<BackupRestorePage> {
       if (bundle.hasHistory) {
         await ref
             .read(downloadHistoryProvider.notifier)
-            .restoreFromBackupStream(bundle.streamHistory());
+            .restoreFromBackupOperation(
+              () => BackupService.restoreHistory(bundle!),
+            );
       }
       if (bundle.hasCollections) {
         await ref

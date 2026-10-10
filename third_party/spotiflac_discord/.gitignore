@@ -1,0 +1,4 @@
+/sdk/
+/android/.gradle/
+/android/.cxx/
+/ios/Frameworks/

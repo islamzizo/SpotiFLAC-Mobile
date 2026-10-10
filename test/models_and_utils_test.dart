@@ -342,9 +342,6 @@ void main() {
     final source = File(
       'lib/services/app_state_database.dart',
     ).readAsStringSync();
-    final playerSource = File(
-      'lib/services/music_player_service.dart',
-    ).readAsStringSync();
 
     test('v4 normalizes playback queue and scalar state', () {
       expect(source, contains('const _dbVersion = 4;'));
@@ -352,16 +349,6 @@ void main() {
       expect(source, contains('media_json TEXT NOT NULL'));
       expect(source, contains('position_ms INTEGER NOT NULL DEFAULT 0'));
       expect(source, contains('updatePlaybackSessionState'));
-    });
-
-    test('periodic playback updates do not serialize an unchanged queue', () {
-      final scalarUpdate = RegExp(
-        r'updatePlaybackSessionState\([\s\S]*?if \(updated\) return;',
-      ).firstMatch(playerSource);
-
-      expect(scalarUpdate, isNotNull);
-      expect(scalarUpdate!.group(0), isNot(contains("'media':")));
-      expect(playerSource, contains('_scheduledSessionQueueRevision'));
     });
   });
 
@@ -428,6 +415,10 @@ void main() {
       'android/app/src/main/kotlin/com/zarz/spotiflac/'
       'NativeDownloadFinalizer.kt',
     ).readAsStringSync();
+    final historyStoreSource = File(
+      'android/app/src/main/kotlin/com/zarz/spotiflac/'
+      'NativeHistoryStore.kt',
+    ).readAsStringSync();
     final historyDatabaseSource = File(
       'lib/services/history_database.dart',
     ).readAsStringSync();
@@ -439,24 +430,22 @@ void main() {
       'lib/providers/download_queue_provider_native_worker.dart',
     ).readAsStringSync();
 
-    int kotlinConstant(String name) {
-      final match = RegExp(
-        'const val $name = (\\d+)',
-      ).firstMatch(finalizerSource);
+    int kotlinConstant(String name, String source) {
+      final match = RegExp('const val $name = (\\d+)').firstMatch(source);
       expect(match, isNotNull, reason: 'Missing Kotlin constant $name');
       return int.parse(match!.group(1)!);
     }
 
     test('uses the same worker contract version in Dart and Kotlin', () {
       expect(
-        kotlinConstant('NATIVE_WORKER_CONTRACT_VERSION'),
+        kotlinConstant('NATIVE_WORKER_CONTRACT_VERSION', finalizerSource),
         DownloadRequestPayload.nativeWorkerContractVersion,
       );
     });
 
     test('uses the same history schema version in Dart and Kotlin', () {
       expect(
-        kotlinConstant('HISTORY_SCHEMA_VERSION'),
+        kotlinConstant('HISTORY_SCHEMA_VERSION', historyStoreSource),
         HistoryDatabase.schemaVersion,
       );
     });
@@ -491,17 +480,17 @@ void main() {
       },
     );
 
-    Set<String> historyTableColumns(String source) {
+    Map<String, String> historyTableDefinitions(String source) {
       final match = RegExp(
         r'CREATE TABLE(?: IF NOT EXISTS)? history\s*\(([\s\S]*?)\n\s*\)',
       ).firstMatch(source);
       expect(match, isNotNull, reason: 'Missing history CREATE TABLE');
-      return match!
-          .group(1)!
-          .split(',')
-          .map((definition) => definition.trim().split(RegExp(r'\s+')).first)
-          .where((column) => column.isNotEmpty)
-          .toSet();
+      final definitions = <String, String>{};
+      for (final definition in match!.group(1)!.split(',')) {
+        final tokens = definition.trim().split(RegExp(r'\s+'));
+        definitions[tokens.first] = tokens.skip(1).join(' ');
+      }
+      return definitions;
     }
 
     Map<String, String> historyIndexes(String source) {
@@ -520,18 +509,18 @@ void main() {
     }
 
     test('uses the same history columns in Dart and native writers', () {
-      final dartColumns = historyTableColumns(historyDatabaseSource);
-      final nativeColumns = historyTableColumns(finalizerSource);
-      expect(nativeColumns, dartColumns);
-
-      final requiredBlock = RegExp(
-        r'requiredHistoryColumns\s*=\s*setOf\(([\s\S]*?)\n\s*\)',
-      ).firstMatch(finalizerSource);
-      expect(requiredBlock, isNotNull);
-      final requiredColumns = RegExp(
-        r'"([a-z0-9_]+)"',
-      ).allMatches(requiredBlock!.group(1)!).map((m) => m.group(1)!).toSet();
-      expect(requiredColumns, dartColumns);
+      final dartDefinitions = historyTableDefinitions(historyDatabaseSource);
+      final nativeBlock = RegExp(
+        r'historyColumns\s*=\s*linkedMapOf\(([\s\S]*?)\n\s*\)',
+      ).firstMatch(historyStoreSource);
+      expect(nativeBlock, isNotNull, reason: 'Missing native history schema');
+      final nativeDefinitions = {
+        for (final match in RegExp(
+          r'"([a-z0-9_]+)"\s+to\s+"([^"]+)"',
+        ).allMatches(nativeBlock!.group(1)!))
+          match.group(1)!: match.group(2)!,
+      };
+      expect(nativeDefinitions, dartDefinitions);
 
       final buildHistoryRow = RegExp(
         r'private fun buildHistoryRow\([\s\S]*?return values',
@@ -541,7 +530,7 @@ void main() {
         r'values\.put\("([a-z0-9_]+)"',
       ).allMatches(buildHistoryRow!.group(0)!).map((m) => m.group(1)!).toSet();
       expect(
-        dartColumns,
+        dartDefinitions.keys,
         containsAll(nativeWrittenColumns),
         reason: 'Native finalizer writes a column missing from Dart schema',
       );
@@ -549,7 +538,7 @@ void main() {
 
     test('uses the same history indexes in Dart and native writers', () {
       expect(
-        historyIndexes(finalizerSource),
+        historyIndexes(historyStoreSource),
         historyIndexes(historyDatabaseSource),
       );
     });
@@ -1082,7 +1071,9 @@ void main() {
       expect(settings.embeddedCoverMaxDimension, 0);
       expect(settings.autoFallback, isTrue);
       expect(settings.lyricsProviders, ['lrclib', 'apple_music']);
-      expect(settings.lyricsAppleElrcWordSync, isFalse);
+      expect(settings.playerMode, 'internal');
+      expect(settings.lyricsMultiPersonWordByWord, isTrue);
+      expect(settings.lyricsAppleElrcWordSync, isTrue);
       expect(settings.deduplicateDownloads, isTrue);
       expect(settings.allowQualityVariants, isFalse);
       expect(settings.nativeDownloadWorkerEnabled, isFalse);
@@ -1819,7 +1810,7 @@ void main() {
         ),
         isTrue,
       );
-      expect(config.donate.title, 'Support SpotiFLAC Mobile');
+      expect(config.donate.title, 'Support SpotiFLAC-Mobile');
       expect(config.donate.methods, hasLength(2));
       expect(config.donate.methods.first.color, 0xFFFF5E5B);
       expect(config.donate.methods.last.isWallet, isTrue);

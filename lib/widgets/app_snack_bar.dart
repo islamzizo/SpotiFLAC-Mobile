@@ -3,6 +3,73 @@ import 'package:spotiflac_android/l10n/l10n.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
 
+/// Applies the same transient-message policy to existing snackbar call sites.
+/// A new message replaces the old one instead of building a stale FIFO queue.
+class AppScaffoldMessenger extends ScaffoldMessenger {
+  const AppScaffoldMessenger({super.key, required super.child});
+
+  @override
+  ScaffoldMessengerState createState() => _AppScaffoldMessengerState();
+}
+
+class _AppScaffoldMessengerState extends ScaffoldMessengerState {
+  @override
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showSnackBar(
+    SnackBar snackBar, {
+    AnimationStyle? snackBarAnimationStyle,
+  }) {
+    removeCurrentSnackBar();
+    return super.showSnackBar(
+      _TransientSnackBar(snackBar),
+      snackBarAnimationStyle: snackBarAnimationStyle,
+    );
+  }
+}
+
+class _TransientSnackBar extends SnackBar {
+  _TransientSnackBar(this.original)
+    : super(
+        content: original.content,
+        duration: original.duration > const Duration(seconds: 3)
+            ? const Duration(seconds: 3)
+            : original.duration,
+        persist: false,
+      );
+
+  final SnackBar original;
+
+  @override
+  SnackBar withAnimation(Animation<double> newAnimation, {Key? fallbackKey}) {
+    // Delegate first so custom glass animations remain intact.
+    final animated = original.withAnimation(
+      newAnimation,
+      fallbackKey: fallbackKey,
+    );
+    return SnackBar(
+      key: animated.key,
+      content: animated.content,
+      backgroundColor: animated.backgroundColor,
+      elevation: animated.elevation,
+      margin: animated.margin,
+      padding: animated.padding,
+      width: animated.width,
+      shape: animated.shape,
+      hitTestBehavior: animated.hitTestBehavior,
+      behavior: animated.behavior,
+      action: animated.action,
+      actionOverflowThreshold: animated.actionOverflowThreshold,
+      showCloseIcon: animated.showCloseIcon ?? true,
+      closeIconColor: animated.closeIconColor,
+      duration: duration,
+      persist: false,
+      animation: animated.animation,
+      onVisible: animated.onVisible,
+      dismissDirection: animated.dismissDirection,
+      clipBehavior: animated.clipBehavior,
+    );
+  }
+}
+
 /// Reports a failure to open a local file with a plain Material snackbar.
 void showCannotOpenFileSnackBar(BuildContext context, Object error) {
   ScaffoldMessenger.of(context).showSnackBar(
@@ -18,13 +85,21 @@ void showCannotOpenFileSnackBar(BuildContext context, Object error) {
 ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(
   BuildContext context, {
   required Widget content,
-  Duration duration = const Duration(seconds: 4),
+  Duration duration = const Duration(seconds: 3),
   SnackBarBehavior? behavior,
+  SnackBarAction? action,
 }) {
   final messenger = ScaffoldMessenger.of(context);
   if (!context.isMornye) {
     return messenger.showSnackBar(
-      SnackBar(content: content, duration: duration, behavior: behavior),
+      SnackBar(
+        content: content,
+        duration: duration,
+        behavior: behavior,
+        action: action,
+        persist: false,
+        showCloseIcon: true,
+      ),
     );
   }
   final theme = Theme.of(context);
@@ -37,14 +112,47 @@ ScaffoldFeatureController<SnackBar, SnackBarClosedReason> showAppSnackBar(
       child: MornyeGlassPanel.overlay(
         radius: 24,
         // Messages have no modal scrim; let more of the page show through.
-        tintOpacity: 0.60,
+        tintOpacity: 0.48,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           child: DefaultTextStyle(
             style: theme.textTheme.bodyMedium!.copyWith(
               color: theme.colorScheme.onSurface,
             ),
-            child: content,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final actionBelow =
+                    action != null &&
+                    (constraints.maxWidth < 280 ||
+                        MediaQuery.textScalerOf(context).scale(14) > 18);
+                final message = Row(
+                  children: [
+                    Expanded(child: content),
+                    if (!actionBelow) ?action,
+                    IconButton(
+                      tooltip: MaterialLocalizations.of(
+                        context,
+                      ).closeButtonTooltip,
+                      color: theme.colorScheme.onSurface,
+                      onPressed: messenger.hideCurrentSnackBar,
+                      icon: const Icon(Icons.close, size: 20),
+                    ),
+                  ],
+                );
+                return actionBelow
+                    ? Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          message,
+                          Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: action,
+                          ),
+                        ],
+                      )
+                    : message;
+              },
+            ),
           ),
         ),
       ),
@@ -63,6 +171,8 @@ class _MornyeSnackBar extends SnackBar {
          backgroundColor: Colors.transparent,
          elevation: 0,
          clipBehavior: Clip.none,
+         persist: false,
+         showCloseIcon: false,
          padding: EdgeInsets.zero,
          margin: const EdgeInsets.fromLTRB(20, 8, 20, 12),
          shape: const RoundedRectangleBorder(
@@ -79,6 +189,8 @@ class _MornyeSnackBar extends SnackBar {
     return SnackBar(
       key: key ?? fallbackKey,
       duration: duration,
+      persist: false,
+      showCloseIcon: false,
       behavior: behavior,
       backgroundColor: backgroundColor,
       elevation: elevation,

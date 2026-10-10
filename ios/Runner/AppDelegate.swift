@@ -274,9 +274,26 @@ import UniformTypeIdentifiers
             return
         }
         if coreBackend.routesApplication && !osMethods.contains(call.method) {
+            if call.method == "cancelNativeDataJob" {
+                do {
+                    result(try coreBackend.invokeApplication(method: call.method, arguments: call.arguments))
+                } catch {
+                    result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil))
+                }
+                return
+            }
+            let arguments: Any?
+            do {
+                arguments = try coreBackend.prepareApplicationArguments(method: call.method, arguments: call.arguments)
+            } catch {
+                result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil))
+                return
+            }
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let response = try self.coreBackend.invokeApplication(method: call.method, arguments: call.arguments)
+                    let value = try self.coreBackend.invokeApplication(method: call.method, arguments: arguments)
+                    let response = call.method == "runNativeDataJob" && value is String
+                        ? self.bridgeJsonResult(value as! String) : value
                     DispatchQueue.main.async { result(response) }
                 } catch {
                     DispatchQueue.main.async { result(FlutterError(code: "ERROR", message: error.localizedDescription, details: nil)) }
@@ -463,19 +480,6 @@ import UniformTypeIdentifiers
     private func invokeGoMethod(call: FlutterMethodCall) throws -> Any? {
 
         switch call.method {
-        case "downloadByStrategy":
-            let requestJson = call.arguments as! String
-            return try coreBackend.downloadByStrategy(requestJson: requestJson)
-
-
-        case "acquireDownloadDirectory":
-            let args = call.arguments as! [String: Any]
-            try coreBackend.openDownloadDirectory(path: args["path"] as! String).close()
-            return ""
-
-        case "releaseDownloadDirectory": return nil
-
-
         case "getBackendImplementations":
             return [
                 "filename": coreBackend.implementation,
@@ -483,18 +487,6 @@ import UniformTypeIdentifiers
                 "extensions": coreBackend.routesApplication ? "rust" : "go",
                 "downloads": coreBackend.implementation,
             ]
-
-        case "buildFilename":
-            let args = call.arguments as! [String: Any]
-            let template = args["template"] as! String
-            let metadata = args["metadata"] as! String
-            return try coreBackend.buildFilename(template: template, metadataJson: metadata)
-
-        case "sanitizeFilename":
-            let args = call.arguments as! [String: Any]
-            let filename = args["filename"] as! String
-            return coreBackend.sanitizeFilename(filename: filename)
-
 
         case "rewriteSplitArtistTags":
             let args = call.arguments as! [String: Any]
@@ -546,22 +538,10 @@ import UniformTypeIdentifiers
             let requestJson = args["request_json"] as? String ?? "{}"
             return try coreBackend.reEnrichFile(requestJson: requestJson)
 
-        case "readFileMetadata":
-            let args = call.arguments as! [String: Any]
-            let filePath = args["file_path"] as! String
-            return try coreBackend.readFileMetadata(path: filePath, hint: args["display_name"] as? String ?? "")
-
         case "checkHiResAuthenticity":
             let args = call.arguments as! [String: Any]
             let filePath = args["file_path"] as! String
             return try coreBackend.checkHiResAuthenticity(path: filePath, optionsJson: args["options_json"] as? String ?? "")
-
-        case "editFileMetadata":
-            let args = call.arguments as! [String: Any]
-            let filePath = args["file_path"] as! String
-            let metadataJson = args["metadata_json"] as? String ?? "{}"
-            return try coreBackend.editFileMetadata(path: filePath, metadataJson: metadataJson)
-
 
         case "releaseMemory":
             try coreBackend.releaseIdleResources()
@@ -572,13 +552,6 @@ import UniformTypeIdentifiers
             NSLog("SpotiFLAC: Backend memory pressure release completed")
             return nil
 
-
-
-        case "runPostProcessingV2":
-            let args = call.arguments as! [String: Any]
-            let inputJson = args["input"] as? String ?? ""
-            let metadataJson = args["metadata"] as? String ?? ""
-            return try coreBackend.runPostProcessing(inputJson: inputJson, metadataJson: metadataJson)
 
 
         case "setLibraryCoverCacheDir":

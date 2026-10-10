@@ -1092,6 +1092,7 @@ class DownloadService : Service() {
             var progressInitialized = false
             var retryCurrentRequest = false
             var directoryScope: AutoCloseable? = null
+            var failureStage = "preparing output directory"
             try {
                 directoryScope = coreBackend.openDownloadDirectoryForRequest(request.requestJson)
                 // Acquire the provider permit first. If several requests from
@@ -1134,6 +1135,7 @@ class DownloadService : Service() {
                         updateNativeWorkerItem(request.itemId) {
                             it.status = "downloading"
                         }
+                        failureStage = "downloading"
                         try {
                             SafDownloadHandler.handle(this, request.requestJson, coreBackend)
                         } finally {
@@ -1150,6 +1152,7 @@ class DownloadService : Service() {
 
                 var result = JSONObject(response)
                 if (result.optBoolean("success", false)) {
+                    failureStage = "finalizing"
                     currentStatus = "finalizing"
                     updateNativeWorkerItem(request.itemId) {
                         it.status = "finalizing"
@@ -1199,6 +1202,7 @@ class DownloadService : Service() {
                         writeNativeAlbumReplayGainIfComplete()
                     }
                 } else {
+                    result.put("failure_stage", failureStage)
                     val errorType = result.optString("error_type")
                     val errorMessage = result.optString("error")
                     if (errorType == "cancelled" &&
@@ -1317,16 +1321,28 @@ class DownloadService : Service() {
                     throw e
                 }
             } catch (e: Exception) {
+                val errorMessage = "Native download failed during $failureStage: ${e.message ?: e.javaClass.simpleName}"
+                val failure = JSONObject()
+                    .put("success", false)
+                    .put("error", errorMessage)
+                    .put("failure_stage", failureStage)
+                android.util.Log.w(
+                    "DownloadService",
+                    "Native item ${request.itemId} failed during $failureStage",
+                    e,
+                )
                 updateNativeWorkerItem(request.itemId) {
                     it.status = "failed"
-                    it.error = e.message ?: "Native download failed"
+                    it.error = errorMessage
+                    it.resultJson = failure
                 }
                 writeNativeReplayGainJournal()
                 writeNativeWorkerSnapshot(
                     isRunning = true,
                     isPaused = false,
                     currentItemId = request.itemId,
-                    message = e.message ?: "Native download failed",
+                    message = errorMessage,
+                    lastResult = failure,
                     settingsJson = settingsJson,
                     includeItems = true,
                 )

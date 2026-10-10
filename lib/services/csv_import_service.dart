@@ -3,11 +3,24 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/m3u_playlist_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/logger.dart';
+
+List<Track> _parsePlaylistInBackground(Map<String, dynamic> request) {
+  final content = utf8.decode(request['bytes'] as Uint8List);
+  final seed = request['id_seed'] as int;
+  return request['format'] == 'csv'
+      ? CsvImportService._parseCsv(content, idSeed: seed)
+      : M3uPlaylistService.parseM3u(content, idSeed: seed);
+}
+
+List<Track> _hydratePlaylistInBackground(List<dynamic> rows) => [
+  for (final row in rows) Track.fromJson(Map<String, dynamic>.from(row as Map)),
+];
 
 class CsvImportService {
   static final _log = AppLogger('CsvImportService');
@@ -23,11 +36,12 @@ class CsvImportService {
       );
 
       if (picked != null) {
-        final content = utf8.decode(await picked.readAsBytes());
+        final bytes = await picked.readAsBytes();
         final extension = p.extension(picked.name).toLowerCase();
-        final tracks = (extension == '.m3u' || extension == '.m3u8')
-            ? M3uPlaylistService.parseM3u(content)
-            : _parseCsv(content);
+        final tracks = await parsePlaylistInBackground(
+          bytes,
+          format: (extension == '.m3u' || extension == '.m3u8') ? 'm3u' : 'csv',
+        );
 
         if (tracks.isNotEmpty) {
           return await enrichTracksMetadata(tracks, onProgress: onProgress);
@@ -38,6 +52,33 @@ class CsvImportService {
       _log.e('Error picking/parsing playlist file: $e');
     }
     return [];
+  }
+
+  /// Native parsing consumes bytes directly. Old native binaries and test
+  /// hosts retain the same parser in an isolate, never the Flutter frame.
+  @visibleForTesting
+  static Future<List<Track>> parsePlaylistInBackground(
+    Uint8List bytes, {
+    required String format,
+    int? idSeed,
+  }) async {
+    final seed = idSeed ?? DateTime.now().millisecondsSinceEpoch;
+    List<dynamic> rows;
+    try {
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'parse_playlist',
+        'format': format,
+        'id_seed': seed,
+      }, bytes: bytes);
+      rows = result['tracks'] as List;
+    } on MissingPluginException {
+      return compute(_parsePlaylistInBackground, {
+        'bytes': bytes,
+        'format': format,
+        'id_seed': seed,
+      });
+    }
+    return compute(_hydratePlaylistInBackground, rows);
   }
 
   @visibleForTesting
@@ -194,7 +235,7 @@ class CsvImportService {
       .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), ' ')
       .trim();
 
-  static List<Track> _parseCsv(String content) {
+  static List<Track> _parseCsv(String content, {int? idSeed}) {
     final List<Track> tracks = [];
     final lines = content.split(_lineSplitPattern);
     if (lines.isEmpty) return tracks;
@@ -250,7 +291,9 @@ class CsvImportService {
           (spotifyId != null && spotifyId.isNotEmpty)) {
         tracks.add(
           Track(
-            id: spotifyId ?? 'csv_${DateTime.now().millisecondsSinceEpoch}_$i',
+            id:
+                spotifyId ??
+                'csv_${idSeed ?? DateTime.now().millisecondsSinceEpoch}_$i',
             name: trackName ?? 'Unknown Track',
             artistName: artistName ?? 'Unknown Artist',
             albumName: albumName ?? 'Unknown Album',

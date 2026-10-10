@@ -2,14 +2,20 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 
 final _log = AppLogger('ApkDownloader');
 
 typedef ProgressCallback = void Function(int received, int total);
+
+Future<String> _hashApkInBackground(String path) async =>
+    (await sha256.bind(File(path).openRead()).first).toString();
 
 class ApkDownloader {
   static const _streamIdleTimeout = Duration(seconds: 60);
@@ -125,8 +131,7 @@ class ApkDownloader {
           await _discardPartial(partFile, metadataFile);
           return null;
         }
-        final actual = (await sha256.bind(partFile.openRead()).first)
-            .toString();
+        final actual = await _hashApk(partFile);
         if (actual != expected) {
           _log.e('APK SHA-256 verification failed');
           await _discardPartial(partFile, metadataFile);
@@ -146,8 +151,29 @@ class ApkDownloader {
       _log.e('Update download paused after error: $e');
       return null;
     } finally {
-      await sink?.close();
-      if (ownedClient) effectiveClient.close();
+      try {
+        await sink?.close();
+      } catch (error) {
+        _log.w('Failed to close partial update file: $error');
+      } finally {
+        if (ownedClient) effectiveClient.close();
+      }
+    }
+  }
+
+  static Future<String> _hashApk(File file) async {
+    try {
+      final result = await PlatformBridge.runNativeDataJob({
+        'operation': 'hash_file',
+        'path': file.path,
+      });
+      final digest = result['sha256'];
+      if (digest is! String || !RegExp(r'^[a-f0-9]{64}$').hasMatch(digest)) {
+        throw const FormatException('Invalid native APK digest');
+      }
+      return digest;
+    } on MissingPluginException {
+      return compute(_hashApkInBackground, file.path);
     }
   }
 

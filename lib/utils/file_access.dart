@@ -2,8 +2,8 @@ import 'dart:io';
 
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:spotiflac_android/services/music_player_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
+import 'package:spotiflac_android/services/source_deletion_events.dart';
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/utils/mime_utils.dart';
 
@@ -285,6 +285,8 @@ String stripCueTrackSuffix(String path) {
 
 Future<bool> fileExists(String? path) async {
   if (path == null || path.isEmpty) return false;
+  // Network identities are resolved by the built-in player, not File.exists.
+  if (path.startsWith('network://')) return true;
   final realPath = isCueVirtualPath(path) ? stripCueTrackSuffix(path) : path;
   if (isContentUri(realPath)) {
     return PlatformBridge.safExists(realPath);
@@ -309,7 +311,10 @@ Future<Map<String, bool?>> fileExistenceByPath(List<String> paths) async {
       // Missing native method on an older build is also inconclusive.
     }
   }
-  final local = unique.where((path) => !isContentUri(path)).toList();
+  // Offline network paths remain inconclusive during destructive cleanup.
+  final local = unique
+      .where((path) => !isContentUri(path) && !path.startsWith('network://'))
+      .toList();
   const concurrency = 16;
   for (var start = 0; start < local.length; start += concurrency) {
     final end = start + concurrency < local.length
@@ -347,42 +352,44 @@ Future<Map<String, bool?>> fileExistenceByPath(List<String> paths) async {
 /// SAF providers are allowed to reject a delete request by returning `false`.
 /// Callers that also remove a Library row must only do so when this returns
 /// `true`, otherwise the app would hide a file that still exists on storage.
-Future<bool> deleteFile(String? path) async {
+Future<bool> deleteFile(
+  String? path, {
+  SourceDeletionEvents? deletionEvents,
+}) async {
   if (path == null || path.isEmpty) return false;
+  if (path.startsWith('EXISTS:')) {
+    path = path.substring(7).trim();
+    if (path.isEmpty) return false;
+  }
+  if (path.startsWith('network://')) return false;
   // CUE virtual paths should NOT be deleted through this function —
   // deleting album.cue would remove ALL tracks. Callers should handle
   // CUE deletion specially (e.g. only delete when all tracks are removed).
   if (isCueVirtualPath(path)) return false;
-  if (isContentUri(path)) {
-    try {
-      final deleted = await PlatformBridge.safDelete(path);
-      final confirmedAbsent = deleted || !await PlatformBridge.safExists(path);
-      if (confirmedAbsent) {
-        await musicPlayerHandler?.onSourceDeleted(path);
-      }
-      return confirmedAbsent;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  final file = File(path);
+  bool confirmedAbsent;
   try {
-    if (await file.exists()) {
-      await file.delete();
+    if (isContentUri(path)) {
+      final deleted = await PlatformBridge.safDelete(path);
+      confirmedAbsent = deleted || !await PlatformBridge.safExists(path);
+    } else {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      confirmedAbsent = !await file.exists();
     }
-    final confirmedAbsent = !await file.exists();
-    if (confirmedAbsent) {
-      await musicPlayerHandler?.onSourceDeleted(path);
-    }
-    return confirmedAbsent;
   } catch (_) {
     return false;
   }
+  if (confirmedAbsent) {
+    await (deletionEvents ?? SourceDeletionEvents.instance).publish(path);
+  }
+  return confirmedAbsent;
 }
 
 Future<FileAccessStat?> fileStat(String? path) async {
   if (path == null || path.isEmpty) return null;
+  if (path.startsWith('network://')) return const FileAccessStat();
   final realPath = isCueVirtualPath(path) ? stripCueTrackSuffix(path) : path;
   if (isContentUri(realPath)) {
     final stat = await PlatformBridge.safStat(realPath);
@@ -397,7 +404,17 @@ Future<FileAccessStat?> fileStat(String? path) async {
   }
 
   final stat = await FileStat.stat(realPath);
-  if (stat.type == FileSystemEntityType.notFound) return null;
+  if (stat.type == FileSystemEntityType.notFound) {
+    // Dart stat hides every OS error behind notFound. A metadata-only lookup
+    // exposes the errno without opening or copying audio on the normal path.
+    try {
+      return FileAccessStat(size: await File(realPath).length());
+    } on FileSystemException catch (error) {
+      final code = error.osError?.errorCode;
+      if (code == 2 || code == (Platform.isWindows ? 3 : 20)) return null;
+      rethrow;
+    }
+  }
   return FileAccessStat(size: stat.size, modified: stat.modified);
 }
 

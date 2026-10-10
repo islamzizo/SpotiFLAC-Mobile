@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:async';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:spotiflac_android/constants/app_info.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
@@ -189,6 +190,9 @@ class RepoState {
 }
 
 class RepoNotifier extends Notifier<RepoState> {
+  Future<void>? _initialization;
+  String? _cacheDir;
+
   /// Serializes install/upgrade so two never race the native VM teardown/reload.
   Future<void> _mutationChain = Future<void>.value();
 
@@ -209,9 +213,15 @@ class RepoNotifier extends Notifier<RepoState> {
     return const RepoState();
   }
 
-  Future<void> initialize(String cacheDir) async {
-    if (state.isInitialized) return;
+  Future<void> initialize(String cacheDir) {
+    if (state.isInitialized) return Future<void>.value();
+    _cacheDir = cacheDir;
+    return _initialization ??= _initialize(cacheDir).whenComplete(() {
+      _initialization = null;
+    });
+  }
 
+  Future<void> _initialize(String cacheDir) async {
     final prefs = await SharedPreferences.getInstance();
     final savedUrl = prefs.getString(_registryUrlPrefKey) ?? '';
 
@@ -249,9 +259,23 @@ class RepoNotifier extends Notifier<RepoState> {
 
     state = state.copyWith(isLoading: true, clearError: true);
 
-    final previousUrl = state.registryUrl;
+    var previousUrl = state.registryUrl;
+    var changedUrl = false;
     try {
+      if (!state.isInitialized) {
+        final cacheDir =
+            _cacheDir ?? (await getApplicationCacheDirectory()).path;
+        await initialize(cacheDir);
+        if (!state.isInitialized) {
+          throw StateError(
+            state.error ?? 'Extension repository initialization failed',
+          );
+        }
+        previousUrl = state.registryUrl;
+        state = state.copyWith(isLoading: true, clearError: true);
+      }
       await PlatformBridge.setRepoRegistryUrl(trimmed);
+      changedUrl = true;
 
       final resolvedUrl = await PlatformBridge.getRepoRegistryUrl();
 
@@ -273,14 +297,16 @@ class RepoNotifier extends Notifier<RepoState> {
       _log.i('Registry URL set to: $resolvedUrl');
     } catch (e) {
       _log.e('Failed to set registry URL: $e');
-      try {
-        if (previousUrl.isNotEmpty) {
-          await PlatformBridge.setRepoRegistryUrl(previousUrl);
-        } else {
-          await PlatformBridge.clearRepoRegistryUrl();
+      if (changedUrl) {
+        try {
+          if (previousUrl.isNotEmpty) {
+            await PlatformBridge.setRepoRegistryUrl(previousUrl);
+          } else {
+            await PlatformBridge.clearRepoRegistryUrl();
+          }
+        } catch (restoreError) {
+          _log.w('Failed to restore previous registry URL: $restoreError');
         }
-      } catch (restoreError) {
-        _log.w('Failed to restore previous registry URL: $restoreError');
       }
       state = state.copyWith(isLoading: false, error: e.toString());
     }

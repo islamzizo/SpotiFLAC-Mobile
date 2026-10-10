@@ -1,4 +1,5 @@
 import 'package:json_annotation/json_annotation.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
 import 'package:spotiflac_android/utils/artist_utils.dart';
 
 part 'settings.g.dart';
@@ -16,6 +17,8 @@ class AppSettings {
   final String audioQuality;
   final String filenameFormat;
   final String downloadDirectory;
+  final String networkDownloadFolder;
+  final String networkDownloadLabel;
   final String downloadDirectoryBookmark;
   final String storageMode; // 'app' or 'saf'
   final String downloadTreeUri; // SAF persistable tree URI
@@ -31,7 +34,28 @@ class AppSettings {
   final bool embedReplayGain;
   // Apply ReplayGain/R128 tags as volume normalization in the built-in player.
   final bool playbackNormalization;
+  final bool pauseOnMute;
+  final bool playOnHeadphonesConnected;
   final bool autoMix;
+  @JsonKey(fromJson: autoMixDurationFromJson)
+  final int autoMixDuration;
+  @JsonKey(unknownEnumValue: AutoMixEffect.auto)
+  final AutoMixEffect autoMixEffect;
+  @JsonKey(fromJson: autoMixSpeedFromJson)
+  final double autoMixSpeed;
+  @JsonKey(fromJson: autoMixPitchFromJson)
+  final double autoMixPitch;
+  final bool autoMixEcho;
+  final bool autoMixLowPass;
+  AutoMixOptions get autoMixOptions => AutoMixOptions(
+    durationSeconds: autoMixDuration,
+    effect: autoMixEffect,
+    speed: autoMixSpeed,
+    pitchSemitones: autoMixPitch,
+    echo: autoMixEcho,
+    lowPass: autoMixLowPass,
+  );
+  final bool discordRichPresenceEnabled;
   final bool usbBitPerfect;
   final bool usbDirect;
   final bool usbDsdOverPcm;
@@ -82,6 +106,8 @@ class AppSettings {
   final String locale;
   final String lyricsMode;
   final bool keepScreenOnLyrics;
+  final bool motionArtworkEnabled;
+  final bool listeningStatisticsEnabled;
   final bool autoConvertDownloads;
   // Re-download a Hi-Res request at LOSSLESS when the file measures as fake.
   final bool redownloadFakeHiRes;
@@ -140,6 +166,8 @@ class AppSettings {
     this.audioQuality = 'LOSSLESS',
     this.filenameFormat = '{title} - {artist}',
     this.downloadDirectory = '',
+    this.networkDownloadFolder = '',
+    this.networkDownloadLabel = '',
     this.downloadDirectoryBookmark = '',
     this.storageMode = 'app',
     this.downloadTreeUri = '',
@@ -150,7 +178,16 @@ class AppSettings {
     this.embedLyrics = true,
     this.embedReplayGain = false,
     this.playbackNormalization = false,
+    this.pauseOnMute = true,
+    this.playOnHeadphonesConnected = false,
     this.autoMix = false,
+    this.autoMixDuration = 0,
+    this.autoMixEffect = AutoMixEffect.auto,
+    this.autoMixSpeed = 1,
+    this.autoMixPitch = 0,
+    this.autoMixEcho = false,
+    this.autoMixLowPass = false,
+    this.discordRichPresenceEnabled = false,
     this.usbBitPerfect = false,
     this.usbDirect = false,
     this.usbDsdOverPcm = false,
@@ -187,6 +224,8 @@ class AppSettings {
     this.locale = 'system',
     this.lyricsMode = 'embed',
     this.keepScreenOnLyrics = true,
+    this.motionArtworkEnabled = true,
+    this.listeningStatisticsEnabled = true,
     this.autoConvertDownloads = false,
     this.redownloadFakeHiRes = false,
     this.autoConvertFormat = 'mp3',
@@ -208,14 +247,14 @@ class AppSettings {
     this.lyricsProviders = const ['lrclib', 'apple_music'],
     this.lyricsIncludeTranslationNetease = false,
     this.lyricsIncludeRomanizationNetease = false,
-    this.lyricsMultiPersonWordByWord = false,
-    this.lyricsAppleElrcWordSync = false,
+    this.lyricsMultiPersonWordByWord = true,
+    this.lyricsAppleElrcWordSync = true,
     this.musixmatchLanguage = '',
     this.lastSeenVersion = '',
     this.deduplicateDownloads = true,
     this.allowQualityVariants = false,
     this.saveDownloadHistory = true,
-    this.playerMode = 'external',
+    this.playerMode = 'internal',
     this.playerShowPronunciation = true,
     this.playerShowTranslation = true,
   });
@@ -234,6 +273,8 @@ class AppSettings {
     String? audioQuality,
     String? filenameFormat,
     String? downloadDirectory,
+    String? networkDownloadFolder,
+    String? networkDownloadLabel,
     String? downloadDirectoryBookmark,
     String? storageMode,
     String? downloadTreeUri,
@@ -244,7 +285,16 @@ class AppSettings {
     bool? embedLyrics,
     bool? embedReplayGain,
     bool? playbackNormalization,
+    bool? pauseOnMute,
+    bool? playOnHeadphonesConnected,
     bool? autoMix,
+    int? autoMixDuration,
+    AutoMixEffect? autoMixEffect,
+    double? autoMixSpeed,
+    double? autoMixPitch,
+    bool? autoMixEcho,
+    bool? autoMixLowPass,
+    bool? discordRichPresenceEnabled,
     bool? usbBitPerfect,
     bool? usbDirect,
     bool? usbDsdOverPcm,
@@ -284,6 +334,8 @@ class AppSettings {
     String? locale,
     String? lyricsMode,
     bool? keepScreenOnLyrics,
+    bool? motionArtworkEnabled,
+    bool? listeningStatisticsEnabled,
     bool? autoConvertDownloads,
     bool? redownloadFakeHiRes,
     String? autoConvertFormat,
@@ -321,6 +373,9 @@ class AppSettings {
       audioQuality: audioQuality ?? this.audioQuality,
       filenameFormat: filenameFormat ?? this.filenameFormat,
       downloadDirectory: downloadDirectory ?? this.downloadDirectory,
+      networkDownloadFolder:
+          networkDownloadFolder ?? this.networkDownloadFolder,
+      networkDownloadLabel: networkDownloadLabel ?? this.networkDownloadLabel,
       downloadDirectoryBookmark:
           downloadDirectoryBookmark ?? this.downloadDirectoryBookmark,
       storageMode: storageMode ?? this.storageMode,
@@ -334,7 +389,18 @@ class AppSettings {
       embedReplayGain: embedReplayGain ?? this.embedReplayGain,
       playbackNormalization:
           playbackNormalization ?? this.playbackNormalization,
+      pauseOnMute: pauseOnMute ?? this.pauseOnMute,
+      playOnHeadphonesConnected:
+          playOnHeadphonesConnected ?? this.playOnHeadphonesConnected,
       autoMix: autoMix ?? this.autoMix,
+      autoMixDuration: autoMixDuration ?? this.autoMixDuration,
+      autoMixEffect: autoMixEffect ?? this.autoMixEffect,
+      autoMixSpeed: autoMixSpeed ?? this.autoMixSpeed,
+      autoMixPitch: autoMixPitch ?? this.autoMixPitch,
+      autoMixEcho: autoMixEcho ?? this.autoMixEcho,
+      autoMixLowPass: autoMixLowPass ?? this.autoMixLowPass,
+      discordRichPresenceEnabled:
+          discordRichPresenceEnabled ?? this.discordRichPresenceEnabled,
       usbBitPerfect: usbBitPerfect ?? this.usbBitPerfect,
       usbDirect: usbDirect ?? this.usbDirect,
       usbDsdOverPcm: usbDsdOverPcm ?? this.usbDsdOverPcm,
@@ -386,6 +452,9 @@ class AppSettings {
       locale: locale ?? this.locale,
       lyricsMode: lyricsMode ?? this.lyricsMode,
       keepScreenOnLyrics: keepScreenOnLyrics ?? this.keepScreenOnLyrics,
+      motionArtworkEnabled: motionArtworkEnabled ?? this.motionArtworkEnabled,
+      listeningStatisticsEnabled:
+          listeningStatisticsEnabled ?? this.listeningStatisticsEnabled,
       autoConvertDownloads: autoConvertDownloads ?? this.autoConvertDownloads,
       redownloadFakeHiRes: redownloadFakeHiRes ?? this.redownloadFakeHiRes,
       autoConvertFormat: autoConvertFormat ?? this.autoConvertFormat,

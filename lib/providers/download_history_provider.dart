@@ -3,9 +3,11 @@ import 'dart:math';
 import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:spotiflac_android/models/download_history.dart';
 import 'package:spotiflac_android/models/track.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/history_database.dart';
+import 'package:spotiflac_android/services/history_maintenance.dart';
 import 'package:spotiflac_android/utils/logger.dart' hide log;
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
@@ -14,10 +16,32 @@ import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
 import 'package:spotiflac_android/utils/path_match_keys.dart';
 
-part 'download_history_models.dart';
+export 'package:spotiflac_android/models/download_history.dart';
+
 part 'download_history_provider_maintenance.dart';
 
 final _historyLog = AppLogger('DownloadHistory');
+
+/// Merge a delayed maintenance result into the live lists, never its old
+/// snapshot. Deletions, new downloads, ordering and counts stay authoritative.
+DownloadHistoryState mergeHistoryMaintenanceUpdates(
+  DownloadHistoryState current,
+  Iterable<DownloadHistoryItem> updates,
+  Set<String> persistedIds,
+) {
+  final byId = {
+    for (final item in updates)
+      if (persistedIds.contains(item.id)) item.id: item,
+  };
+  if (byId.isEmpty) return current;
+  return current.copyWith(
+    items: [for (final item in current.items) byId[item.id] ?? item],
+    lookupItems: [
+      for (final item in current.lookupItems) byId[item.id] ?? item,
+    ],
+    loadedIndexVersion: current.loadedIndexVersion + 1,
+  );
+}
 
 typedef StartupOrphanDecision = ({
   Set<String> confirmedIds,
@@ -59,6 +83,9 @@ String? resolvePersistedHistoryQuality({
 }
 
 class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
+  DownloadHistoryNotifier({HistoryDatabase? database})
+    : _db = database ?? HistoryDatabase.instance;
+
   static const int _initialHistoryLoadLimit = 100;
   static const int _safRepairMaxPerLaunch = 60;
   static const int _orphanCleanupMaxPerLaunch = 80;
@@ -76,7 +103,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
   static const _audioProbeFailedPathsKey =
       'history_audio_probe_failed_paths_v1';
   static const _audioProbeFailedPathsMax = 300;
-  final HistoryDatabase _db = HistoryDatabase.instance;
+  final HistoryDatabase _db;
   bool _isLoaded = false;
   bool _isSafRepairInProgress = false;
   bool _isAudioMetadataBackfillInProgress = false;
@@ -301,6 +328,25 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     return pending;
   }
 
+  /// Background probes return sparse changes; this owner reconciles them
+  /// against the current stored record before publishing their result.
+  Future<void> applyMaintenanceUpdates(
+    Iterable<HistoryMaintenanceUpdate> updates,
+  ) => _enqueueHistoryWrite(() async {
+    final merged = <DownloadHistoryItem>[];
+    for (final update in updates) {
+      final json = await _db.getById(update.original.id);
+      if (json == null) continue;
+      final item = update.mergeInto(DownloadHistoryItem.fromJson(json));
+      if (item != null) merged.add(item);
+    }
+    final persistedIds = await _db.updateExistingBatch(
+      merged.map((item) => item.toJson()).toList(growable: false),
+    );
+    if (!ref.mounted || persistedIds.isEmpty) return;
+    state = mergeHistoryMaintenanceUpdates(state, merged, persistedIds);
+  });
+
   Future<void> _persistHistoryItem(
     DownloadHistoryItem item,
     String action, {
@@ -345,7 +391,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     });
   }
 
-  Future<void> _bumpIndexNow() async {
+  Future<void> _bumpIndexNow() => _enqueueHistoryWrite(() async {
     int? persistedCount;
     try {
       persistedCount = await _db.getCount();
@@ -356,7 +402,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       totalCount: persistedCount ?? state.totalCount,
       loadedIndexVersion: state.loadedIndexVersion + 1,
     );
-  }
+  });
 
   DownloadHistoryItem _putInMemoryTrackVariant(DownloadHistoryItem item) {
     final isReplacement = state.items.any((existing) => existing.id == item.id);
@@ -377,24 +423,45 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     return item;
   }
 
-  void removeFromHistory(String id) {
+  Future<void> removeFromHistory(String id) => removeManyFromHistory([id]);
+
+  Future<void> removePhysicalFiles(Iterable<String> filePaths) {
+    final paths = filePaths.toList();
+    // Serialize with reloads so a snapshot read before deletion cannot restore
+    // the removed entries after both indexes have been cleaned.
+    return _enqueueHistoryWrite(() async {
+      await _removePersistedHistoryItems(await _db.getPhysicalFileIds(paths));
+    });
+  }
+
+  Future<void> removeManyFromHistory(Iterable<String> ids) async {
+    final requestedIds = ids.toList(growable: false);
+    try {
+      await _enqueueHistoryWrite(
+        () => _removePersistedHistoryItems(requestedIds),
+      );
+    } catch (error, stack) {
+      _historyLog.e('Failed to delete from database: $error', error, stack);
+    }
+  }
+
+  Future<void> _removePersistedHistoryItems(Iterable<String> ids) async {
+    final removedIds = ids.toSet();
+    if (removedIds.isEmpty) return;
+    // Persist first: a failed deletion must not invalidate every Library view
+    // or silently remove an entry from the visible history snapshot.
+    final deletedCount = await _db.deleteByIds(removedIds.toList());
+    if (deletedCount == 0) return;
     state = state.copyWith(
-      items: state.items.where((item) => item.id != id).toList(),
-      totalCount: state.totalCount > 0
-          ? state.totalCount - 1
-          : state.totalCount,
+      items: state.items
+          .where((item) => !removedIds.contains(item.id))
+          .toList(),
+      totalCount: (state.totalCount - deletedCount).clamp(0, state.totalCount),
       lookupItems: state.lookupItems
-          .where((item) => item.id != id)
+          .where((item) => !removedIds.contains(item.id))
           .toList(growable: false),
+      loadedIndexVersion: state.loadedIndexVersion + 1,
     );
-    _db
-        .deleteById(id)
-        .catchError((Object e) {
-          _historyLog.e('Failed to delete from database: $e');
-        })
-        .then((_) {
-          _bumpHistoryRevision();
-        });
   }
 
   DownloadHistoryItem? getBySpotifyId(String spotifyId) {
@@ -504,7 +571,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     int? lyricsMetadataScanVersion,
     bool? hasReplayGain,
     int? replayGainMetadataScanVersion,
-  }) async {
+  }) => _enqueueHistoryWrite(() async {
     final target = await _historyItemForUpdate(id);
     if (target == null) {
       _historyLog.w(
@@ -554,6 +621,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       return;
     }
 
+    await _db.upsert(updated.toJson());
     final updatedItems = target.index >= 0
         ? ([...state.items]..[target.index] = updated)
         : state.items;
@@ -561,12 +629,11 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       items: updatedItems,
       lookupItems: _lookupItemsWithUpdates([updated]),
     );
-    await _db.upsert(updated.toJson());
     // Swiping through older tracks can backfill several quality records in a
     // short burst. Coalesce their DB-derived Library refreshes just like
     // download completion writes instead of rebuilding every view per swipe.
     _scheduleIndexBump();
-  }
+  });
 
   Future<void> updateMetadataForItem({
     required String id,
@@ -587,7 +654,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     bool? explicit,
     bool? hasLyrics,
     int? lyricsMetadataScanVersion,
-  }) async {
+  }) => _enqueueHistoryWrite(() async {
     final target = await _historyItemForUpdate(id);
     if (target == null) {
       _historyLog.w('Cannot update metadata for missing history item: $id');
@@ -615,6 +682,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       lyricsMetadataScanVersion: lyricsMetadataScanVersion,
     );
 
+    await _db.upsert(updated.toJson());
     final updatedItems = target.index >= 0
         ? ([...state.items]..[target.index] = updated)
         : state.items;
@@ -622,9 +690,8 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       items: updatedItems,
       lookupItems: _lookupItemsWithUpdates([updated]),
     );
-    await _db.upsert(updated.toJson());
     _bumpHistoryRevision();
-  }
+  });
 
   static const _audioExtensions = [
     '.flac',
@@ -820,10 +887,9 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       return;
     }
     final deletedSet = deletedIds.toSet();
-    final updatedItems = <DownloadHistoryItem>[];
-    for (final item in state.items) {
+    DownloadHistoryItem? updateItem(DownloadHistoryItem item) {
       if (deletedSet.contains(item.id)) {
-        continue;
+        return null;
       }
       final replacementPath = replacementPaths[item.id];
       final replacementFileName = replacementFileNames[item.id];
@@ -834,26 +900,94 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
                   replacementFileName != item.safFileName) ||
               (replacementRelativeDir != null &&
                   replacementRelativeDir != item.safRelativeDir))) {
-        updatedItems.add(
-          item.copyWith(
-            filePath: replacementPath,
-            safFileName: replacementFileName,
-            safRelativeDir: replacementRelativeDir,
-          ),
+        return item.copyWith(
+          filePath: replacementPath,
+          safFileName: replacementFileName,
+          safRelativeDir: replacementRelativeDir,
         );
-      } else {
-        updatedItems.add(item);
       }
+      return item;
     }
+
     state = state.copyWith(
-      items: updatedItems,
+      items: state.items
+          .map(updateItem)
+          .whereType<DownloadHistoryItem>()
+          .toList(),
       loadedIndexVersion: state.loadedIndexVersion + 1,
-      lookupItems: _lookupItemsWithUpdates(
-        updatedItems,
-        deletedIds: deletedSet,
-      ),
+      lookupItems: state.lookupItems
+          .map(updateItem)
+          .whereType<DownloadHistoryItem>()
+          .toList(growable: false),
       totalCount: max(0, state.totalCount - deletedSet.length),
     );
+  }
+
+  Future<({int deleted, int repaired})> _commitInspectedHistoryChanges({
+    required List<Map<String, dynamic>> entries,
+    required List<String> orphanedIds,
+    required Map<String, String> replacementPaths,
+    required Map<String, String> replacementFileNames,
+    required Map<String, String> replacementRelativeDirs,
+  }) async {
+    var outcome = (deleted: 0, repaired: 0);
+    await _enqueueHistoryWrite(() async {
+      final byId = {for (final entry in entries) entry['id'] as String: entry};
+      final deletions = <Map<String, dynamic>>[];
+      final repairedPaths = <String, String>{};
+      final repairedNames = <String, String>{};
+      final repairedDirs = <String, String>{};
+      for (final id in {...orphanedIds, ...replacementPaths.keys}) {
+        final entry = byId[id];
+        final json = await _db.getById(id);
+        if (entry == null || json == null) continue;
+        final current = DownloadHistoryItem.fromJson(json);
+        final inspectedAt = DateTime.tryParse(
+          entry['downloaded_at']?.toString() ?? '',
+        );
+        if (current.filePath != entry['file_path'] ||
+            current.storageMode != entry['storage_mode'] ||
+            current.downloadTreeUri != entry['download_tree_uri'] ||
+            (inspectedAt != null &&
+                !current.downloadedAt.isAtSameMomentAs(inspectedAt))) {
+          continue;
+        }
+        final replacement = replacementPaths[id];
+        if (replacement == null) {
+          deletions.add(entry);
+          continue;
+        }
+        final name = current.safFileName == entry['saf_file_name']
+            ? replacementFileNames[id]
+            : null;
+        final relativeDir = current.safRelativeDir == entry['saf_relative_dir']
+            ? replacementRelativeDirs[id]
+            : null;
+        final repaired = await _db.updateFilePath(
+          id,
+          replacement,
+          newSafFileName: name,
+          newSafRelativeDir: relativeDir,
+          expectedFilePath: entry['file_path'] as String,
+          expectedDownloadedAt: entry['downloaded_at'] as String?,
+        );
+        if (!repaired) continue;
+        repairedPaths[id] = replacement;
+        if (name != null) repairedNames[id] = name;
+        if (relativeDir != null) repairedDirs[id] = relativeDir;
+      }
+      final deletedIds = deletions.isEmpty
+          ? <String>[]
+          : await _db.deleteInspectedEntries(deletions);
+      _applyHistoryPathAndDeletionChanges(
+        deletedIds: deletedIds,
+        replacementPaths: repairedPaths,
+        replacementFileNames: repairedNames,
+        replacementRelativeDirs: repairedDirs,
+      );
+      outcome = (deleted: deletedIds.length, repaired: repairedPaths.length);
+    });
+    return outcome;
   }
 
   Future<int> _cleanupOrphanedDownloadsIncremental({
@@ -895,22 +1029,13 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       }
     }
     for (final replacement in result.replacementPaths.entries) {
-      await _db.updateFilePath(
-        replacement.key,
-        replacement.value,
-        newSafFileName: result.replacementFileNames[replacement.key],
-        newSafRelativeDir: result.replacementRelativeDirs[replacement.key],
-      );
       await prefs.remove('$_startupOrphanSuspectPrefix${replacement.key}');
     }
 
     final confirmedOrphanIds = decision.confirmedIds.toList(growable: false);
-    final deletedCount = confirmedOrphanIds.isEmpty
-        ? 0
-        : await _db.deleteByIds(confirmedOrphanIds);
-
-    _applyHistoryPathAndDeletionChanges(
-      deletedIds: confirmedOrphanIds,
+    final committed = await _commitInspectedHistoryChanges(
+      entries: entries,
+      orphanedIds: confirmedOrphanIds,
       replacementPaths: result.replacementPaths,
       replacementFileNames: result.replacementFileNames,
       replacementRelativeDirs: result.replacementRelativeDirs,
@@ -925,12 +1050,12 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       await prefs.setInt(_startupOrphanCursorKey, nextCursor);
     }
 
-    if (deletedCount > 0 || result.replacementPaths.isNotEmpty) {
+    if (committed.deleted > 0 || committed.repaired > 0) {
       _historyLog.i(
-        'Startup orphan cleanup pass: removed=$deletedCount, repaired=${result.replacementPaths.length}, checked=${entries.length}',
+        'Startup orphan cleanup pass: removed=${committed.deleted}, repaired=${committed.repaired}, checked=${entries.length}',
       );
     }
-    return deletedCount;
+    return committed.deleted;
   }
 
   Future<int> cleanupOrphanedDownloads() async {
@@ -939,6 +1064,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
     final replacementPaths = <String, String>{};
     final replacementFileNames = <String, String>{};
     final replacementRelativeDirs = <String, String>{};
+    final inspectedEntries = <Map<String, dynamic>>[];
     const pageSize = 256;
     var offset = 0;
 
@@ -951,6 +1077,7 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
         break;
       }
 
+      inspectedEntries.addAll(entries);
       final result = await _inspectOrphanedEntries(entries);
       orphanedIds.addAll(result.orphanedIds);
       replacementPaths.addAll(result.replacementPaths);
@@ -966,75 +1093,59 @@ class DownloadHistoryNotifier extends Notifier<DownloadHistoryState> {
       offset += entries.length;
     }
 
-    for (final replacement in replacementPaths.entries) {
-      await _db.updateFilePath(
-        replacement.key,
-        replacement.value,
-        newSafFileName: replacementFileNames[replacement.key],
-        newSafRelativeDir: replacementRelativeDirs[replacement.key],
-      );
-    }
-
     if (orphanedIds.isEmpty && replacementPaths.isEmpty) {
       _historyLog.i('No orphaned entries found');
       return 0;
     }
 
-    final deletedCount = orphanedIds.isEmpty
-        ? 0
-        : await _db.deleteByIds(orphanedIds);
-    _applyHistoryPathAndDeletionChanges(
-      deletedIds: orphanedIds,
+    final committed = await _commitInspectedHistoryChanges(
+      entries: inspectedEntries,
+      orphanedIds: orphanedIds,
       replacementPaths: replacementPaths,
       replacementFileNames: replacementFileNames,
       replacementRelativeDirs: replacementRelativeDirs,
     );
 
     _historyLog.i(
-      'Cleaned up $deletedCount orphaned entries and repaired ${replacementPaths.length} paths',
+      'Cleaned up ${committed.deleted} orphaned entries and repaired ${committed.repaired} paths',
     );
-    return deletedCount;
+    return committed.deleted;
   }
 
-  void clearHistory() {
-    state = DownloadHistoryState(loadedIndexVersion: state.loadedIndexVersion);
-    _db
-        .clearAll()
-        .then((_) {
-          _bumpHistoryRevision();
-        })
-        .catchError((Object e) {
-          _historyLog.e('Failed to clear database: $e');
-        });
+  Future<void> clearHistory() async {
+    try {
+      await _enqueueHistoryWrite(() async {
+        await _db.clearAll();
+        state = DownloadHistoryState(
+          loadedIndexVersion: state.loadedIndexVersion + 1,
+        );
+      });
+    } catch (error, stack) {
+      _historyLog.e('Failed to clear database: $error', error, stack);
+    }
   }
 
   /// Replaces all download history with [items] (each in the
   /// [DownloadHistoryItem.toJson] shape) from a restored backup, then reloads
   /// the in-memory state from storage.
-  Future<void> restoreFromBackup(List<Map<String, dynamic>> items) async {
-    await _db.clearAll();
-    if (items.isNotEmpty) {
-      await _db.upsertBatch(items);
-    }
-    await reloadFromStorage();
-  }
+  Future<void> restoreFromBackup(List<Map<String, dynamic>> items) =>
+      restoreFromBackupStream(Stream.fromIterable(items));
+
+  /// Serializes a native backup replacement with existing history writes, then
+  /// publishes the same bounded initial state as a streamed restore.
+  Future<void> restoreFromBackupOperation(Future<void> Function() restore) =>
+      _enqueueHistoryWrite(() async {
+        await restore();
+        await _loadFromDatabase();
+      });
 
   /// Restores a large v2 backup without retaining the complete history in
   /// Dart memory. SQLite writes are grouped to keep JNI/channel overhead low.
-  Future<void> restoreFromBackupStream(
-    Stream<Map<String, dynamic>> items,
-  ) async {
-    await _db.clearAll();
-    var batch = <Map<String, dynamic>>[];
-    await for (final item in items) {
-      batch.add(item);
-      if (batch.length < 500) continue;
-      await _db.upsertBatch(batch);
-      batch = <Map<String, dynamic>>[];
-    }
-    if (batch.isNotEmpty) await _db.upsertBatch(batch);
-    await reloadFromStorage();
-  }
+  Future<void> restoreFromBackupStream(Stream<Map<String, dynamic>> items) =>
+      _enqueueHistoryWrite(() async {
+        await _db.replaceAll(items);
+        await _loadFromDatabase();
+      });
 }
 
 final downloadHistoryProvider =

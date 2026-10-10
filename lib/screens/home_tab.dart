@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/screens/track_history_snapshot.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
 import 'package:spotiflac_android/theme/mornye_theme.dart';
@@ -11,6 +12,7 @@ import 'package:spotiflac_android/widgets/app_loading_indicator.dart';
 import 'package:spotiflac_android/widgets/expressive_button.dart';
 import 'package:spotiflac_android/theme/mornye_icons.dart';
 import 'package:spotiflac_android/widgets/mornye_chrome.dart';
+import 'package:spotiflac_android/widgets/mornye_context_menu.dart';
 import 'package:spotiflac_android/widgets/mornye_artist_header.dart';
 import 'package:spotiflac_android/widgets/album_detail_header.dart';
 import 'package:spotiflac_android/widgets/app_bottom_sheet.dart';
@@ -357,6 +359,10 @@ class _HomeTabState extends ConsumerState<HomeTab>
   }
 
   void _onSearchFocusChanged() {
+    // The dedicated Search tab already shows recent items independently of
+    // focus. Let TextField handle its cursor/keyboard without rebuilding the
+    // entire results page each time navigation focuses or unfocuses it.
+    if (widget.mode == HomeTabMode.search) return;
     if (mounted) {
       setState(() {});
     }
@@ -368,7 +374,9 @@ class _HomeTabState extends ConsumerState<HomeTab>
   void _focusSearchFromShell() {
     if (!_showsSearch) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_showsSearch || !TickerMode.valuesOf(context).enabled) {
+      if (!mounted ||
+          !_showsSearch ||
+          !TickerMode.getValuesNotifier(context).value.enabled) {
         return;
       }
       if (_homeScrollController.hasClients) _homeScrollController.jumpTo(0);

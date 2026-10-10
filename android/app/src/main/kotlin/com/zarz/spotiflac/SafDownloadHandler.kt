@@ -140,9 +140,11 @@ object SafDownloadHandler {
                 val response = backend.downloadByStrategy(req.toString())
                 val respObj = JSONObject(response)
                 if (respObj.optBoolean("success", false)) {
+                    val actualExt = normalizeExt(respObj.optString("actual_extension", ""))
+                        .ifBlank { outputExt }
                     val resolvedFileName = respObj.optString("resolved_file_name", "")
                         .trim()
-                        .let { if (it.isNotEmpty()) forceFilenameExt(it, outputExt) else fileName }
+                        .let { forceFilenameExt(it.ifBlank { fileName }, actualExt) }
                     val reportedPath = respObj.optString("file_path", "").trim()
                     if (reportedPath.isEmpty() || reportedPath.startsWith("/proc/self/fd/")) {
                         respObj.put("file_path", workingFile.absolutePath)
@@ -159,8 +161,8 @@ object SafDownloadHandler {
                     )
                     respObj.put("saf_relative_dir", resolvedDir)
                     respObj.put("saf_tree_uri", treeUriStr)
-                    respObj.put("saf_output_ext", outputExt)
-                    respObj.put("saf_final_mime_type", mimeType)
+                    respObj.put("saf_output_ext", actualExt)
+                    respObj.put("saf_final_mime_type", mimeTypeForExt(actualExt))
                 } else {
                     workingFile.delete()
                 }

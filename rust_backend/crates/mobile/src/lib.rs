@@ -1,6 +1,7 @@
 //! Migration APIs. Instances here are not connected to the app's Go-owned work.
 
 mod cancellation;
+mod data_jobs;
 mod extensions;
 mod ffmpeg;
 mod filename;
@@ -10,6 +11,17 @@ mod logging;
 mod lyrics;
 mod manager;
 mod metadata;
+mod native_backup;
+mod native_cache;
+mod native_collections;
+mod native_id3;
+mod native_library;
+mod native_listing;
+mod native_lyrics;
+mod native_playlist_write;
+mod native_playlists;
+mod native_xml;
+mod network_tags;
 mod progress;
 mod repository;
 mod tags;

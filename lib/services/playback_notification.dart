@@ -3,14 +3,16 @@ import 'package:audio_service/audio_service.dart';
 /// Presentation only; every transport action still uses the audio handler.
 class PlaybackNotification {
   static const favoriteAction = 'spotiflac.favorite';
-  static const outputAction = 'spotiflac.audioOutput';
+  static const shuffleAction = 'spotiflac.shuffle';
 
   final bool mornye;
   final String? mediaId;
   final String? source;
   final bool loved;
   final String favoriteLabel;
-  final String outputLabel;
+  final String unfavoriteLabel;
+  final String shuffleOnLabel;
+  final String shuffleOffLabel;
 
   const PlaybackNotification({
     this.mornye = false,
@@ -18,12 +20,29 @@ class PlaybackNotification {
     this.source,
     this.loved = false,
     this.favoriteLabel = 'Favorite',
-    this.outputLabel = 'Audio Output',
+    this.unfavoriteLabel = 'Remove from favorites',
+    this.shuffleOnLabel = 'Shuffle on',
+    this.shuffleOffLabel = 'Shuffle off',
   });
+
+  String get favoriteActionLabel => loved ? unfavoriteLabel : favoriteLabel;
+
+  PlaybackNotification withFavorite(MediaItem item, bool loved) =>
+      PlaybackNotification(
+        mornye: mornye,
+        mediaId: item.id,
+        source: item.extras?['source']?.toString(),
+        loved: loved,
+        favoriteLabel: favoriteLabel,
+        unfavoriteLabel: unfavoriteLabel,
+        shuffleOnLabel: shuffleOnLabel,
+        shuffleOffLabel: shuffleOffLabel,
+      );
 
   List<MediaControl> controls({
     required bool playing,
     required MediaItem? item,
+    bool shuffle = false,
   }) {
     if (!mornye) {
       return [
@@ -39,7 +58,7 @@ class PlaybackNotification {
         androidIcon: current && loved
             ? 'drawable/ic_notification_star_filled'
             : 'drawable/ic_notification_star',
-        label: favoriteLabel,
+        label: current && loved ? unfavoriteLabel : favoriteLabel,
       ),
       MediaControl.skipToPrevious.copyWith(
         androidIcon: 'drawable/ic_widget_previous',
@@ -51,12 +70,11 @@ class PlaybackNotification {
       ),
       MediaControl.skipToNext.copyWith(androidIcon: 'drawable/ic_widget_next'),
       MediaControl.custom(
-        name: outputAction,
-        androidIcon: 'drawable/ic_notification_airplay',
-        label: outputLabel,
-        extras: const {
-          'spotiflac.activity': 'com.zarz.spotiflac.AudioOutputActivity',
-        },
+        name: shuffleAction,
+        androidIcon: shuffle
+            ? 'drawable/ic_notification_shuffle_on'
+            : 'drawable/ic_notification_shuffle',
+        label: shuffle ? shuffleOnLabel : shuffleOffLabel,
       ),
     ];
   }

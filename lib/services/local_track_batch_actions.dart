@@ -12,6 +12,7 @@ import 'package:spotiflac_android/providers/local_library_provider.dart';
 import 'package:spotiflac_android/providers/settings_provider.dart';
 import 'package:spotiflac_android/services/batch_metadata_re_enrich.dart';
 import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
+import 'package:spotiflac_android/services/deleted_library_files.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/local_track_redownload_service.dart';
 import 'package:spotiflac_android/services/platform_bridge.dart';
@@ -19,10 +20,14 @@ import 'package:spotiflac_android/utils/ffmpeg_reenrich.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/lyrics_metadata_helper.dart';
+import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
 import 'package:spotiflac_android/widgets/batch_progress_dialog.dart';
+import 'package:spotiflac_android/widgets/app_snack_bar.dart';
 import 'package:spotiflac_android/widgets/re_enrich_field_dialog.dart';
 import 'package:spotiflac_android/widgets/re_enrich_review_sheet.dart';
+
+final _reEnrichLog = AppLogger('BatchReEnrich');
 
 Future<void> queueLocalTracksAsFlac(
   BuildContext context,
@@ -138,7 +143,7 @@ Future<void> queueLocalTracksAsFlac(
           skippedCount,
         );
 
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(summary)));
+  showAppSnackBar(context, content: Text(summary));
   onComplete();
 }
 
@@ -176,6 +181,11 @@ Future<void> reEnrichLibraryTracks(
     onSelectionHide: onSelectionHide,
     onSelectionRestore: onSelectionRestore,
     onComplete: onComplete,
+    sourceTrackIds: {
+      for (final track in downloads)
+        if (track.spotifyId?.trim().isNotEmpty == true)
+          track.id: track.spotifyId!,
+    },
     refreshLibrary: () async {
       // Downloaded tracks read history, not the local-scan index. Read back
       // saved tags so failed or unselected fields cannot change history.
@@ -245,6 +255,7 @@ Future<void> reEnrichLocalTracks(
   required VoidCallback onSelectionRestore,
   required VoidCallback onComplete,
   Future<void> Function()? refreshLibrary,
+  Map<String, String> sourceTrackIds = const {},
 }) async {
   if (selected.isEmpty) return;
   // Capture a stable route context before a caller removes its overlay.
@@ -263,6 +274,7 @@ Future<void> reEnrichLocalTracks(
   }
 
   final runner = BatchReEnrichRunner(
+    sourceTrackIds: sourceTrackIds,
     beginPhase: () async {
       final settings = ref.read(settingsProvider);
       await ref
@@ -303,10 +315,13 @@ Future<void> reEnrichLocalTracks(
   }
 
   if (previews.isEmpty) {
-    onSelectionRestore();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(context.l10n.trackReEnrichNoChanges)),
+    await showReEnrichResultDialog(
+      context,
+      message: context.l10n.trackReEnrichNoChanges,
     );
+    // Restore after the result closes so root-overlay fallback bars cannot
+    // cover this dialog either. Selected IDs remain intact throughout.
+    if (context.mounted && isActive()) onSelectionRestore();
     return;
   }
 
@@ -343,6 +358,12 @@ Future<void> reEnrichLocalTracks(
   if (!context.mounted || !isActive()) return;
   if (!cancelled) BatchProgressDialog.dismiss(context);
 
+  // Report file-write outcomes immediately. A scan of a large Library can
+  // take much longer than the batch and must not hide its completed result.
+  ScaffoldMessenger.of(context).clearSnackBars();
+  final summary = lyricsSummary.message(context.l10n, successCount, total);
+  final resultClosed = showReEnrichResultDialog(context, message: summary);
+
   if (refreshLibrary != null) {
     await refreshLibrary();
   } else {
@@ -351,16 +372,14 @@ Future<void> reEnrichLocalTracks(
 
   if (!context.mounted || !isActive()) return;
   onComplete();
-
-  ScaffoldMessenger.of(context).clearSnackBars();
-  final summary = lyricsSummary.message(context.l10n, successCount, total);
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(summary)));
+  await resultClosed;
 }
 
 /// Runs a batch against one settings snapshot per phase. Dependencies are
 /// injectable so cancellation, dispatch, and partial failure can be verified
 /// without writing media files or opening dialogs.
 class BatchReEnrichRunner {
+  final Map<String, String> sourceTrackIds;
   final Future<AppSettings> Function() beginPhase;
   final Future<Map<String, dynamic>> Function(Map<String, dynamic>) reEnrich;
   final Future<void> Function({
@@ -377,6 +396,7 @@ class BatchReEnrichRunner {
 
   BatchReEnrichRunner({
     required this.beginPhase,
+    this.sourceTrackIds = const {},
     this.reEnrich = PlatformBridge.reEnrichFile,
     this.writeSidecar = writeReEnrichSidecarLrc,
     this.applyFfmpeg = applyFfmpegReEnrichResult,
@@ -409,10 +429,16 @@ class BatchReEnrichRunner {
             settings: settings,
             updateFields: fields,
             previewOnly: true,
+            sourceTrackId: sourceTrackIds[item.id],
           ),
         );
         final rawMetadata = result['enriched_metadata'];
-        if (result['method'] != 'preview' || rawMetadata is! Map) continue;
+        if (result['method'] != 'preview' || rawMetadata is! Map) {
+          _reEnrichLog.w(
+            'Metadata lookup failed for ${item.id}: ${result['error'] ?? result['method']}',
+          );
+          continue;
+        }
         final metadata = rawMetadata.map(
           (key, value) => MapEntry(key.toString(), value),
         );
@@ -426,7 +452,9 @@ class BatchReEnrichRunner {
             changes: changes,
           ),
         );
-      } catch (_) {
+      } catch (error, stack) {
+        _reEnrichLog.w('Metadata lookup failed for ${item.id}: $error');
+        _reEnrichLog.d('$stack');
         // A failed lookup must not prevent review of other tracks.
       }
     }
@@ -454,6 +482,7 @@ class BatchReEnrichRunner {
             settings: settings,
             updateFields: preview.updateFields,
             resolvedMetadata: preview.enrichedMetadata,
+            sourceTrackId: sourceTrackIds[preview.item.id],
           ),
         );
         switch (result['method']) {
@@ -472,9 +501,17 @@ class BatchReEnrichRunner {
             )) {
               successes++;
               onResult?.call(result);
+            } else {
+              _reEnrichLog.w('Metadata write failed for ${preview.item.id}');
             }
+          default:
+            _reEnrichLog.w(
+              'Re-enrich failed for ${preview.item.id}: ${result['error'] ?? result['method']}',
+            );
         }
-      } catch (_) {
+      } catch (error, stack) {
+        _reEnrichLog.w('Re-enrich failed for ${preview.item.id}: $error');
+        _reEnrichLog.d('$stack');
         // Keep successful files and continue with the rest of the selection.
       }
     }
@@ -545,25 +582,19 @@ Future<void> deleteLibraryTracks(
   );
   if (confirmed != true || !isActive() || !context.mounted) return;
 
-  final historyNotifier = ref.read(downloadHistoryProvider.notifier);
   final messenger = ScaffoldMessenger.of(context);
   final l10n = context.l10n;
+  final deletedPaths = <String>{};
   var deletedCount = 0;
   for (final item in selected) {
     final cleanPath = DownloadedEmbeddedCoverResolver.cleanFilePath(
       item.filePath,
     );
     if (!await deleteFile(cleanPath)) continue;
-    if (item.source == LibraryItemSource.downloaded) {
-      historyNotifier.removeFromHistory(item.historyItem!.id);
-    } else {
-      await LibraryDatabase.instance.deleteByPath(item.filePath);
-    }
+    deletedPaths.add(cleanPath);
     deletedCount++;
   }
-  if (selected.any((item) => item.source == LibraryItemSource.local)) {
-    ref.read(localLibraryProvider.notifier).reloadFromStorage();
-  }
+  await removeDeletedLibraryFileEntries(ref, deletedPaths);
   onComplete();
   messenger.showSnackBar(
     SnackBar(content: Text(l10n.snackbarDeletedTracks(deletedCount))),

@@ -46,6 +46,10 @@ impl DownloadState {
         self.inner.cancel(&item_id).map_err(Into::into)
     }
 
+    pub fn cancel_downloads(&self, item_ids: Vec<String>) -> Result<(), CancellationError> {
+        self.inner.cancel_many(&item_ids).map_err(Into::into)
+    }
+
     pub fn cancel_active_downloads(&self) -> Result<Vec<String>, CancellationError> {
         self.inner.cancel_active().map_err(Into::into)
     }
@@ -54,6 +58,13 @@ impl DownloadState {
         self.inner
             .cancellation
             .reset_if_idle(&item_id)
+            .map_err(Into::into)
+    }
+
+    pub fn reset_download_cancels(&self, item_ids: Vec<String>) -> Result<(), CancellationError> {
+        self.inner
+            .cancellation
+            .reset_many_if_idle(item_ids.iter().map(String::as_str))
             .map_err(Into::into)
     }
 
@@ -116,6 +127,101 @@ impl DownloadState {
 impl Default for DownloadState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cancel_batch_keeps_other_attempts_and_clears_selected_progress() {
+        let state = DownloadState::new();
+        let active = state.acquire("active".into()).unwrap();
+        let keep = state.acquire("keep".into()).unwrap();
+        let anonymous = state.acquire("".into()).unwrap();
+        for id in ["active", "queued", "keep", ""] {
+            state.init_item_progress(id.into()).unwrap();
+        }
+        state
+            .cancel_downloads(vec![
+                "active".into(),
+                "queued".into(),
+                "queued".into(),
+                "".into(),
+            ])
+            .unwrap();
+        assert!(active.is_cancelled().unwrap());
+        assert!(!keep.is_cancelled().unwrap());
+        assert!(!anonymous.is_cancelled().unwrap());
+        assert!(
+            state
+                .acquire("queued".into())
+                .unwrap()
+                .is_cancelled()
+                .unwrap()
+        );
+        let progress: serde_json::Value =
+            serde_json::from_str(&state.all_progress().unwrap()).unwrap();
+        assert_eq!(progress["items"].as_object().unwrap().len(), 1);
+        assert!(progress["items"].get("keep").is_some());
+        state.reset_download_cancels(vec!["active".into()]).unwrap();
+        assert!(active.is_cancelled().unwrap());
+        active.release();
+        assert!(
+            !state
+                .acquire("active".into())
+                .unwrap()
+                .is_cancelled()
+                .unwrap()
+        );
+        state.shutdown();
+        assert!(matches!(
+            state.cancel_downloads(vec!["late".into()]),
+            Err(CancellationError::RegistryClosed)
+        ));
+    }
+
+    #[test]
+    fn cancel_batch_keeps_best_effort_cleanup_when_one_registry_is_closed() {
+        let state = DownloadState::new();
+        state.init_item_progress("a".into()).unwrap();
+        state.inner.cancellation.shutdown();
+        assert!(state.cancel_downloads(vec!["a".into()]).is_err());
+        assert_eq!(state.all_progress().unwrap(), "{\"items\":{}}");
+        let state = DownloadState::new();
+        let active = state.acquire("a".into()).unwrap();
+        state.inner.progress.shutdown();
+        state.cancel_downloads(vec!["a".into()]).unwrap();
+        assert!(active.is_cancelled().unwrap());
+    }
+
+    #[test]
+    fn reset_batch_uses_the_same_download_owner_and_keeps_active_cancelled() {
+        let state = DownloadState::new();
+        let active = state.acquire("active".into()).unwrap();
+        for id in ["active", "idle", "keep"] {
+            state.cancel_download(id.into()).unwrap();
+        }
+        state
+            .reset_download_cancels(vec!["active".into(), "idle".into()])
+            .unwrap();
+        assert!(active.is_cancelled().unwrap());
+        assert!(!state.is_cancelled("idle".into()).unwrap());
+        assert!(state.is_cancelled("keep".into()).unwrap());
+        active.release();
+        assert!(
+            !state
+                .acquire("active".into())
+                .unwrap()
+                .is_cancelled()
+                .unwrap()
+        );
+        state.shutdown();
+        assert!(matches!(
+            state.reset_download_cancels(vec!["keep".into()]),
+            Err(CancellationError::RegistryClosed)
+        ));
     }
 }
 

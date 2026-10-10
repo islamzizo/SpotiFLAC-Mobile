@@ -41,6 +41,118 @@ void main() {
   Future<Map<String, dynamic>> load() =>
       PlatformBridge.getProviderMetadata('example', 'album', 'collection');
 
+  test(
+    'oversized responses are returned and coalesced but not retained',
+    () async {
+      final payload = jsonEncode({'text': 'x' * (3 * 1024 * 1024)});
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls++;
+        return payload;
+      });
+      final results = await Future.wait([load(), load()]);
+      expect(calls, 1);
+      expect((results.first['text'] as String).length, 3 * 1024 * 1024);
+      results.first['text'] = 'changed';
+      expect(results.last['text'], isNot('changed'));
+      expect((await load())['text'], isNot('changed'));
+      expect(calls, 2);
+      await Future<void>.delayed(const Duration(milliseconds: 550));
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('bridge_metadata_lookup_cache_v1');
+      expect(stored == null || jsonDecode(stored) is Map, true);
+      expect(stored ?? '', isNot(contains('collection')));
+    },
+  );
+
+  test('byte budget evicts old collections before the count limit', () async {
+    var calls = 0;
+    final payload = jsonEncode({'text': 'x' * (700 * 1024)});
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls++;
+      return payload;
+    });
+    Future<Map<String, dynamic>> collectionAt(int index) =>
+        PlatformBridge.getProviderMetadata('example', 'album', 'album-$index');
+    for (var index = 0; index < 8; index++) {
+      await collectionAt(index);
+    }
+    expect(calls, 8);
+    await collectionAt(7);
+    expect(calls, 8);
+    await collectionAt(0);
+    expect(calls, 9);
+  });
+
+  test(
+    'persistence keeps small metadata and skips a large collection',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final id = (call.arguments as Map)['resource_id'];
+        return jsonEncode({
+          'text': id == 'large' ? 'x' * (600 * 1024) : 'small',
+        });
+      });
+      await PlatformBridge.getProviderMetadata('example', 'album', 'large');
+      await PlatformBridge.getProviderMetadata('example', 'track', 'small');
+      await Future<void>.delayed(const Duration(milliseconds: 650));
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString('bridge_metadata_lookup_cache_v1')!;
+      expect(utf8.encode(stored).length, lessThanOrEqualTo(2 * 1024 * 1024));
+      expect(jsonDecode(stored), contains('example:track:small'));
+      expect(jsonDecode(stored), isNot(contains('example:album:large')));
+    },
+  );
+
+  test(
+    'persistence skips entries oversized after JSON escaping or UTF-8',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final id = (call.arguments as Map)['resource_id'];
+        return jsonEncode({
+          'text': switch (id) {
+            'escaped' => '\u0000' * 250000,
+            'multibyte' => '音' * 380000,
+            _ => 'small',
+          },
+        });
+      });
+      for (final id in ['escaped', 'multibyte', 'small']) {
+        await PlatformBridge.getProviderMetadata('example', 'album', id);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 750));
+      final prefs = await SharedPreferences.getInstance();
+      final stored =
+          jsonDecode(prefs.getString('bridge_metadata_lookup_cache_v1')!)
+              as Map;
+      expect(stored.keys, ['example:album:small']);
+    },
+  );
+
+  test('persistence bounds the total encoded multibyte payload', () async {
+    messenger.setMockMethodCallHandler(
+      channel,
+      (_) async => jsonEncode({'text': '音' * 250000}),
+    );
+    for (var index = 0; index < 3; index++) {
+      await PlatformBridge.getProviderMetadata('example', 'album', '$index');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 750));
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('bridge_metadata_lookup_cache_v1')!;
+    expect(utf8.encode(raw).length, lessThanOrEqualTo(2 * 1024 * 1024));
+    final stored = jsonDecode(raw) as Map;
+    expect(stored.keys, ['example:album:2', 'example:album:1']);
+    for (final entry in stored.entries) {
+      expect(
+        utf8
+            .encode('${jsonEncode(entry.key)}:${jsonEncode(entry.value)}')
+            .length,
+        lessThanOrEqualTo(1024 * 1024),
+      );
+    }
+  });
+
   void mutate(Map<String, dynamic> value) {
     (value['album_info'] as Map<String, dynamic>)['name'] = 'Changed';
     final first = (value['track_list'] as List).first as Map<String, dynamic>;

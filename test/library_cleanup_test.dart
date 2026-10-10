@@ -6,6 +6,8 @@ import 'package:spotiflac_android/services/library_cleanup.dart';
 import 'package:spotiflac_android/utils/file_access.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'support/sqlite_process_database.dart';
+
 // Records the paging/compare-and-delete contract without requiring a device DB.
 class _CleanupDatabase implements Database, Transaction {
   final rows = <String, Map<String, Object?>>{};
@@ -101,6 +103,69 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+  test(
+    'native pruning reads a detached projection without transferring reference lists',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('native-prune-');
+      addTearDown(() => directory.delete(recursive: true));
+      final databasePath = '${directory.path}/local_library.db';
+      final database = await SqliteProcessDatabase.open(path: databasePath);
+      addTearDown(database.close);
+      await database.execute('CREATE TABLE library (cover_path TEXT)');
+      await database.execute("INSERT INTO library VALUES ('retained.jpg')");
+      final deleted = await pruneUnreferencedLibraryCovers(
+        directory,
+        {'not-transferred'},
+        libraryDatabase: database,
+        temporaryDirectory: directory,
+        requestId: 'scan-lease',
+        minimumAge: const Duration(minutes: 1),
+        nativeJobRunner: (request, {requestId}) async {
+          expect(requestId, 'scan-lease');
+          final snapshotPath = request['library_path'] as String;
+          expect(snapshotPath, isNot(databasePath));
+          expect(snapshotPath, endsWith('/local_library.db'));
+          expect(await File(snapshotPath).exists(), true);
+          expect(request, {
+            'operation': 'cache_prune_library',
+            'directory': directory.absolute.path,
+            'library_path': snapshotPath,
+            'minimum_age_us': 60000000,
+          });
+          return {
+            'deleted': 2,
+            'errors': <String>[],
+            'error_count': 0,
+            'committed': true,
+            'cancelled': true,
+          };
+        },
+      );
+      expect(deleted, 2);
+    },
+  );
+
+  test(
+    'cover cleanup retains recent payloads awaiting a DB reference',
+    () async {
+      final directory = await Directory.systemTemp.createTemp('recent-prune-');
+      addTearDown(() => directory.delete(recursive: true));
+      final active = await File('${directory.path}/active').writeAsBytes([1]);
+      final stale = await File('${directory.path}/stale').writeAsBytes([2]);
+      await stale.setLastModified(DateTime(2020));
+      expect(
+        await pruneUnreferencedLibraryCovers(
+          directory,
+          {},
+          minimumAge: const Duration(minutes: 1),
+        ),
+        1,
+      );
+      expect(await active.exists(), true);
+      expect(await stale.exists(), false);
+    },
+  );
 
   test(
     'cover cleanup preserves references through directory aliases',

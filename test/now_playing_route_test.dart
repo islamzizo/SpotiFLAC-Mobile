@@ -12,7 +12,7 @@ import 'package:spotiflac_android/theme/mornye_theme.dart';
 const _sheet = Key('player-sheet');
 
 class _TestPlayerRoute extends NowPlayingRoute {
-  _TestPlayerRoute({super.miniPlayerGeometry});
+  _TestPlayerRoute({super.miniPlayerGeometry}) : super(child: const SizedBox());
 
   @override
   Widget buildPage(
@@ -170,7 +170,7 @@ void main() {
             ),
           ),
         );
-        final route = NowPlayingRoute();
+        final route = NowPlayingRoute(child: const NowPlayingScreen());
         navigator.currentState!.push(route);
         await tester.pumpAndSettle();
 

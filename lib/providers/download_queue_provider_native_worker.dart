@@ -203,6 +203,11 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
   }
 
   bool _canUseAndroidNativeWorker(AppSettings settings) {
+    // Network publication runs in the shared queue after native tag processing.
+    // Do not let the worker publish a local history row or completion early.
+    if (state.items.any((item) => item.networkDownloadFolder.isNotEmpty)) {
+      return false;
+    }
     if (!Platform.isAndroid || !settings.nativeDownloadWorkerEnabled) {
       return false;
     }
@@ -880,7 +885,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       return null;
     }
 
-    final sourceTrack = await _prepareDownloadSourceTrack(item.track);
+    final sourceTrack = await _metadataResolver.prepareSourceTrack(item.track);
     item = item.copyWith(
       track: await _resolveDownloadAlbumCredit(sourceTrack, settings),
     );
@@ -943,32 +948,40 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
 
     var trackForPayload = item.track;
     final extensionState = ref.read(extensionProvider);
-    final skipMetadataEnrichment = _shouldSkipMetadataEnrichment(
-      extensionState,
-      trackForPayload.source,
-      item.service,
-    );
+    final skipMetadataEnrichment =
+        DownloadMetadataResolver.shouldSkipMetadataEnrichment(
+          extensionState,
+          trackForPayload.source,
+          item.service,
+        );
     String? nativeDeezerTrackId;
     if (skipMetadataEnrichment) {
-      nativeDeezerTrackId = _extractKnownDeezerTrackId(trackForPayload);
+      nativeDeezerTrackId = DownloadMetadataResolver.knownDeezerTrackId(
+        trackForPayload,
+      );
     } else {
-      nativeDeezerTrackId = await _resolveDeezerIdFromKnownOrIsrc(
-        trackForPayload,
-        item.id,
-        lookupContext: 'native worker ISRC',
-      );
-      final providerResolved = await _resolveDeezerIdViaProviderIfNeeded(
-        trackForPayload,
-        nativeDeezerTrackId,
-        item.id,
-      );
+      nativeDeezerTrackId = await _metadataResolver
+          .resolveDeezerIdFromKnownOrIsrc(
+            trackForPayload,
+            item.id,
+            lookupContext: 'native worker ISRC',
+          );
+      final providerResolved = await _metadataResolver
+          .resolveDeezerIdViaProviderIfNeeded(
+            trackForPayload,
+            nativeDeezerTrackId,
+            item.id,
+            extensionState: extensionState,
+          );
       trackForPayload = providerResolved.track;
       nativeDeezerTrackId = providerResolved.deezerTrackId;
     }
 
     final extendedMetadata = skipMetadataEnrichment
         ? null
-        : await _loadExtendedMetadataForDeezerId(nativeDeezerTrackId);
+        : await _metadataResolver.loadExtendedMetadataForDeezerId(
+            nativeDeezerTrackId,
+          );
 
     final payload = _buildDownloadRequestPayload(
       track: trackForPayload,
@@ -1132,6 +1145,12 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
           final errorMsg = (error == null || error.isEmpty)
               ? (resultMap?['error']?.toString() ?? 'Download failed')
               : error;
+          _log.e(
+            'Native worker item $itemId failed '
+            '(service: ${context.item.service}, '
+            'storage: ${context.storageMode}, '
+            'stage: ${resultMap?['failure_stage'] ?? 'unknown'}): $errorMsg',
+          );
           final backendErrorType = resultMap == null
               ? null
               : downloadErrorTypeFromBackend(
@@ -1206,7 +1225,9 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
         .toList(growable: false);
     if (releasableIds.isEmpty) return;
 
-    await flushQueuePersistence();
+    // Restored state is already published here; startup adoption must not
+    // await the public lifecycle gate whose completion depends on adoption.
+    await _queuePersistence.flush();
     if (!workerRunning) {
       for (final itemId in releasableIds) {
         contexts.remove(itemId);
@@ -1236,12 +1257,13 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
 
   Future<void> _completeAndroidNativeWorkerItem(
     _NativeWorkerRequestContext context,
-    Map<String, dynamic> result,
+    Map<String, dynamic> rawResult,
     AppSettings settings,
   ) async {
+    final result = DownloadResult.fromMap(rawResult);
     context = context.withResolvedFolder(result);
     final item = context.item;
-    var filePath = result['file_path'] as String?;
+    var filePath = result.filePath;
     if (filePath == null || filePath.isEmpty) {
       updateItemStatus(
         item.id,
@@ -1253,7 +1275,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       return;
     }
 
-    if (result['native_finalized'] == true) {
+    if (result.nativeFinalized) {
       final nativeFinalizedFilePath = filePath;
       await _saveDownloadedMotionArtwork(ref, item, item.track, result);
       await persistBeforePublishingDownloadCompletion(
@@ -1289,16 +1311,16 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
     }
 
     final rawDecryptFileName =
-        (result['file_name'] as String?) ?? context.safFileName ?? 'track';
-    final decryptOutcome = await _finalizeDecryption(
+        result.fileName ?? context.safFileName ?? 'track';
+    final decryptOutcome = await _fileFinalizer.decrypt(
       result: result,
       filePath: filePath,
-      storageMode: context.storageMode,
-      downloadTreeUri: context.downloadTreeUri,
-      safRelativeDir: context.safRelativeDir ?? '',
+      useSaf: context.storageMode == 'saf',
+      treeUri: context.downloadTreeUri,
+      relativeDir: context.safRelativeDir ?? '',
       baseName: rawDecryptFileName.replaceFirst(RegExp(r'\.[^.]+$'), ''),
-      extFallback: context.outputExt,
-      repairAc4: false,
+      extensionFallback: context.outputExt,
+      repairContainer: false,
       onStart: (strategy) => _log.i(
         'Native-worker encrypted stream detected, decrypting via $strategy...',
       ),
@@ -1314,13 +1336,13 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       return;
     }
     filePath = decryptOutcome.path!;
-    if (decryptOutcome.newFileName != null) {
-      result['file_name'] = decryptOutcome.newFileName;
+    if (decryptOutcome.fileName != null) {
+      result.fileName = decryptOutcome.fileName;
     }
 
     var actualQuality = context.quality;
-    var actualBitDepth = result['actual_bit_depth'] as int?;
-    var actualSampleRate = result['actual_sample_rate'] as int?;
+    var actualBitDepth = result.actualBitDepth;
+    var actualSampleRate = result.actualSampleRate;
     var actualFormat =
         normalizeAudioFormatValue(
           result['audio_codec']?.toString() ?? result['format']?.toString(),
@@ -1341,7 +1363,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
       actualQuality = resolvedQuality;
     }
 
-    final resolvedAlbumArtist = _resolveAlbumArtistForMetadata(
+    final resolvedAlbumArtist = DownloadMetadataResolver.albumArtistForMetadata(
       item.track,
       settings,
     );
@@ -1381,7 +1403,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
     final autoConvertOutcome = await _autoConvertDownloadedFile(
       itemId: item.id,
       filePath: filePath,
-      fileName: result['file_name'] as String? ?? context.safFileName,
+      fileName: result.fileName ?? context.safFileName,
       currentQuality: actualQuality,
       settings: settings,
       track: trackToDownload,
@@ -1394,7 +1416,7 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
     filePath = autoConvertOutcome.filePath;
     actualQuality = autoConvertOutcome.quality;
     if (autoConvertOutcome.fileName != null) {
-      result['file_name'] = autoConvertOutcome.fileName;
+      result.fileName = autoConvertOutcome.fileName;
     }
     if (autoConvertOutcome.converted) {
       actualBitDepth = null;
@@ -1575,6 +1597,9 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
         );
       },
     );
+    // Quality-variant renaming may have changed the path since the scan.
+    _updateAlbumRgFilePath(trackToDownload, completedFilePath);
+    await _checkAndWriteAlbumReplayGain(trackToDownload);
     removeItem(item.id);
   }
 
@@ -1601,8 +1626,6 @@ extension _DownloadQueueNativeWorker on DownloadQueueNotifier {
         return;
       }
       _storeTrackReplayGainForAlbum(track, filePath, rgResult);
-      _updateAlbumRgFilePath(track, filePath);
-      await _checkAndWriteAlbumReplayGain(track);
       _log.d(
         'Native-worker ReplayGain written: gain=${rgResult.trackGain}, peak=${rgResult.trackPeak}',
       );

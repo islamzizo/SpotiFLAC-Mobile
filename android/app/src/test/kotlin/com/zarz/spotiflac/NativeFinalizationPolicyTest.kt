@@ -18,6 +18,8 @@ class NativeFinalizationPolicyTest {
             "Artist A Feat Artist B" to "Artist A",
             "Artist A ft. Artist B" to "Artist A",
             "Artist A featuring Artist B" to "Artist A",
+            "Artist A featured Artist B" to "Artist A",
+            "Artist A feature Artist B" to "Artist A",
             "Artist A with Artist B" to "Artist A",
             "Artist A x Artist B" to "Artist A",
             "Artist A X Artist B" to "Artist A",
@@ -51,6 +53,26 @@ class NativeFinalizationPolicyTest {
         assertEquals(8000L, NativeFinalizationPolicy.durationMilliseconds(0, 8))
         assertEquals(14400000L, NativeFinalizationPolicy.durationMilliseconds(0, 14400))
         assertEquals(0L, NativeFinalizationPolicy.durationMilliseconds(0, -1))
+    }
+
+    @Test
+    fun matchesSharedContainerConversionCases() {
+        val stream = checkNotNull(javaClass.getResourceAsStream("/finalization_container_cases.tsv"))
+        stream.bufferedReader().useLines { lines ->
+            for (line in lines) {
+                if (line.isBlank() || line.startsWith("#")) continue
+                val fields = line.split('\t')
+                assertEquals("invalid shared fixture: $line", 3, fields.size)
+                assertEquals(
+                    line,
+                    fields[2].toBooleanStrict(),
+                    NativeFinalizationPolicy.shouldAttemptLosslessContainerConversion(
+                        forceConversion = fields[0].toBooleanStrict(),
+                        probedCodec = fields[1],
+                    ),
+                )
+            }
+        }
     }
 
     @Test

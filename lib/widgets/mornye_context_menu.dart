@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -30,7 +29,7 @@ Future<T?> showMornyeContextMenu<T>({
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
       transitionDuration: MediaQuery.disableAnimationsOf(context)
           ? Duration.zero
-          : const Duration(milliseconds: 160),
+          : const Duration(milliseconds: 220),
       // Opacity layers isolate a BackdropFilter from the underlying artwork.
       transitionBuilder: (_, _, _, child) => child,
       pageBuilder: (context, animation, _) {
@@ -50,8 +49,15 @@ Future<T?> showMornyeContextMenu<T>({
               ),
             ),
             child: ScaleTransition(
-              alignment: preferAbove ? Alignment.bottomRight : Alignment.center,
-              scale: animation.drive(Tween<double>(begin: 0.96, end: 1)),
+              alignment: preferAbove
+                  ? Alignment.bottomRight
+                  : Alignment.topRight,
+              scale: animation.drive(
+                Tween<double>(
+                  begin: 0.94,
+                  end: 1,
+                ).chain(CurveTween(curve: Curves.easeOutCubic)),
+              ),
               child: themes.wrap(Builder(builder: builder)),
             ),
           ),
@@ -154,67 +160,6 @@ class MornyeMenuAction {
 
 /// One frosted popover, with compact shortcuts and separated action groups.
 class MornyeContextMenu extends StatelessWidget {
-  // Compress bright artwork after blurring it, preserving more backdrop
-  // detail in the midtones than a thick, opaque gray fill would allow.
-  static final _darkBackdrop = ImageFilter.compose(
-    outer: const ColorFilter.matrix([
-      0.22,
-      0,
-      0,
-      0,
-      54,
-      0,
-      0.22,
-      0,
-      0,
-      54,
-      0,
-      0,
-      0.22,
-      0,
-      56,
-      0,
-      0,
-      0,
-      1,
-      0,
-    ]),
-    inner: _frostedBackdrop(1.8),
-  );
-  static final _lightBackdrop = _frostedBackdrop(1);
-
-  static ImageFilter _frostedBackdrop(double brightness) {
-    const saturation = 0.45;
-    const r = 0.2126 * (1 - saturation);
-    const g = 0.7152 * (1 - saturation);
-    const b = 0.0722 * (1 - saturation);
-    return ImageFilter.compose(
-      outer: ColorFilter.matrix([
-        (r + saturation) * brightness,
-        g * brightness,
-        b * brightness,
-        0,
-        0,
-        r * brightness,
-        (g + saturation) * brightness,
-        b * brightness,
-        0,
-        0,
-        r * brightness,
-        g * brightness,
-        (b + saturation) * brightness,
-        0,
-        0,
-        0,
-        0,
-        0,
-        1,
-        0,
-      ]),
-      inner: ImageFilter.blur(sigmaX: 32, sigmaY: 32),
-    );
-  }
-
   const MornyeContextMenu({
     super.key,
     this.quickActions = const [],
@@ -238,7 +183,10 @@ class MornyeContextMenu extends StatelessWidget {
     final shortcuts = quickActions.isEmpty
         ? null
         : Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            padding: EdgeInsets.symmetric(
+              horizontal: 8,
+              vertical: dense ? 4 : 8,
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -248,14 +196,20 @@ class MornyeContextMenu extends StatelessWidget {
             ),
           );
     final actions = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: EdgeInsets.symmetric(vertical: dense ? 4 : 8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           for (var i = 0; i < visibleGroups.length; i++) ...[
             if (i > 0 || quickActions.isNotEmpty)
               Padding(
-                padding: EdgeInsets.symmetric(vertical: i == 0 ? 0 : 8),
+                padding: EdgeInsets.symmetric(
+                  vertical: i == 0
+                      ? 0
+                      : dense
+                      ? 4
+                      : 8,
+                ),
                 child: Divider(
                   height: 0.5,
                   thickness: 0.5,
@@ -274,14 +228,18 @@ class MornyeContextMenu extends StatelessWidget {
     return Theme(
       data: theme,
       child: MornyeGlassPanel.overlay(
-        radius: 28,
-        // Keep one local, clipped backdrop. A second screen-space lens pass
-        // can shift its outline inside an offset/scaled popover on Impeller.
-        // Soften artwork colors and bright lyrics before the neutral tint,
-        // keeping white menu text readable even over a near-white cover.
-        backdropFilter: dark ? _darkBackdrop : _lightBackdrop,
-        tintColor: Colors.white,
-        tintOpacity: dark ? 0.025 : 0.72,
+        radius: dense ? 24 : 28,
+        highlightBorder: true,
+        // Player menus carry the cover's hue. The overlay fill still protects
+        // text contrast over bright artwork at the clear end of the slider.
+        tintColor: theme.extension<MornyeTheme>()?.chromeSurface != null
+            ? null
+            : dark
+            ? const Color(0xff414141)
+            : Colors.white,
+        tintOpacity: dark
+            ? 0.80 - 0.20 * (theme.extension<MornyeTheme>()?.glassClarity ?? 0)
+            : 0.80,
         child: LayoutBuilder(
           builder: (context, constraints) {
             // Let the entire menu scroll when pinning the shortcuts would
@@ -335,19 +293,27 @@ class MornyeContextMenu extends StatelessWidget {
     return Semantics(
       selected: action.selected,
       child: CupertinoButton(
+        minimumSize: const Size(48, 48),
         padding: compact
-            ? const EdgeInsets.symmetric(horizontal: 4, vertical: 10)
-            : EdgeInsets.symmetric(horizontal: 20, vertical: dense ? 10 : 13),
+            ? EdgeInsets.symmetric(horizontal: 4, vertical: dense ? 6 : 10)
+            : EdgeInsets.symmetric(
+                horizontal: dense ? 16 : 20,
+                vertical: dense ? 8 : 13,
+              ),
         onPressed: action.onPressed,
         child: compact
             ? Column(
                 mainAxisSize: MainAxisSize.min,
-                children: [icon, const SizedBox(height: 7), label],
+                children: [
+                  icon,
+                  SizedBox(height: dense ? 4 : 7),
+                  label,
+                ],
               )
             : Row(
                 children: [
                   icon,
-                  const SizedBox(width: 16),
+                  SizedBox(width: dense ? 12 : 16),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,

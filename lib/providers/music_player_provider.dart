@@ -6,8 +6,12 @@ import 'package:spotiflac_android/providers/download_queue_provider.dart';
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/music_player_service.dart';
 
+final musicPlayerRuntimeProvider = Provider<MusicPlayerRuntime>(
+  (ref) => musicPlayerRuntime,
+);
+
 final currentMediaItemProvider = StreamProvider<MediaItem?>((ref) {
-  return musicPlayerMediaItemEvents();
+  return ref.watch(musicPlayerRuntimeProvider).mediaItemEvents();
 });
 
 /// Use the Library's identity for favorites, including restored queues and
@@ -23,7 +27,10 @@ final playerCollectionTrackProvider = FutureProvider.autoDispose
           return UnifiedLibraryItem.fromDownloadHistory(history).toTrack();
         }
       }
-      final database = LibraryDatabase.instance;
+      final database = ref
+          .watch(musicPlayerRuntimeProvider)
+          .dependencies
+          .libraryDatabase;
       final row = await database.getById(item.id);
       if (row != null) {
         return UnifiedLibraryItem.fromLocalLibrary(
@@ -54,7 +61,7 @@ final playerCollectionTrackProvider = FutureProvider.autoDispose
     });
 
 final playbackStateProvider = StreamProvider<PlaybackState>((ref) {
-  return musicPlayerPlaybackStateEvents();
+  return ref.watch(musicPlayerRuntimeProvider).playbackStateEvents();
 });
 
 /// Small derived providers keep position ticks from rebuilding widgets that
@@ -106,19 +113,22 @@ final mediaItemPlaybackUiProvider = Provider.autoDispose
     });
 
 final playQueueProvider = StreamProvider<List<MediaItem>>((ref) {
-  return musicPlayerQueueEvents();
+  return ref.watch(musicPlayerRuntimeProvider).queueEvents();
 });
 
 class MusicPlayerController {
-  const MusicPlayerController();
+  MusicPlayerController({MusicPlayerRuntime? runtime})
+    : _runtime = runtime ?? musicPlayerRuntime;
 
-  MusicPlayerHandler? get _handler => musicPlayerHandler;
+  final MusicPlayerRuntime _runtime;
+
+  MusicPlayerHandler? get _handler => _runtime.handler;
 
   DateTime? get sleepTimerEndsAt => _handler?.sleepTimerEndsAt;
 
   Future<MusicPlayerHandler?> ensureInitialized() async {
     try {
-      return await initMusicPlayer();
+      return await _runtime.initialize();
     } catch (_) {
       return null;
     }
@@ -156,6 +166,32 @@ class MusicPlayerController {
         .toList();
     if (media.isEmpty) return;
     await playAll(media, initialIndex: initialIndex.clamp(0, media.length - 1));
+  }
+
+  Future<({LocalLibraryItem item, List<LocalLibraryItem> tracks})?>
+  localAlbumFor(String mediaId) async {
+    final database = _runtime.dependencies.libraryDatabase;
+    final row = await database.getById(mediaId);
+    if (row == null) return null;
+    final item = LocalLibraryItem.fromJson(row);
+    final rows = await database.getQueueLocalAlbumTracksByKey(item.albumKey);
+    final tracks = rows.map(LocalLibraryItem.fromJson).toList(growable: false);
+    return tracks.isEmpty ? null : (item: item, tracks: tracks);
+  }
+
+  Future<bool> shuffleLibrary() async {
+    final rows = await _runtime.dependencies.libraryDatabase.getAll();
+    final media = rows
+        .map(LocalLibraryItem.fromJson)
+        .where((item) => item.filePath.trim().isNotEmpty)
+        .map(playableFromLocal)
+        .toList();
+    if (media.isEmpty) return false;
+    final handler = await _runtime.initialize();
+    media.shuffle();
+    await handler.setShuffleMode(AudioServiceShuffleMode.all);
+    await handler.setQueueAndPlay(media);
+    return true;
   }
 
   Future<void> play() async => _handler?.play();
@@ -199,6 +235,20 @@ class MusicPlayerController {
   Future<void> addToQueue(PlayableMedia item) async =>
       (await ensureInitialized())?.enqueue(item);
 
+  Future<void> enqueueLibraryItems(
+    List<UnifiedLibraryItem> items, {
+    bool playNext = false,
+  }) async {
+    final media = [
+      for (final item in items)
+        if (item.localItem != null)
+          playableFromLocal(item.localItem!)
+        else if (item.historyItem != null)
+          playableFromHistory(item.historyItem!),
+    ];
+    await (await ensureInitialized())?.enqueueAll(media, playNext: playNext);
+  }
+
   Future<void> playNextHistory(DownloadHistoryItem item) async =>
       playNext(playableFromHistory(item));
 
@@ -221,7 +271,8 @@ class MusicPlayerController {
 }
 
 final musicPlayerControllerProvider = Provider<MusicPlayerController>(
-  (ref) => const MusicPlayerController(),
+  (ref) =>
+      MusicPlayerController(runtime: ref.watch(musicPlayerRuntimeProvider)),
 );
 
 PlayableMedia playableFromHistory(DownloadHistoryItem item) {

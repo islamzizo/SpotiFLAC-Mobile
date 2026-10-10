@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/id3v23_lyrics.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late Directory root;
   setUp(() async {
     root = await Directory.systemTemp.createTemp('id3-lyrics-test-');

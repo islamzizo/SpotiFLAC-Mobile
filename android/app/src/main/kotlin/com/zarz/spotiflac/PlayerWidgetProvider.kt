@@ -30,8 +30,17 @@ import java.util.concurrent.Executors
 
 /** Native launcher rendering; audio remains in the app's shared Flutter engine. */
 class PlayerWidgetProvider : AppWidgetProvider() {
+    override fun onEnabled(context: Context) {
+        PlayerWidgetBridge.installedWidgetsChanged(context)
+    }
+
+    override fun onDisabled(context: Context) {
+        PlayerWidgetBridge.installedWidgetsChanged(context, 0)
+    }
+
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         update(context, ids)
+        PlayerWidgetBridge.installedWidgetsChanged(context)
     }
 
     override fun onAppWidgetOptionsChanged(context: Context, manager: AppWidgetManager, id: Int, options: Bundle) {
@@ -42,6 +51,10 @@ class PlayerWidgetProvider : AppWidgetProvider() {
         val editor = preferences(context).edit()
         ids.forEach { editor.remove("theme_$it").remove("artist_$it") }
         editor.apply()
+        val count = AppWidgetManager.getInstance(context)
+            .getAppWidgetIds(ComponentName(context, PlayerWidgetProvider::class.java))
+            .count { it !in ids }
+        PlayerWidgetBridge.installedWidgetsChanged(context, count)
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -76,6 +89,9 @@ class PlayerWidgetProvider : AppWidgetProvider() {
         const val ACTION = "com.zarz.spotiflac.PLAYER_WIDGET_ACTION"
         const val COMMAND = "player_widget_command"
         fun preferences(context: Context) = context.getSharedPreferences("player_widget", Context.MODE_PRIVATE)
+
+        fun installedCount(context: Context): Int = AppWidgetManager.getInstance(context)
+            .getAppWidgetIds(ComponentName(context, PlayerWidgetProvider::class.java)).size
 
         fun launchIntent(context: Context, command: String): PendingIntent = PendingIntent.getActivity(
             context, 8100 + command.hashCode(),
@@ -205,6 +221,7 @@ object PlayerWidgetBridge : FlutterEngine.EngineLifecycleListener {
                         pendingCommand?.let { command(it) {} }
                         pendingCommand = null
                     }
+                    "getInstalledWidgetCount" -> result.success(PlayerWidgetProvider.installedCount(app))
                     "update" -> {
                         val data = call.arguments as? Map<*, *>
                         if (data == null) { result.error("bad_state", "Missing widget state", null); return@setMethodCallHandler }
@@ -213,14 +230,17 @@ object PlayerWidgetBridge : FlutterEngine.EngineLifecycleListener {
                                 val prefs = PlayerWidgetProvider.preferences(app)
                                 val bytes = data["artwork"] as? ByteArray
                                 val old = JSONObject(prefs.getString("state", "{}")!!)
-                                if (bytes != null && old.optString("artworkKey") != data["artworkKey"]) {
+                                val cover = File(app.filesDir, "player-widget-cover.png")
+                                if (PlayerWidgetProvider.installedCount(app) > 0 && bytes != null &&
+                                    (old.optString("artworkKey") != data["artworkKey"] || !cover.isFile)) {
                                     val temp = File(app.filesDir, "player-widget-cover.tmp")
                                     temp.writeBytes(bytes)
-                                    check(temp.renameTo(File(app.filesDir, "player-widget-cover.png")))
+                                    check(temp.renameTo(cover))
                                 }
                                 val state = JSONObject()
                                 data.forEach { (key, value) -> if (key is String && key != "artwork") state.put(key, value) }
-                                prefs.edit().putString("state", state.toString()).commit()
+                                val serialized = state.toString()
+                                if (serialized != old.toString()) prefs.edit().putString("state", serialized).commit()
                                 PlayerWidgetProvider.update(app)
                                 main.post { result.success(null) }
                             } catch (error: Exception) {
@@ -236,6 +256,12 @@ object PlayerWidgetBridge : FlutterEngine.EngineLifecycleListener {
 
     override fun onPreEngineRestart() {
         ready = false
+    }
+
+    fun installedWidgetsChanged(context: Context, count: Int = PlayerWidgetProvider.installedCount(context)) {
+        main.post {
+            if (ready) channel?.invokeMethod("installedWidgetCountChanged", count)
+        }
     }
 
     override fun onEngineWillDestroy() {

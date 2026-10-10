@@ -81,6 +81,53 @@ void main() {
   });
 
   test(
+    'a temporarily offline SAF cover retries after cooldown without restarting',
+    () async {
+      const source = 'content://example.documents/tree/nas/document/song.flac';
+      var now = DateTime(2026, 10, 3);
+      DownloadedEmbeddedCoverResolver.setValidationClockForTesting(() => now);
+      var extractions = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(backendChannel, (call) async {
+            if (call.method == 'getSafFileModTimes') {
+              return jsonEncode({source: 1234});
+            }
+            expect(call.method, 'extractCoverToFile');
+            extractions++;
+            if (extractions == 1) {
+              return jsonEncode({'error': 'Provider temporarily unavailable'});
+            }
+            final args = call.arguments as Map<Object?, Object?>;
+            await File(args['output_path']! as String).writeAsBytes([4, 5, 6]);
+            return jsonEncode({'success': true});
+          });
+      expect(
+        await DownloadedEmbeddedCoverResolver.resolveOrExtract(source),
+        isNull,
+      );
+      for (var i = 0; i < 5; i++) {
+        expect(
+          await DownloadedEmbeddedCoverResolver.resolveOrExtract(source),
+          isNull,
+        );
+      }
+      expect(extractions, 1);
+      now = now.add(const Duration(seconds: 31));
+      final recovered = await DownloadedEmbeddedCoverResolver.resolveOrExtract(
+        source,
+      );
+      expect(recovered, isNotNull);
+      expect(await File(recovered!).readAsBytes(), [4, 5, 6]);
+      expect(extractions, 2);
+      expect(
+        await DownloadedEmbeddedCoverResolver.resolveOrExtract(source),
+        recovered,
+      );
+      expect(extractions, 2);
+    },
+  );
+
+  test(
     'cold resolve starts extraction and reports the cached preview',
     () async {
       final sourcePath = await createAudioFixture('cold-cache');

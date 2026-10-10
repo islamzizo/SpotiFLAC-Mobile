@@ -142,6 +142,16 @@ impl DownloadState {
         Ok(ids)
     }
 
+    /// The application's bulk cancel/clear operation. Cancellation includes
+    /// queued sentinels; progress cleanup is best effort even during shutdown.
+    pub fn cancel_many(&self, ids: &[String]) -> Result<(), CancellationError> {
+        let cancelled = self
+            .cancellation
+            .cancel_many(ids.iter().map(String::as_str));
+        let _ = self.progress.remove_many(ids.iter().map(String::as_str));
+        cancelled
+    }
+
     pub fn shutdown(&self) {
         self.cancellation.shutdown();
         self.progress.shutdown();

@@ -21,23 +21,39 @@ import org.json.JSONObject
 internal fun createCoreBackend(context: Context): CoreBackend = RustCoreBackend.initialize(context)
 
 internal suspend fun MainActivity.dispatchBackendApplication(call: MethodCall, result: MethodChannel.Result): Boolean {
-    val response = withContext(Dispatchers.IO) {
-        when (call.method) {
-            "getLyricsLRC", "getLyricsLRCWithSource" -> {
-                val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
-                val path = arguments["file_path"] as? String ?: ""
-                readLyricsWithSafCopy(
-                    path,
-                    copyToTemp = { copyUriToTemp(Uri.parse(it))?.let(::File) },
-                    read = { localPath ->
-                        coreBackend.invokeApplication(call.method, arguments + ("file_path" to localPath))
-                    },
-                ) ?: if (call.method == "getLyricsLRC") "" else {
-                    """{"lyrics":"","source":"","sync_type":"","instrumental":false}"""
+    if (call.method == "cancelNativeDataJob") {
+        val args = call.arguments as? Map<*, *>
+        NativeDataJobs.cancel(args?.get("request_id") as? String ?: "")
+        result.success(null)
+        return true
+    }
+    val jobId = if (call.method == "runNativeDataJob") {
+        (call.arguments as? Map<*, *>)?.get("request_id") as? String
+            ?: error("Missing data job ID")
+    } else null
+    val jobLease = jobId?.let { NativeDataJobs.acquire(it) }
+    val response = try {
+        withContext(Dispatchers.IO) {
+            when (call.method) {
+                "runNativeDataJob" -> runNativeDataJobPlatform(call.arguments, checkNotNull(jobLease))
+                "getLyricsLRC", "getLyricsLRCWithSource" -> {
+                    val arguments = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+                    val path = arguments["file_path"] as? String ?: ""
+                    readLyricsWithSafCopy(
+                        path,
+                        copyToTemp = { copyUriToTemp(Uri.parse(it))?.let(::File) },
+                        read = { localPath ->
+                            coreBackend.invokeApplication(call.method, arguments + ("file_path" to localPath))
+                        },
+                    ) ?: if (call.method == "getLyricsLRC") "" else {
+                        """{"lyrics":"","source":"","sync_type":"","instrumental":false}"""
+                    }
                 }
+                else -> coreBackend.invokeApplication(call.method, call.arguments)
             }
-            else -> coreBackend.invokeApplication(call.method, call.arguments)
         }
+    } finally {
+        if (jobLease != null) NativeDataJobs.release(checkNotNull(jobId), jobLease)
     }
     result.success(response)
     return true
@@ -46,7 +62,7 @@ internal suspend fun MainActivity.dispatchBackendApplication(call: MethodCall, r
 internal object RustCoreBackend : CoreBackend {
     override val implementation = "rust"
     override val routesApplication = true
-    private lateinit var root: File
+    private lateinit var workspace: NativeMediaWorkspace
     private var manager: ExtensionManager? = null
     private var repository: ExtensionRepository? = null
     private var requests: CancellationRegistry? = null
@@ -62,7 +78,9 @@ internal object RustCoreBackend : CoreBackend {
 
     @Synchronized
     fun initialize(context: Context): RustCoreBackend {
-        if (!::root.isInitialized) root = File(context.applicationContext.cacheDir, "rust-core-pilot")
+        if (!::workspace.isInitialized) {
+            workspace = NativeMediaWorkspace(context.applicationContext.noBackupFilesDir)
+        }
         return this
     }
 
@@ -103,7 +121,7 @@ internal object RustCoreBackend : CoreBackend {
     private fun setDownloadDirectory(path: String) {
         val current = owner()
         val storage = checkNotNull(identity)
-        val files = File(root, "files")
+        val files = workspace.ensureDirectory()
         val allowed = listOf(files.canonicalPath, files.absolutePath) +
             if (path.isEmpty()) emptyList() else directoryAliases(path, storage.first, storage.second)
         current.environment().use { it.setAllowedDownloadDirectories(allowed.distinct()) }
@@ -117,6 +135,24 @@ internal object RustCoreBackend : CoreBackend {
     @Synchronized
     private fun acquireRequest(id: String): Pair<ExtensionManager, RequestLease> =
         owner() to requestRegistry().acquire(id)
+
+    internal fun runDataJob(request: JSONObject, bytes: ByteArray, lease: RequestLease): String {
+        if (request.optString("operation") != "library_scan_incremental") {
+            return com.spotiflac.backend.runNativeDataJob(request.toString(), bytes, lease)
+        }
+        val folder = request.getString("folder_path")
+        return withLibraryDirectories(listOf(folder)) { current ->
+            val snapshot = request.optString("snapshot_path")
+            val staged = if (snapshot.isEmpty()) null else workspace.createTemporaryFile("library_snapshot_", ".tsv")
+            try {
+                if (staged != null) {
+                    File(snapshot).copyTo(staged, overwrite = true)
+                    request.put("snapshot_path", staged.canonicalPath)
+                }
+                current.runNativeDataJob(request.toString(), bytes, lease)
+            } finally { staged?.delete() }
+        }
+    }
 
     @Synchronized
     private fun repositoryOwner(): ExtensionRepository =
@@ -144,8 +180,7 @@ internal object RustCoreBackend : CoreBackend {
             data,
             MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).toList(),
         )
-        val files = File(root, "files")
-        check(files.mkdirs() || files.isDirectory)
+        val files = workspace.ensureDirectory()
         val rawDirectories = arguments["allowed_directories"]
         require(rawDirectories == null || rawDirectories is List<*>) { "Invalid output directories" }
         val allowedDirectories = listOf(files.canonicalPath, files.absolutePath) +
@@ -305,7 +340,7 @@ internal object RustCoreBackend : CoreBackend {
             // The support directory also contains extension storage. Keep the
             // Rust write inside its existing private staging root, then publish
             // the completed result through the native app's file access.
-            val staged = File.createTempFile("library_scan_", ".ndjson", File(root, "files"))
+            val staged = workspace.createTemporaryFile("library_scan_", ".ndjson")
             try {
                 val count = current.scanLibraryFolderToNdjsonFile(File(folder).canonicalPath, staged.canonicalPath, null)
                 check(staged.renameTo(File(output))) { "Failed to publish library scan output" }
@@ -322,7 +357,7 @@ internal object RustCoreBackend : CoreBackend {
         withLibraryDirectories(listOf(folder)) { current ->
             if (snapshot.isEmpty()) current.scanLibraryFolderIncremental(File(folder).canonicalPath, "{}", null)
             else {
-                val staged = File.createTempFile("library_snapshot_", ".ndjson", File(root, "files"))
+                val staged = workspace.createTemporaryFile("library_snapshot_", ".ndjson")
                 try {
                     File(snapshot).copyTo(staged, overwrite = true)
                     current.scanLibraryFolderIncrementalFromSnapshot(File(folder).canonicalPath, staged.canonicalPath, null)
@@ -362,6 +397,32 @@ internal object RustCoreBackend : CoreBackend {
         }
     }
 
+    override fun scanCueForLibraryWithResolvedAudio(path: String, audioPath: String, audioName: String, virtualPrefix: String, modTime: Long, cacheKey: String): String {
+        val cue = File(path).canonicalFile
+        fun scan(descriptor: Int): String {
+            // Artwork remains optional, as in the filesystem CUE scanner.
+            // A cover extraction failure must not discard valid CUE rows.
+            val coverPath = try {
+                JSONObject(readAudioMetadata("/proc/self/fd/$descriptor", audioName, cacheKey)).optString("coverPath", "")
+            } catch (error: Exception) {
+                if (error is java.util.concurrent.CancellationException) throw error
+                android.util.Log.w("SpotiFLAC", "Could not read CUE artwork", error)
+                ""
+            }
+            return withLibraryDirectories(listOf(requireNotNull(cue.parent))) {
+                it.scanCueFileForLibraryFromDescriptor(
+                    cue.path, descriptor, audioName, virtualPrefix, modTime,
+                    coverPath, java.time.Instant.now().toString(), null,
+                )
+            }
+        }
+        val descriptor = audioPath.removePrefix("/proc/self/fd/").toIntOrNull()
+        if (audioPath.startsWith("/proc/self/fd/") && descriptor != null) return scan(descriptor)
+        return android.os.ParcelFileDescriptor.open(File(audioPath), android.os.ParcelFileDescriptor.MODE_READ_ONLY).use {
+            scan(it.fd)
+        }
+    }
+
     override fun editFileMetadata(path: String, metadataJson: String): String {
         val cover = if (metadataJson.trim() == "null") "" else JSONObject(metadataJson).optString("cover_path", "")
         return withMediaFiles(listOf(path, cover)) {
@@ -385,7 +446,23 @@ internal object RustCoreBackend : CoreBackend {
     override fun rewriteSplitArtistTags(path: String, artist: String, albumArtist: String): String =
         withMediaFiles(listOf(path)) { it.rewriteSplitArtistTags(mediaPath(path), artist, albumArtist, null) }
 
-    override fun extractCoverToFile(audioPath: String, outputPath: String) {
+    override fun extractCoverToFile(audioPath: String, outputPath: String, hint: String) {
+        val descriptor = if (audioPath.startsWith("/proc/self/fd/")) {
+            audioPath.removePrefix("/proc/self/fd/").toIntOrNull()
+        } else null
+        if (descriptor != null) {
+            val result = com.spotiflac.backend.readLibraryMetadataFromDescriptor(
+                descriptor, hint, java.time.Instant.now().toString(), true, null,
+            )
+            check(result.coverBytes.isNotEmpty()) { "No embedded artwork" }
+            val output = File(outputPath)
+            val staged = File.createTempFile("cover_", ".tmp", output.parentFile)
+            try {
+                staged.writeBytes(result.coverBytes)
+                check(staged.renameTo(output)) { "Could not publish artwork" }
+            } finally { staged.delete() }
+            return
+        }
         withMediaFiles(listOf(audioPath, outputPath)) {
             it.extractCoverToFile(mediaPath(audioPath), mediaPath(outputPath), null)
         }
@@ -436,7 +513,7 @@ internal object RustCoreBackend : CoreBackend {
         suffix: String,
     ): File {
         owner()
-        return File.createTempFile(prefix, suffix, File(root, "files"))
+        return workspace.createTemporaryFile(prefix, suffix)
     }
 
     override fun openExtensionExecution(): CoreExtensionExecution {
@@ -541,7 +618,7 @@ internal object RustCoreBackend : CoreBackend {
             string("spotify_id"),
             string("track_name"),
             string("artist_name"),
-            string(fileKey),
+            mediaPath(string(fileKey)),
             (args["duration_ms"] as? Number)?.toLong() ?: 0L,
         )
         fun ids(raw: String): List<String> {
@@ -549,6 +626,10 @@ internal object RustCoreBackend : CoreBackend {
             return (0 until values.length()).map { values.getString(it) }
         }
         when (method) {
+            "cancelNativeDataJob" -> {
+                NativeDataJobs.cancel(string("request_id"))
+                return null
+            }
             "cancelExtensionRequest" -> synchronized(this) {
                 requestRegistry().cancel(string("request_id"))
                 return null
@@ -708,7 +789,10 @@ internal object RustCoreBackend : CoreBackend {
                 current.updateSettings(string("extension_id"), string("settings", "{}"))
                 null
             }
-            "invokeExtensionAction" -> current.invokeAction(string("extension_id"), string("action"))
+            "invokeExtensionAction" -> if (args.containsKey("arguments_json")) {
+                // Transient form input bypasses persistent extension settings.
+                current.call(string("extension_id"), string("action"), string("arguments_json", "[]"), null, 120_000uL)
+            } else current.invokeAction(string("extension_id"), string("action"))
             "checkExtensionHealth" -> current.checkExtensionHealthJson(string("extension_id"))
             "setProviderPriority", "setMetadataProviderPriority" -> {
                 current.setProviderPriority(if (method == "setProviderPriority") "download" else "metadata", ids(string("priority", "[]")))
@@ -796,6 +880,17 @@ internal object RustCoreBackend : CoreBackend {
                 environment.downloadState().use { state -> state.allProgress() }
             }
             "cleanupConnections" -> current.environment().use { it.cleanupConnections(); null }
+            "resetDownloadCancels", "cancelDownloads" -> {
+                val values = args["item_ids"] as? List<*> ?: error("Expected item_ids list")
+                val itemIds = values.map { it as? String ?: error("Expected string item ID") }
+                current.environment().use { environment ->
+                    environment.downloadState().use { state ->
+                        if (method == "cancelDownloads") state.cancelDownloads(itemIds)
+                        else state.resetDownloadCancels(itemIds)
+                    }
+                }
+                null
+            }
             "clearItemProgress", "cancelDownload", "resetDownloadCancel" -> current.environment().use { environment ->
                 environment.downloadState().use { state ->
                     when (method) {
@@ -806,16 +901,19 @@ internal object RustCoreBackend : CoreBackend {
                     null
                 }
             }
-            "getLyricsLRC" -> current.getLyricsLrc(lyricsRequest("file_path"), null)
-            "getLyricsLRCWithSource" -> current.getLyricsLrcWithSource(lyricsRequest("file_path"), null)
-            "embedLyricsToFile" -> current.embedLyricsToFile(
-                string("file_path"),
-                string("lyrics"),
-                null,
-            )
+            "getLyricsLRC", "getLyricsLRCWithSource" -> withMediaFiles(listOf(string("file_path"))) {
+                val request = lyricsRequest("file_path")
+                if (method == "getLyricsLRC") it.getLyricsLrc(request, null)
+                else it.getLyricsLrcWithSource(request, null)
+            }
+            "embedLyricsToFile" -> withMediaFiles(listOf(string("file_path"))) {
+                it.embedLyricsToFile(mediaPath(string("file_path")), string("lyrics"), null)
+            }
             "fetchAndSaveLyrics" -> try {
-                current.fetchAndSaveLyrics(lyricsRequest("audio_file_path"), string("output_path"), null)
-                """{"success":true}"""
+                withMediaFiles(listOf(string("audio_file_path"), string("output_path"))) {
+                    it.fetchAndSaveLyrics(lyricsRequest("audio_file_path"), mediaPath(string("output_path")), null)
+                    """{"success":true}"""
+                }
             } catch (error: Exception) {
                 JSONObject().put("success", false).put("error", error.message ?: "Lyrics operation failed").toString()
             }

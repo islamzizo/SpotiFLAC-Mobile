@@ -5,129 +5,125 @@ import 'dart:math';
 import 'package:audio_service/audio_service.dart';
 import 'package:flutter/services.dart';
 import 'package:spotiflac_android/services/playback_notification.dart';
-import 'package:spotiflac_android/services/player_widget_service.dart';
 import 'package:audio_session/audio_session.dart'
-    show AudioSession, AudioSessionConfiguration, AudioInterruptionType;
+    show
+        AudioDevice,
+        AudioSession,
+        AudioSessionConfiguration,
+        AudioInterruptionType;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:spotiflac_android/services/app_state_database.dart';
+import 'package:spotiflac_android/services/listening_statistics.dart'
+    show ListeningTrack;
 import 'package:spotiflac_android/services/library_database.dart';
 import 'package:spotiflac_android/services/sqlite_helpers.dart'
     show normalizeLookupText;
 import 'package:spotiflac_android/services/platform_bridge.dart';
 import 'package:spotiflac_android/services/playback_normalization.dart';
+import 'package:spotiflac_android/services/playback_automation.dart';
+import 'package:spotiflac_android/services/playback_session_writer.dart';
+import 'package:spotiflac_android/services/content_uri_playback_cache.dart';
+import 'package:spotiflac_android/services/music_player_runtime.dart';
 import 'package:spotiflac_android/services/music_playback_deck.dart';
 import 'package:spotiflac_android/services/automix_analysis.dart';
 import 'package:spotiflac_android/services/automix_analyzer.dart';
+import 'package:spotiflac_android/models/automix_options.dart';
+import 'package:spotiflac_android/models/settings.dart';
+import 'package:spotiflac_android/services/automix_effect_renderer.dart';
+import 'package:spotiflac_android/services/automix_status.dart';
 import 'package:spotiflac_android/utils/int_utils.dart';
 import 'package:spotiflac_android/utils/ios_container_paths.dart';
 import 'package:spotiflac_android/utils/playback_artwork.dart';
+import 'package:spotiflac_android/services/downloaded_embedded_cover_resolver.dart';
 import 'package:spotiflac_android/utils/logger.dart';
 import 'package:spotiflac_android/utils/string_utils.dart';
+
+export 'music_player_runtime.dart';
+export 'playback_metadata.dart';
 
 part 'music_player_automix.dart';
 part 'music_player_autoplay.dart';
 
 final _log = AppLogger('MusicPlayer');
 
-String _playbackUnknownTitle = 'Unknown title';
-String _playbackUnknownArtist = 'Unknown artist';
-
-void updateMusicPlayerStrings({
-  required String unknownTitle,
-  required String unknownArtist,
-}) {
-  _playbackUnknownTitle = unknownTitle;
-  _playbackUnknownArtist = unknownArtist;
-}
-
-bool _playbackNormalizationEnabled = false;
-bool _autoMixEnabled = false;
-bool _usbBitPerfectEnabled = false;
-bool _usbDirectEnabled = false;
-bool _usbDopEnabled = false;
-bool _usbAllowFixedVolume = false;
-bool _dapExclusiveEnabled = false;
-MusicPlayerHandler? _activeMusicPlayerHandler;
-PlaybackNotification _notificationPresentation = const PlaybackNotification();
-Future<void> Function(MediaItem)? _toggleNotificationFavorite;
-const _notificationChannel = MethodChannel(
-  'com.zarz.spotiflac/playback_notification',
-);
-
 void configurePlaybackNotification({
   required PlaybackNotification presentation,
-  required Future<void> Function(MediaItem) toggleFavorite,
-}) {
-  _notificationPresentation = presentation;
-  _toggleNotificationFavorite = toggleFavorite;
-  _activeMusicPlayerHandler?._refreshNotificationControls();
-  if (Platform.isIOS) {
-    _notificationChannel.setMethodCallHandler((call) async {
-      if (call.method == 'favorite') {
-        await _activeMusicPlayerHandler?.customAction(
-          PlaybackNotification.favoriteAction,
-        );
-      }
-    });
-    unawaited(_publishIosNotificationFavorite());
-  }
-}
+  required Future<bool> Function(MediaItem) toggleFavorite,
+}) => musicPlayerRuntime.configureNotification(
+  presentation: presentation,
+  toggleFavorite: toggleFavorite,
+);
 
-Future<void> _publishIosNotificationFavorite() async {
+/// Decorative video plugins share AVAudioSession with the music player and
+/// may enable mixing while creating a muted cover. Restore music ownership
+/// without activating a session when this app is not playing music.
+Future<void> restoreMusicAudioSessionAfterVideo() async {
+  if (!musicPlayerRuntime.dependencies.isIOS) return;
+  final handler = musicPlayerRuntime.handler;
+  if (handler == null || handler.mediaItem.value == null) return;
   try {
-    await _notificationChannel.invokeMethod<void>('update', {
-      'enabled':
-          _notificationPresentation.mornye &&
-          _notificationPresentation.mediaId != null,
-      'loved': _notificationPresentation.loved,
-      'label': _notificationPresentation.favoriteLabel,
-    });
-  } on MissingPluginException {
-    // Unit tests do not install the iOS remote-command bridge.
-  } on PlatformException catch (error) {
-    _log.w('Could not update the system favorite action: ${error.code}');
+    final session = await musicPlayerRuntime.dependencies.audioSession();
+    await session.configure(const AudioSessionConfiguration.music());
+  } catch (error) {
+    _log.w('Could not restore music audio session after video: $error');
   }
 }
 
 /// Enables/disables ReplayGain volume normalization and re-applies it to the
 /// track currently playing.
-void setPlaybackNormalizationEnabled(bool enabled) {
-  if (_playbackNormalizationEnabled == enabled) return;
-  _playbackNormalizationEnabled = enabled;
-  _activeMusicPlayerHandler?.reapplyNormalization();
-}
+void setPlaybackNormalizationEnabled(bool enabled) =>
+    musicPlayerRuntime.configure(
+      musicPlayerRuntime.settings.copyWith(playbackNormalization: enabled),
+    );
 
-void setAutoMixEnabled(bool enabled) {
-  if (_autoMixEnabled == enabled) return;
-  _autoMixEnabled = enabled;
-  final handler = _activeMusicPlayerHandler;
-  if (handler != null) unawaited(handler._autoMix.cancel());
-}
+void setPlaybackAutomationOptions({
+  required bool enabled,
+  required bool pauseOnMute,
+  required bool playOnHeadphonesConnected,
+}) => musicPlayerRuntime.configure(
+  musicPlayerRuntime.settings.copyWith(
+    playerMode: enabled ? 'internal' : 'external',
+    pauseOnMute: pauseOnMute,
+    playOnHeadphonesConnected: playOnHeadphonesConnected,
+  ),
+);
 
-void setUsbBitPerfectEnabled(bool enabled) {
-  if (_usbBitPerfectEnabled == enabled) return;
-  _usbBitPerfectEnabled = enabled;
-  final handler = _activeMusicPlayerHandler;
-  if (handler != null) unawaited(handler._autoMix.cancel());
-  // Apply at the next source boundary; never raise a playing track's volume.
-}
+void setAutoMixEnabled(bool enabled) => musicPlayerRuntime.configure(
+  musicPlayerRuntime.settings.copyWith(autoMix: enabled),
+);
+
+void setAutoMixOptions(AutoMixOptions options) => musicPlayerRuntime.configure(
+  musicPlayerRuntime.settings.copyWith(
+    autoMixDuration: options.durationSeconds,
+    autoMixEffect: options.effect,
+    autoMixSpeed: options.speed,
+    autoMixPitch: options.pitchSemitones,
+    autoMixEcho: options.echo,
+    autoMixLowPass: options.lowPass,
+  ),
+);
+
+void setUsbBitPerfectEnabled(bool enabled) => musicPlayerRuntime.configure(
+  musicPlayerRuntime.settings.copyWith(usbBitPerfect: enabled),
+);
 
 void setUsbOutputOptions({
   required bool direct,
   required bool allowDop,
   bool allowFixedVolume = false,
   bool dapExclusive = false,
-}) {
-  _usbDirectEnabled = direct;
-  _usbDopEnabled = allowDop;
-  _usbAllowFixedVolume = allowFixedVolume;
-  _dapExclusiveEnabled = dapExclusive;
-}
+}) => musicPlayerRuntime.configure(
+  musicPlayerRuntime.settings.copyWith(
+    usbDirect: direct,
+    usbDsdOverPcm: allowDop,
+    usbAllowFixedVolume: allowFixedVolume,
+    dapExclusive: dapExclusive,
+  ),
+);
 
 /// Refreshes gain tags after a successful file update, including SAF copies.
 void refreshPlaybackNormalization(String source) {
-  final handler = _activeMusicPlayerHandler;
+  final handler = musicPlayerRuntime.handler;
   if (handler != null) unawaited(handler._refreshNormalizationSource(source));
 }
 
@@ -162,6 +158,7 @@ class PlayableMedia {
   final String artist;
   final String album;
   final String? artUri;
+  final String? networkArtworkSource;
   final Duration? duration;
   final int? bitDepth;
   final int? sampleRate;
@@ -178,6 +175,7 @@ class PlayableMedia {
     required this.artist,
     this.album = '',
     this.artUri,
+    this.networkArtworkSource,
     this.duration,
     this.bitDepth,
     this.sampleRate,
@@ -189,6 +187,8 @@ class PlayableMedia {
   });
 
   bool get isContentUri => source.startsWith('content://');
+  bool get isNetwork =>
+      const {'network', 'http', 'https'}.contains(Uri.tryParse(source)?.scheme);
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -196,7 +196,10 @@ class PlayableMedia {
     'title': title,
     'artist': artist,
     'album': album,
-    if (artUri != null && artUri!.isNotEmpty) 'artUri': artUri,
+    if (artUri != null && artUri!.isNotEmpty && networkArtworkSource == null)
+      'artUri': artUri,
+    if (networkArtworkSource != null)
+      'networkArtworkSource': networkArtworkSource,
     if (duration != null) 'durationMs': duration!.inMilliseconds,
     if (bitDepth != null && bitDepth! > 0) 'bitDepth': bitDepth,
     if (sampleRate != null && sampleRate! > 0) 'sampleRate': sampleRate,
@@ -237,6 +240,7 @@ class PlayableMedia {
       artist: json['artist'] as String? ?? '',
       album: json['album'] as String? ?? '',
       artUri: artwork,
+      networkArtworkSource: json['networkArtworkSource'] as String?,
       duration: (durationMs != null && durationMs > 0)
           ? Duration(milliseconds: durationMs)
           : null,
@@ -250,15 +254,25 @@ class PlayableMedia {
     );
   }
 
-  MediaItem toMediaItem({String? resolvedSource}) {
+  MediaItem toMediaItem({
+    String? resolvedSource,
+    String? resolvedArtwork,
+    String? unknownTitle,
+    String? unknownArtist,
+  }) {
+    final artwork = resolvedArtwork ?? artUri;
     return MediaItem(
       id: id,
-      title: title.isEmpty ? _playbackUnknownTitle : title,
-      artist: artist.isEmpty ? _playbackUnknownArtist : artist,
+      title: title.isEmpty
+          ? unknownTitle ?? musicPlayerRuntime.unknownTitle
+          : title,
+      artist: artist.isEmpty
+          ? unknownArtist ?? musicPlayerRuntime.unknownArtist
+          : artist,
       album: album.isEmpty ? null : album,
       duration: duration,
-      artUri: (artUri != null && artUri!.isNotEmpty)
-          ? Uri.tryParse(artUri!)
+      artUri: (artwork != null && artwork.isNotEmpty)
+          ? Uri.tryParse(artwork)
           : null,
       extras: {
         'source': source,
@@ -276,93 +290,6 @@ class PlayableMedia {
   }
 }
 
-/// Technical audio metadata carried with a queue item. This is available
-/// immediately when tracks change, before a fresh file probe completes.
-Map<String, dynamic> playbackAudioMetadataFromMediaItem(MediaItem item) {
-  final extras = item.extras;
-  if (extras == null || extras.isEmpty) return const {};
-
-  final metadata = <String, dynamic>{};
-  final bitDepth = readPositiveInt(extras['bit_depth']);
-  final sampleRate = readPositiveInt(extras['sample_rate']);
-  final bitrate = readPositiveInt(extras['bitrate']);
-  final format = extras['format']?.toString().trim();
-  final explicit = parseExplicitFlag(extras['explicit']);
-  if (bitDepth != null) metadata['bit_depth'] = bitDepth;
-  if (sampleRate != null) metadata['sample_rate'] = sampleRate;
-  if (bitrate != null) metadata['bitrate'] = bitrate;
-  if (format != null && format.isNotEmpty) metadata['format'] = format;
-  if (explicit != null) metadata['explicit'] = explicit;
-  return metadata;
-}
-
-/// Combines the immediate queue metadata with the richer file probe while
-/// retaining known quality fields when a decoder omits or reports them as 0.
-Map<String, dynamic> mergePlaybackFileMetadata(
-  Map<String, dynamic> fallback,
-  Map<String, dynamic> probed,
-) {
-  final merged = <String, dynamic>{...fallback, ...probed};
-  for (final key in const ['bit_depth', 'sample_rate', 'bitrate']) {
-    if (readPositiveInt(probed[key]) == null &&
-        readPositiveInt(fallback[key]) != null) {
-      merged[key] = fallback[key];
-    }
-  }
-  final probedFormat = probed['format']?.toString().trim();
-  final fallbackFormat = fallback['format']?.toString().trim();
-  if ((probedFormat == null || probedFormat.isEmpty) &&
-      fallbackFormat != null &&
-      fallbackFormat.isNotEmpty) {
-    merged['format'] = fallbackFormat;
-  }
-  return merged;
-}
-
-typedef PlaybackMetadataReader =
-    Future<Map<String, dynamic>> Function(String path);
-
-/// Reads playback metadata with a small bounded retry window for transient
-/// cold-start/native bridge failures.
-///
-/// The native bridge reports some read failures as an `error` field instead
-/// of throwing. Treat both forms identically so Now Playing does not cache an
-/// empty Lyrics view until the route is reopened. A successful response with
-/// no lyrics is still final and is never retried.
-Future<Map<String, dynamic>> readPlaybackFileMetadataWithRetry(
-  String path, {
-  PlaybackMetadataReader? reader,
-  List<Duration> retryDelays = const [
-    Duration.zero,
-    Duration(milliseconds: 250),
-    Duration(milliseconds: 750),
-  ],
-}) async {
-  final read = reader ?? PlatformBridge.readFileMetadata;
-  final delays = retryDelays.isEmpty ? const [Duration.zero] : retryDelays;
-  Object? lastError;
-  var lastStack = StackTrace.current;
-
-  for (final delay in delays) {
-    if (delay > Duration.zero) await Future<void>.delayed(delay);
-    try {
-      final metadata = await read(path);
-      final reportedError = metadata['error']?.toString().trim() ?? '';
-      if (reportedError.isEmpty) return metadata;
-      lastError = StateError(reportedError);
-      lastStack = StackTrace.current;
-    } catch (error, stack) {
-      lastError = error;
-      lastStack = stack;
-    }
-  }
-
-  Error.throwWithStackTrace(
-    lastError ?? StateError('Metadata reader returned no result'),
-    lastStack,
-  );
-}
-
 /// Returns a safe source-start position for restored playback. A completed
 /// snapshot starts over instead of immediately completing again on resume.
 Duration normalizedPlaybackResumePosition(
@@ -378,7 +305,10 @@ Duration normalizedPlaybackResumePosition(
 
 class MusicPlayerHandler extends BaseAudioHandler
     with QueueHandler, SeekHandler {
-  MusicPlaybackDeck _player = MusicPlaybackDeck(playerId: 'music-player');
+  final MusicPlayerRuntime _runtime;
+  PlaybackDependencies get _dependencies => _runtime.dependencies;
+  AppSettings get _settings => _runtime.settings;
+  late MusicPlaybackDeck _player;
   late final _MusicAutoMix _autoMix;
   late final _MusicAutoplay _autoplay;
   bool _completing = false;
@@ -386,23 +316,26 @@ class MusicPlayerHandler extends BaseAudioHandler
   final _playerSubscriptions =
       <MusicPlaybackDeck, List<StreamSubscription<dynamic>>>{};
   AudioSession? _audioSession;
+  late final PlaybackAutomation _playbackAutomation;
+  StreamSubscription<double>? _automationVolumeSubscription;
+  StreamSubscription<Set<AudioDevice>>? _automationDevicesSubscription;
+  bool _headphoneMonitoringRequested = false;
+  int _headphoneMonitoringRevision = 0;
   final List<PlayableMedia> _media = [];
   final List<MediaItem> _queueItems = [];
-  final Map<String, String> _resolvedPathCache = {};
-  final Map<String, int> _resolvedPathSizes = {};
-  final Map<String, Future<String?>> _pendingSourceResolutions = {};
-  final List<String> _resolvedPathOrder = [];
-  final Set<String> _pendingResolvedPathDeletes = {};
+  late final ContentUriPlaybackCache _sourceCache;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   int _index = -1;
   int _playRequestGeneration = 0;
   String? _activeResolvedPath;
   bool _disposed = false;
+  Future<void>? _disposeFuture;
   bool _initialized = false;
   bool _sourceReady = false;
   Future<void>? _activePlayOperation;
   Future<void> _sourceChangeTail = Future<void>.value();
   Timer? _sleepTimer;
+  Timer? _listeningTimer;
   DateTime? _sleepTimerEndsAt;
 
   bool _shuffle = false;
@@ -423,38 +356,162 @@ class MusicPlayerHandler extends BaseAudioHandler
   Duration _lastBroadcastPosition = Duration.zero;
   DateTime? _lastPositionBroadcastAt;
   DateTime? _lastPeriodicPersistAt;
-  Future<void> _sessionWriteTail = Future<void>.value();
-  int _sessionQueueRevision = 0;
-  int _scheduledSessionQueueRevision = -1;
-  int _persistedSessionQueueRevision = -1;
+  late final PlaybackSessionWriter _sessionWriter;
+  int get _sessionQueueRevision => _sessionWriter.queueRevision;
   static const Duration _positionBroadcastInterval = Duration(
     milliseconds: 500,
   );
   static const Duration _positionPersistInterval = Duration(seconds: 10);
-  static const int _maxResolvedPathCacheEntries = 3;
-  static const int _maxResolvedPathCacheBytes = 256 * 1024 * 1024;
 
   DateTime? get sleepTimerEndsAt => _sleepTimerEndsAt;
+  bool get isDisposed => _disposed;
+
+  /// Reconcile only the playback fields affected by the new settings snapshot.
+  void applySettings(AppSettings previous) {
+    final settings = _settings;
+    if (previous.playbackNormalization != settings.playbackNormalization) {
+      reapplyNormalization();
+    }
+    if (previous.autoMix != settings.autoMix ||
+        previous.autoMixOptions != settings.autoMixOptions ||
+        previous.usbBitPerfect != settings.usbBitPerfect) {
+      unawaited(_autoMix.cancel());
+    }
+    // USB changes apply at the next source boundary, without raising volume.
+    if ((previous.playerMode == 'internal') !=
+            (settings.playerMode == 'internal') ||
+        previous.pauseOnMute != settings.pauseOnMute ||
+        previous.playOnHeadphonesConnected !=
+            settings.playOnHeadphonesConnected ||
+        previous.usbBitPerfect != settings.usbBitPerfect) {
+      _refreshPlaybackAutomation();
+    }
+    if (previous.autoplay != settings.autoplay ||
+        previous.localLibraryEnabled != settings.localLibraryEnabled) {
+      _autoplay.updateMode();
+    }
+  }
 
   MusicPlayerHandler({
+    MusicPlayerRuntime? runtime,
     AutoMixAnalyzer? autoMixAnalyzer,
+    AutoMixEffectRenderer? autoMixEffectRenderer,
     AutoplayLibraryLoader? autoplayLibraryLoader,
-  }) {
-    _autoMix = _MusicAutoMix(this, autoMixAnalyzer ?? AutoMixAnalyzer());
+  }) : _runtime = runtime ?? musicPlayerRuntime {
+    _sourceCache = ContentUriPlaybackCache(
+      copy: PlatformBridge.copyContentUriToTemp,
+      isDisposed: () => _disposed,
+      isPinned: (path) =>
+          path == _activeResolvedPath || _autoMix.pinnedPaths.contains(path),
+      onResolveError: (error) =>
+          _log.e('Failed to resolve content URI for playback: $error'),
+      onDeleteError: (error) =>
+          _log.w('Failed to delete SAF playback temp file: $error'),
+    );
+    _sessionWriter = PlaybackSessionWriter(
+      database: _dependencies.sessionDatabase,
+      onError: (error) =>
+          _log.w('Failed to update persisted playback session: $error'),
+    );
+    _player = _dependencies.createDeck('music-player');
+    _normalizationCache = PlaybackNormalizationCache(
+      readMetadata: _dependencies.readMetadata,
+      onReadError: (error) =>
+          _log.w('Failed to read gain tags for normalization: $error'),
+    );
+    _playbackAutomation = PlaybackAutomation(
+      isPlaying: () =>
+          _player.state == PlayerState.playing || playbackState.value.playing,
+      canResume: () =>
+          !_disposed &&
+          !_interruptionActive &&
+          _index >= 0 &&
+          _index < _media.length,
+      pause: _pausePlayback,
+      play: play,
+      onError: (error) => _log.w('Automatic playback failed: $error'),
+      onMutedPause: _runtime.notifyMutedPlayback,
+    );
+    _autoMix = _MusicAutoMix(
+      this,
+      autoMixAnalyzer ?? AutoMixAnalyzer(),
+      autoMixEffectRenderer ?? AutoMixEffectRenderer(),
+    );
     _autoplay = _MusicAutoplay(
       this,
-      autoplayLibraryLoader ?? _loadAutoplayLibrary,
+      autoplayLibraryLoader ?? (seed) => _loadAutoplayLibrary(seed, _runtime),
     );
-    _activeMusicPlayerHandler = this;
-    _init();
+    try {
+      _init();
+      _runtime.attach(this);
+    } catch (_) {
+      unawaited(dispose());
+      rethrow;
+    }
   }
+
+  MediaItem _toMediaItem(
+    PlayableMedia media, {
+    String? resolvedSource,
+    String? resolvedArtwork,
+  }) => media.toMediaItem(
+    resolvedSource: resolvedSource,
+    resolvedArtwork: resolvedArtwork,
+    unknownTitle: _runtime.unknownTitle,
+    unknownArtist: _runtime.unknownArtist,
+  );
 
   void _init() {
     if (_initialized) return;
     _initialized = true;
+    void recordListening() {
+      final item = mediaItem.value;
+      final state = playbackState.value;
+      _dependencies.recorder.update(
+        item == null
+            ? null
+            : ListeningTrack(
+                key: item.extras?['source']?.toString() ?? item.id,
+                title: item.title,
+                artist: item.artist ?? '',
+                album: item.album ?? '',
+                artwork: item.artUri?.toString(),
+              ),
+        playing:
+            state.playing &&
+            state.processingState == AudioProcessingState.ready,
+        ended:
+            state.processingState == AudioProcessingState.completed ||
+            state.processingState == AudioProcessingState.idle,
+      );
+    }
+
+    _subscriptions.add(mediaItem.listen((_) => recordListening()));
+    _subscriptions.add(
+      playbackState
+          .map(
+            (state) => (
+              state.playing &&
+                  state.processingState == AudioProcessingState.ready,
+              state.processingState == AudioProcessingState.completed ||
+                  state.processingState == AudioProcessingState.idle,
+            ),
+          )
+          .distinct()
+          .listen((_) => recordListening()),
+    );
+    _subscriptions.add(
+      playbackState.map((state) => state.playing).distinct().listen((playing) {
+        if (playing) unawaited(_playbackAutomation.playbackStarted());
+      }),
+    );
+    _listeningTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      unawaited(_dependencies.recorder.flush());
+    });
     _player.setReleaseMode(ReleaseMode.stop);
     unawaited(_player.setAudioContext(_musicAudioContext));
     unawaited(_configureAudioSession());
+    _refreshPlaybackAutomation();
 
     _listenToPlayer(_player);
   }
@@ -473,6 +530,7 @@ class MusicPlayerHandler extends BaseAudioHandler
         if (state == PlayerState.paused && player.needsSourceReload) {
           _userPaused = true;
           _pausedByInterruption = false;
+          _playbackAutomation.cancelPendingActions();
         }
         if (_switchingGeneration != 0 &&
             (state == PlayerState.stopped ||
@@ -519,9 +577,11 @@ class MusicPlayerHandler extends BaseAudioHandler
   /// stuck on "playing".
   Future<void> _configureAudioSession() async {
     try {
-      final session = await AudioSession.instance;
+      final session = await _dependencies.audioSession();
       _audioSession = session;
       await session.configure(const AudioSessionConfiguration.music());
+      if (_disposed) return;
+      _refreshPlaybackAutomation();
 
       _subscriptions.add(
         session.interruptionEventStream.listen((event) {
@@ -550,7 +610,8 @@ class MusicPlayerHandler extends BaseAudioHandler
             // (duck/pause) interruption.
             _interruptionActive = false;
             if (_pausedByInterruption &&
-                event.type == AudioInterruptionType.pause) {
+                event.type == AudioInterruptionType.pause &&
+                !_playbackAutomation.blocksPlayback) {
               _pausedByInterruption = false;
               unawaited(play());
             } else {
@@ -563,6 +624,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       _subscriptions.add(
         session.becomingNoisyEventStream.listen((_) {
           // Headphones unplugged / output route lost.
+          _pausedByInterruption = false;
           unawaited(_pauseForFocusLoss(reason: 'becoming noisy'));
         }),
       );
@@ -571,23 +633,83 @@ class MusicPlayerHandler extends BaseAudioHandler
     }
   }
 
+  void _refreshPlaybackAutomation() {
+    if (_disposed) return;
+    final pauseOnMute =
+        _settings.playerMode == 'internal' &&
+        _settings.pauseOnMute &&
+        !_settings.usbBitPerfect;
+    final playOnHeadphonesConnected =
+        _settings.playerMode == 'internal' &&
+        _settings.playOnHeadphonesConnected;
+    unawaited(
+      _playbackAutomation.configure(
+        pauseOnMute: pauseOnMute,
+        playOnHeadphonesConnected: playOnHeadphonesConnected,
+      ),
+    );
+    if (pauseOnMute && _automationVolumeSubscription == null) {
+      _automationVolumeSubscription = _dependencies.volumeChanges.listen(
+        (volume) => unawaited(_playbackAutomation.volumeChanged(volume)),
+        onError: (Object error) =>
+            _log.w('Could not monitor media volume: $error'),
+      );
+    } else if (!pauseOnMute) {
+      final subscription = _automationVolumeSubscription;
+      _automationVolumeSubscription = null;
+      if (subscription != null) unawaited(subscription.cancel());
+    }
+    final session = _audioSession;
+    if (playOnHeadphonesConnected &&
+        session != null &&
+        !_headphoneMonitoringRequested) {
+      _headphoneMonitoringRequested = true;
+      unawaited(
+        _startHeadphoneMonitoring(session, ++_headphoneMonitoringRevision),
+      );
+    } else if (!playOnHeadphonesConnected) {
+      _headphoneMonitoringRequested = false;
+      _headphoneMonitoringRevision++;
+      final subscription = _automationDevicesSubscription;
+      _automationDevicesSubscription = null;
+      if (subscription != null) unawaited(subscription.cancel());
+    }
+  }
+
+  Future<void> _startHeadphoneMonitoring(
+    AudioSession session,
+    int revision,
+  ) async {
+    try {
+      // Query a fresh baseline. devicesStream can replay an old inventory
+      // after monitoring was disabled, which would look like a new connection.
+      final devices = await session.getDevices();
+      if (_disposed || revision != _headphoneMonitoringRevision) return;
+      unawaited(_playbackAutomation.devicesChanged(devices));
+      _automationDevicesSubscription = session.devicesChangedEventStream
+          .asyncMap((_) => session.getDevices())
+          .listen(
+            (devices) => unawaited(_playbackAutomation.devicesChanged(devices)),
+            onError: (Object error) =>
+                _log.w('Could not monitor headphone connections: $error'),
+          );
+    } catch (error) {
+      _log.w('Could not monitor headphone connections: $error');
+    }
+  }
+
   bool get _shouldIgnoreComplete =>
       _switchingGeneration != 0 || _interruptionActive || _userPaused;
 
   Future<void> _pauseForFocusLoss({required String reason}) async {
     _log.i('Pausing internal player because of $reason');
-    _playRequestGeneration++;
-    _switchingGeneration = 0;
-    await _autoMix.cancel();
+    _playbackAutomation.cancelPendingActions();
     try {
-      await _player.pause();
+      await _pausePlayback();
     } catch (e) {
       _log.w('Failed to pause after audio focus loss: $e');
+      if (!_disposed) _broadcastState(playerState: PlayerState.paused);
     }
-    // Force the UI/notification to reflect the pause even if the engine does
-    // not emit a state-change event on focus loss.
-    _broadcastState(playerState: PlayerState.paused);
-    await _persistSession(position: await _currentPositionForPersist());
   }
 
   void setSleepTimer(Duration duration) {
@@ -611,8 +733,13 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   Future<void> _activateAudioSession() async {
     try {
-      final session = _audioSession ?? await AudioSession.instance;
+      final session = _audioSession ?? await _dependencies.audioSession();
       _audioSession = session;
+      // Other media plugins can change the process-wide iOS category/options
+      // after initialization. Mixing makes us ineligible for Now Playing.
+      if (_dependencies.isIOS) {
+        await session.configure(const AudioSessionConfiguration.music());
+      }
       final granted = await session.setActive(true);
       if (!granted) {
         _log.w('Audio focus request was not granted');
@@ -624,7 +751,7 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   // Required on some Android builds because audio_session manages focus.
   Future<void> _claimHardwareMediaButtons() async {
-    if (!Platform.isAndroid) return;
+    if (!_dependencies.isAndroid) return;
     try {
       await AudioService.androidForceEnableMediaButtons();
     } catch (e) {
@@ -651,9 +778,10 @@ class MusicPlayerHandler extends BaseAudioHandler
 
     playbackState.add(
       playbackState.value.copyWith(
-        controls: _notificationPresentation.controls(
+        controls: _runtime.notification.controls(
           playing: playing,
           item: mediaItem.value,
+          shuffle: _shuffle,
         ),
         systemActions: const {
           MediaAction.seek,
@@ -662,7 +790,7 @@ class MusicPlayerHandler extends BaseAudioHandler
           MediaAction.skipToPrevious,
           MediaAction.skipToNext,
         },
-        androidCompactActionIndices: _notificationPresentation.mornye
+        androidCompactActionIndices: _runtime.notification.mornye
             ? const [1, 2, 3]
             : const [0, 1, 2],
         processingState: (loading == true)
@@ -679,7 +807,7 @@ class MusicPlayerHandler extends BaseAudioHandler
     );
   }
 
-  void _refreshNotificationControls() {
+  void refreshNotificationControls() {
     if (_disposed) return;
     final state = playbackState.value;
     playbackState.add(
@@ -687,11 +815,12 @@ class MusicPlayerHandler extends BaseAudioHandler
         // copyWith creates a fresh updateTime; keep the extrapolated position
         // so changing a star or theme cannot pull the scrubber backwards.
         updatePosition: state.position,
-        controls: _notificationPresentation.controls(
+        controls: _runtime.notification.controls(
           playing: state.playing,
           item: mediaItem.value,
+          shuffle: _shuffle,
         ),
-        androidCompactActionIndices: _notificationPresentation.mornye
+        androidCompactActionIndices: _runtime.notification.mornye
             ? const [1, 2, 3]
             : const [0, 1, 2],
       ),
@@ -699,6 +828,7 @@ class MusicPlayerHandler extends BaseAudioHandler
   }
 
   bool _savingNotificationFavorite = false;
+  bool _changingNotificationShuffle = false;
 
   @override
   Future<dynamic> customAction(
@@ -710,11 +840,32 @@ class MusicPlayerHandler extends BaseAudioHandler
       if (item == null || _savingNotificationFavorite) return;
       _savingNotificationFavorite = true;
       try {
-        await _toggleNotificationFavorite?.call(item);
+        final loved = await _runtime.toggleFavorite(item);
+        final current = mediaItem.value;
+        if (!_disposed &&
+            loved != null &&
+            current?.id == item.id &&
+            current?.extras?['source'] == item.extras?['source']) {
+          // Widget/provider rebuilds may wait for a frame while the app is
+          // backgrounded. Publish the persisted result directly to the OS.
+          _runtime.updateFavorite(item, loved);
+        }
       } catch (error) {
         _log.w('Notification favorite failed: $error');
       } finally {
         _savingNotificationFavorite = false;
+      }
+    } else if (name == PlaybackNotification.shuffleAction) {
+      if (mediaItem.value == null || _changingNotificationShuffle) return;
+      _changingNotificationShuffle = true;
+      try {
+        await setShuffleMode(
+          _shuffle ? AudioServiceShuffleMode.none : AudioServiceShuffleMode.all,
+        );
+      } catch (error) {
+        _log.w('Notification shuffle failed: $error');
+      } finally {
+        _changingNotificationShuffle = false;
       }
     } else {
       return super.customAction(name, extras);
@@ -765,22 +916,13 @@ class MusicPlayerHandler extends BaseAudioHandler
     unawaited(_persistSession(position: position));
   }
 
-  final _normalizationCache = PlaybackNormalizationCache(
-    readMetadata: PlatformBridge.readFileMetadata,
-    onReadError: (error) =>
-        _log.w('Failed to read gain tags for normalization: $error'),
-  );
+  late final PlaybackNormalizationCache _normalizationCache;
   int _normalizationGeneration = 0;
 
   Future<void> _refreshNormalizationSource(String source) async {
     _normalizationGeneration++;
     _normalizationCache.invalidate(source);
-    // A copy started before the edit can still contain the old comments.
-    await _pendingSourceResolutions[source];
-    final oldPath = _resolvedPathCache.remove(source);
-    _resolvedPathSizes.remove(source);
-    _resolvedPathOrder.remove(source);
-    if (oldPath != null) await _discardResolvedPath(oldPath);
+    await _sourceCache.invalidate(source, waitForPending: true);
     if (_disposed) return;
     if (_index >= 0 &&
         _index < _media.length &&
@@ -794,8 +936,13 @@ class MusicPlayerHandler extends BaseAudioHandler
     String? cacheKey,
     String? displayName,
   }) async {
-    if (!_playbackNormalizationEnabled ||
-        _usbBitPerfectEnabled ||
+    if (const {
+          'network',
+          'http',
+          'https',
+        }.contains(Uri.tryParse(path)?.scheme) ||
+        !_settings.playbackNormalization ||
+        _settings.usbBitPerfect ||
         _player.isDirect) {
       return 1.0;
     }
@@ -822,7 +969,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       }
       final media = _media[index];
       var resolved = media.isContentUri
-          ? _resolvedPathCache[media.source]
+          ? _sourceCache.cachedPath(media.source)
           : media.source;
       ContentUriPlaybackLease? playbackLease;
       if (resolved == null && media.isContentUri) {
@@ -858,106 +1005,21 @@ class MusicPlayerHandler extends BaseAudioHandler
   }
 
   Future<String?> _resolveSource(PlayableMedia media) async {
-    if (!media.isContentUri) return media.source;
-
-    final cached = _resolvedPathCache[media.source];
-    if (cached != null) {
-      if (await File(cached).exists()) return cached;
-      _resolvedPathCache.remove(media.source);
-      _resolvedPathSizes.remove(media.source);
-      _resolvedPathOrder.remove(media.source);
-    }
-    final inFlight = _pendingSourceResolutions[media.source];
-    if (inFlight != null) return inFlight;
-
-    final resolution = () async {
+    if (media.source.startsWith('network://')) {
       try {
-        final tempPath = await PlatformBridge.copyContentUriToTemp(
-          media.source,
-        );
-        if (tempPath == null || tempPath.isEmpty) return null;
-        if (_disposed) {
-          await _discardResolvedPath(tempPath);
-          return null;
-        }
-
-        _resolvedPathCache[media.source] = tempPath;
-        _resolvedPathSizes[media.source] = await File(tempPath).length();
-        _resolvedPathOrder
-          ..remove(media.source)
-          ..add(media.source);
-        while (_resolvedPathOrder.length > _maxResolvedPathCacheEntries ||
-            (_resolvedPathOrder.length > 1 &&
-                _resolvedPathSizes.values.fold<int>(
-                      0,
-                      (sum, size) => sum + size,
-                    ) >
-                    _maxResolvedPathCacheBytes)) {
-          final evictedSource = _resolvedPathOrder.removeAt(0);
-          final evictedPath = _resolvedPathCache.remove(evictedSource);
-          _resolvedPathSizes.remove(evictedSource);
-          if (evictedPath != null) {
-            unawaited(_discardResolvedPath(evictedPath));
-          }
-        }
-        return tempPath;
-      } catch (e) {
-        _log.e('Failed to resolve content URI for playback: $e');
+        return await _dependencies.resolveNetworkSource(media.source);
+      } catch (_) {
+        _log.w('Network source is unavailable');
         return null;
       }
-    }();
-    _pendingSourceResolutions[media.source] = resolution;
-    try {
-      return await resolution;
-    } finally {
-      if (identical(_pendingSourceResolutions[media.source], resolution)) {
-        _pendingSourceResolutions.remove(media.source);
-      }
     }
+    if (!media.isContentUri) return media.source;
+    return _sourceCache.resolve(media.source);
   }
 
-  Future<void> _discardResolvedPath(String path) async {
-    if (path == _activeResolvedPath || _autoMix.pinnedPaths.contains(path)) {
-      _pendingResolvedPathDeletes.add(path);
-      return;
-    }
-    try {
-      final file = File(path);
-      if (await file.exists()) await file.delete();
-    } catch (e) {
-      _log.w('Failed to delete SAF playback temp file: $e');
-    }
-  }
+  Future<void> _cleanupPendingResolvedPaths() => _sourceCache.releaseUnpinned();
 
-  Future<void> _cleanupPendingResolvedPaths() async {
-    final deletable = _pendingResolvedPathDeletes
-        .where(
-          (path) =>
-              path != _activeResolvedPath &&
-              !_autoMix.pinnedPaths.contains(path),
-        )
-        .toList(growable: false);
-    for (final path in deletable) {
-      _pendingResolvedPathDeletes.remove(path);
-      await _discardResolvedPath(path);
-    }
-  }
-
-  Future<void> _enqueueSessionWrite(Future<void> Function() operation) {
-    final queued = _sessionWriteTail.then((_) async {
-      try {
-        await operation();
-      } catch (e) {
-        _log.w('Failed to update persisted playback session: $e');
-      }
-    });
-    _sessionWriteTail = queued;
-    return queued;
-  }
-
-  void _markSessionQueueChanged() {
-    _sessionQueueRevision++;
-  }
+  void _markSessionQueueChanged() => _sessionWriter.queueChanged();
 
   List<Map<String, dynamic>> _sessionMedia() {
     final original = _originalQueueOrder;
@@ -1040,67 +1102,15 @@ class MusicPlayerHandler extends BaseAudioHandler
   Future<void> _persistSession({Duration? position}) {
     if (_restoringSession) return Future<void>.value();
     if (_media.isEmpty || _index < 0 || _index >= _media.length) {
-      _scheduledSessionQueueRevision = -1;
-      _persistedSessionQueueRevision = -1;
-      return _enqueueSessionWrite(
-        AppStateDatabase.instance.clearPlaybackSession,
-      );
+      return _sessionWriter.clear();
     }
-    final queueRevision = _sessionQueueRevision;
-    final index = _index;
-    final positionMs = (position ?? Duration.zero).inMilliseconds;
-    final shuffle = _shuffle;
-    final repeatMode = _repeatMode.name;
-
-    if (_scheduledSessionQueueRevision != queueRevision) {
-      final media = _sessionMedia();
-      _scheduledSessionQueueRevision = queueRevision;
-      return _enqueueSessionWrite(() async {
-        try {
-          await AppStateDatabase.instance.savePlaybackSession({
-            'version': 2,
-            'media': media,
-            'index': index,
-            'positionMs': positionMs,
-            'shuffle': shuffle,
-            'repeat': repeatMode,
-          });
-          _persistedSessionQueueRevision = queueRevision;
-        } catch (_) {
-          if (_scheduledSessionQueueRevision == queueRevision) {
-            _scheduledSessionQueueRevision = _persistedSessionQueueRevision;
-          }
-          rethrow;
-        }
-      });
-    }
-
-    return _enqueueSessionWrite(() async {
-      final updated = await AppStateDatabase.instance
-          .updatePlaybackSessionState(
-            index: index,
-            positionMs: positionMs,
-            shuffle: shuffle,
-            repeatMode: repeatMode,
-          );
-      if (updated) return;
-      // A newer queue snapshot is already (or is about to be) scheduled. Do
-      // not recreate a missing row from this older scalar snapshot with a
-      // mismatched index; the newer full write will restore it consistently.
-      if (_sessionQueueRevision != queueRevision) return;
-
-      // Defensive recovery for an externally cleared/corrupted row. This is
-      // intentionally the only state-only path that serializes the queue.
-      await AppStateDatabase.instance.savePlaybackSession({
-        'version': 2,
-        'media': _sessionMedia(),
-        'index': index,
-        'positionMs': positionMs,
-        'shuffle': shuffle,
-        'repeat': repeatMode,
-      });
-      _persistedSessionQueueRevision = queueRevision;
-    });
+    return _sessionWriter.persist(
+      serializeQueue: _sessionMedia,
+      index: _index,
+      position: position ?? Duration.zero,
+      shuffle: _shuffle,
+      repeatMode: _repeatMode.name,
+    );
   }
 
   Future<Duration> _currentPositionForPersist() async {
@@ -1147,7 +1157,7 @@ class MusicPlayerHandler extends BaseAudioHandler
         ..addAll(items);
       _queueItems
         ..clear()
-        ..addAll(items.map((m) => m.toMediaItem()));
+        ..addAll(items.map(_toMediaItem));
       _index = index.clamp(0, items.length - 1);
       _shuffle = shuffle;
       if (shuffle) {
@@ -1161,16 +1171,9 @@ class MusicPlayerHandler extends BaseAudioHandler
       _pendingRestorePosition = position > Duration.zero ? position : null;
       _sourceReady = false;
       _lastPeriodicPersistAt = null;
-      _sessionQueueRevision++;
-      if (queueNeedsRewrite) {
-        _scheduledSessionQueueRevision = -1;
-        _persistedSessionQueueRevision = -1;
-      } else {
-        _scheduledSessionQueueRevision = _sessionQueueRevision;
-        _persistedSessionQueueRevision = _sessionQueueRevision;
-      }
+      _sessionWriter.queueRestored(needsRewrite: queueNeedsRewrite);
       queue.add(List<MediaItem>.unmodifiable(_queueItems));
-      mediaItem.add(_media[_index].toMediaItem());
+      mediaItem.add(_toMediaItem(_media[_index]));
       if (position > Duration.zero) {
         playbackState.add(
           playbackState.value.copyWith(updatePosition: position),
@@ -1207,7 +1210,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       ..addAll(items);
     _queueItems
       ..clear()
-      ..addAll(items.map((m) => m.toMediaItem()));
+      ..addAll(items.map(_toMediaItem));
     _originalQueueOrder = null;
     _index = initialIndex.clamp(0, items.length - 1);
     if (_shuffle) _shuffleQueue();
@@ -1226,7 +1229,7 @@ class MusicPlayerHandler extends BaseAudioHandler
         ? (_index + 1).clamp(0, _media.length)
         : _autoplay.manualInsertIndex;
     _media.insert(insertAt, item);
-    final queueItem = item.toMediaItem();
+    final queueItem = _toMediaItem(item);
     _queueItems.insert(insertAt, queueItem);
     _rememberEnqueued([queueItem], playNext: playNext);
     _markSessionQueueChanged();
@@ -1255,7 +1258,7 @@ class MusicPlayerHandler extends BaseAudioHandler
     final queued = <MediaItem>[];
     for (final item in items) {
       _media.insert(at, item);
-      final queueItem = item.toMediaItem();
+      final queueItem = _toMediaItem(item);
       _queueItems.insert(at, queueItem);
       queued.add(queueItem);
       for (var i = 0; i < _playHistory.length; i++) {
@@ -1331,6 +1334,7 @@ class MusicPlayerHandler extends BaseAudioHandler
     Duration startPosition = Duration.zero,
   }) async {
     if (_disposed || index < 0 || index >= _media.length) return;
+    _playbackAutomation.cancelPendingActions();
     // A normal track change supersedes a pending restore. A restored start
     // keeps it until the source is actually ready so a transient failure can
     // be retried from the same position.
@@ -1382,19 +1386,23 @@ class MusicPlayerHandler extends BaseAudioHandler
     // AudioPlayer.play combines prepare/seek/resume without a cancellation
     // boundary. A late prepare from an old request could resume the wrong
     // source. Serialize preparation and recheck before making it audible.
-    await _player.setSource(
-      DeviceFileSource(path),
-      preferBitPerfect: _usbBitPerfectEnabled,
-      directUsb: _usbDirectEnabled,
-      allowFixedVolume: _usbAllowFixedVolume,
-      dapExclusive: _dapExclusiveEnabled,
-      allowDop: _usbDopEnabled,
-      requiresDsd:
-          media.bitDepth == 1 ||
-          const ['dsf', 'dff'].contains(media.format?.toLowerCase()) ||
-          media.source.toLowerCase().endsWith('.dsf') ||
-          media.source.toLowerCase().endsWith('.dff'),
-    );
+    if (media.isNetwork) {
+      await _player.setNetworkSource(path);
+    } else {
+      await _player.setSource(
+        DeviceFileSource(path),
+        preferBitPerfect: _settings.usbBitPerfect,
+        directUsb: _settings.usbDirect,
+        allowFixedVolume: _settings.usbAllowFixedVolume,
+        dapExclusive: _settings.dapExclusive,
+        allowDop: _settings.usbDsdOverPcm,
+        requiresDsd:
+            media.bitDepth == 1 ||
+            const ['dsf', 'dff'].contains(media.format?.toLowerCase()) ||
+            media.source.toLowerCase().endsWith('.dsf') ||
+            media.source.toLowerCase().endsWith('.dff'),
+      );
+    }
     if (!_isCurrentPlayRequest(generation, media)) return;
     if (position != null) {
       await _player.seek(position);
@@ -1420,7 +1428,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       startPosition,
       duration: media.duration,
     );
-    mediaItem.add(media.toMediaItem());
+    mediaItem.add(_toMediaItem(media));
     _lastBroadcastPosition = Duration.zero;
     _lastPositionBroadcastAt = null;
     _broadcastPosition(effectiveStartPosition, force: true);
@@ -1430,12 +1438,26 @@ class MusicPlayerHandler extends BaseAudioHandler
     _broadcastState(playerState: PlayerState.playing, loading: true);
     await _claimHardwareMediaButtons();
     if (!_isCurrentPlayRequest(generation, media)) return;
+    if (media.isContentUri) {
+      unawaited(_recoverDocumentArtwork(media, generation));
+    }
+    if (media.networkArtworkSource != null) {
+      try {
+        final artwork = await _dependencies.resolveNetworkSource(
+          media.networkArtworkSource!,
+        );
+        if (!_isCurrentPlayRequest(generation, media)) return;
+        mediaItem.add(_toMediaItem(media, resolvedArtwork: artwork));
+      } catch (_) {
+        // Cover failure must not prevent audio playback.
+      }
+    }
 
     // Android opens SAF files through a short-lived file-descriptor lease.
     // MediaPlayer duplicates that descriptor, so the original can be closed
     // immediately after play() without retaining a full-file cache copy.
     ContentUriPlaybackLease? playbackLease;
-    if (Platform.isAndroid && media.isContentUri) {
+    if (_dependencies.isAndroid && media.isContentUri) {
       try {
         playbackLease = await PlatformBridge.openContentUriPlaybackLease(
           media.source,
@@ -1459,7 +1481,7 @@ class MusicPlayerHandler extends BaseAudioHandler
     }
 
     try {
-      await musicPlayerExclusiveAudioHook?.call();
+      await _runtime.exclusiveAudioHook?.call();
     } catch (_) {}
     if (!_isCurrentPlayRequest(generation, media)) {
       if (playbackLease != null) {
@@ -1530,6 +1552,9 @@ class MusicPlayerHandler extends BaseAudioHandler
       }
       if (!_isCurrentPlayRequest(generation, media)) return;
       _sourceReady = true;
+      if (media.source.startsWith('network://')) {
+        unawaited(_loadNetworkMetadata(media, generation));
+      }
       _pendingRestorePosition = null;
       _activeResolvedPath = usingLocalSafCopy ? resolved : null;
       await _cleanupPendingResolvedPaths();
@@ -1539,7 +1564,7 @@ class MusicPlayerHandler extends BaseAudioHandler
       // the same metadata twice on every Next. SAF needs this second event so
       // the UI can inspect its temporary local copy.
       if (usingLocalSafCopy) {
-        mediaItem.add(media.toMediaItem(resolvedSource: resolved));
+        mediaItem.add(_toMediaItem(_media[_index], resolvedSource: resolved));
       }
       _broadcastPosition(effectiveStartPosition, force: true);
       _broadcastState();
@@ -1560,6 +1585,86 @@ class MusicPlayerHandler extends BaseAudioHandler
       if (_switchingGeneration == generation) {
         _switchingGeneration = 0;
       }
+    }
+  }
+
+  Future<void> _recoverDocumentArtwork(
+    PlayableMedia media,
+    int generation,
+  ) async {
+    final artwork = await resolveMissingDocumentArtworkUri(
+      media.source,
+      media.artUri,
+      extract: (source) =>
+          DownloadedEmbeddedCoverResolver.resolveOrExtract(source),
+    );
+    if (artwork == null || !_isCurrentPlayRequest(generation, media)) return;
+    final current = mediaItem.value;
+    if (current == null) return;
+    final updated = current.copyWith(artUri: Uri.parse(artwork));
+    mediaItem.add(updated);
+    _media[_index] = PlayableMedia.fromJson({
+      ..._media[_index].toJson(),
+      'artUri': artwork,
+    })!;
+    final old = _queueItems[_index];
+    _queueItems[_index] = updated;
+    final original = _originalQueueOrder;
+    if (original != null) {
+      final i = original.indexWhere((item) => identical(item, old));
+      if (i >= 0) original[i] = updated;
+    }
+    queue.add(List<MediaItem>.unmodifiable(_queueItems));
+    unawaited(_persistSession(position: playbackState.value.position));
+  }
+
+  Future<void> _loadNetworkMetadata(PlayableMedia media, int generation) async {
+    try {
+      final metadata = await _dependencies.readNetworkMetadata(media.source);
+      if (!_isCurrentPlayRequest(generation, media)) return;
+      final current = mediaItem.value;
+      if (current == null) return;
+      String text(String key, String fallback) {
+        final value = metadata[key]?.toString().trim() ?? '';
+        return value.isEmpty ? fallback : value;
+      }
+
+      final cover = metadata['cover_path'] as String?;
+      final updated = current.copyWith(
+        title: text('title', current.title),
+        artist: text('artist', current.artist ?? ''),
+        album: text('album', current.album ?? ''),
+        artUri: cover == null ? current.artUri : Uri.file(cover),
+        extras: {
+          ...?current.extras,
+          for (final key in ['bit_depth', 'sample_rate', 'bitrate', 'format'])
+            if (metadata[key] != null) key: metadata[key],
+        },
+      );
+      mediaItem.add(updated);
+      _media[_index] = PlayableMedia.fromJson({
+        ...media.toJson(),
+        'title': updated.title,
+        'artist': updated.artist,
+        'album': updated.album,
+        'artUri': updated.artUri?.toString(),
+        'bitDepth': metadata['bit_depth'] ?? media.bitDepth,
+        'sampleRate': metadata['sample_rate'] ?? media.sampleRate,
+        'bitrate': metadata['bitrate'] ?? media.bitrate,
+        'format': metadata['format'] ?? media.format,
+      })!;
+      // Keep the saved shuffle order paired with the updated queue entry.
+      final old = _queueItems[_index];
+      _queueItems[_index] = updated;
+      final original = _originalQueueOrder;
+      if (original != null) {
+        final i = original.indexWhere((item) => identical(item, old));
+        if (i >= 0) original[i] = updated;
+      }
+      queue.add(List<MediaItem>.unmodifiable(_queueItems));
+      unawaited(_persistSession(position: playbackState.value.position));
+    } catch (_) {
+      _log.w('Network tags unavailable; keeping playback metadata');
     }
   }
 
@@ -1640,6 +1745,7 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   @override
   Future<void> play() async {
+    _playbackAutomation.manualPlaybackRequested();
     final activeOperation = _activePlayOperation;
     if (activeOperation != null) {
       await activeOperation;
@@ -1682,16 +1788,26 @@ class MusicPlayerHandler extends BaseAudioHandler
       );
       return;
     }
-    await _activateAudioSession();
-    await _claimHardwareMediaButtons();
-    try {
-      await _player.resume();
-    } on PlatformException {
-      if (!_player.needsSourceReload) rethrow;
-      _broadcastState(playerState: PlayerState.paused);
-      return;
-    }
-    _broadcastState(playerState: PlayerState.playing);
+    final generation = _playRequestGeneration;
+    await _serializeSourceChange(() async {
+      if (generation != _playRequestGeneration || _disposed) return;
+      await _activateAudioSession();
+      if (generation != _playRequestGeneration || _disposed) return;
+      await _claimHardwareMediaButtons();
+      if (generation != _playRequestGeneration || _disposed) return;
+      try {
+        await _player.resume();
+      } on PlatformException {
+        if (!_player.needsSourceReload) rethrow;
+        _broadcastState(playerState: PlayerState.paused);
+        return;
+      }
+      if (generation != _playRequestGeneration || _disposed) {
+        await _player.pause();
+        return;
+      }
+      _broadcastState(playerState: PlayerState.playing);
+    });
   }
 
   @override
@@ -1715,10 +1831,15 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   @override
   Future<void> pause() async {
+    _playbackAutomation.cancelPendingActions();
+    _pausedByInterruption = false;
+    await _pausePlayback();
+  }
+
+  Future<void> _pausePlayback() async {
     final generation = ++_playRequestGeneration;
     _switchingGeneration = 0;
     _userPaused = true;
-    _pausedByInterruption = false;
     await _autoMix.cancel();
     await _serializeSourceChange(() async {
       if (generation != _playRequestGeneration || _disposed) return;
@@ -1778,6 +1899,7 @@ class MusicPlayerHandler extends BaseAudioHandler
 
   @override
   Future<void> stop() async {
+    _playbackAutomation.cancelPendingActions();
     _autoplay.reset();
     cancelSleepTimer();
     final generation = ++_playRequestGeneration;
@@ -1801,10 +1923,8 @@ class MusicPlayerHandler extends BaseAudioHandler
     _userPaused = false;
     _playHistory.clear();
     _pendingRestorePosition = null;
-    _scheduledSessionQueueRevision = -1;
-    _persistedSessionQueueRevision = -1;
     // An explicit stop ends the session for good; nothing to restore later.
-    await _enqueueSessionWrite(AppStateDatabase.instance.clearPlaybackSession);
+    await _sessionWriter.clear();
     if (generation != _playRequestGeneration || _disposed) return;
     // A stopped session has no current item; this also hides the mini player.
     mediaItem.add(null);
@@ -1884,13 +2004,9 @@ class MusicPlayerHandler extends BaseAudioHandler
   /// no longer be played.
   Future<void> onSourceDeleted(String source) async {
     final target = source.trim();
-    if (target.isEmpty || _media.isEmpty) return;
+    if (_disposed || target.isEmpty) return;
 
-    final discardedPath = _resolvedPathCache.remove(target);
-    _resolvedPathOrder.remove(target);
-    if (discardedPath != null) {
-      await _discardResolvedPath(discardedPath);
-    }
+    final hadPendingResolution = await _sourceCache.invalidate(target);
 
     final wasCurrent =
         _index >= 0 &&
@@ -1923,29 +2039,47 @@ class MusicPlayerHandler extends BaseAudioHandler
     _playHistory.clear();
     queue.add(List<MediaItem>.unmodifiable(_queueItems));
 
+    Future<void>? reaction;
     if (_media.isEmpty) {
-      await stop();
-      return;
-    }
-
-    if (wasCurrent) {
+      reaction = stop();
+    } else if (wasCurrent) {
       final nextIndex = _index.clamp(0, _media.length - 1);
-      await _playIndex(nextIndex);
+      reaction = _playIndex(nextIndex);
     } else {
       _index = (_index - removedBeforeCurrent).clamp(0, _media.length - 1);
       _broadcastState();
       unawaited(_persistSession(position: playbackState.value.position));
     }
+    if (!hadPendingResolution) {
+      await reaction;
+    } else {
+      // Queue invalidation must not wait behind an unavailable SAF provider.
+      unawaited(
+        reaction?.catchError((Object error) {
+          _log.w('Could not update playback after source deletion: $error');
+        }),
+      );
+    }
   }
 
-  Future<void> dispose() async {
+  Future<void> dispose() => _disposeFuture ??= _dispose();
+
+  Future<void> _dispose() async {
     _autoplay.reset();
     _disposed = true;
-    if (identical(_activeMusicPlayerHandler, this)) {
-      _activeMusicPlayerHandler = null;
+    if (identical(musicPlayerRuntime.handler, this)) {
+      autoMixStatus.value = AutoMixStatus.idle;
     }
+    _runtime.detach(this);
     cancelSleepTimer();
+    _listeningTimer?.cancel();
+    _dependencies.recorder.update(null, playing: false, ended: true);
+    await _dependencies.recorder.flush();
     _playRequestGeneration++;
+    _headphoneMonitoringRevision++;
+    await _automationVolumeSubscription?.cancel();
+    await _automationDevicesSubscription?.cancel();
+    await _playbackAutomation.dispose();
     await _sourceChangeTail;
     await _autoMix.dispose();
     for (final sub in _subscriptions) {
@@ -1957,91 +2091,35 @@ class MusicPlayerHandler extends BaseAudioHandler
       await _disposeDeck(player);
     }
     _activeResolvedPath = null;
-    final tempPaths = <String>{
-      ..._resolvedPathCache.values,
-      ..._pendingResolvedPathDeletes,
-    };
-    _resolvedPathCache.clear();
-    _resolvedPathSizes.clear();
-    _resolvedPathOrder.clear();
-    _pendingResolvedPathDeletes.clear();
-    for (final path in tempPaths) {
-      await _discardResolvedPath(path);
-    }
+    await _sourceCache.dispose();
   }
 }
 
-MusicPlayerHandler? _handler;
-Future<MusicPlayerHandler>? _initFuture;
-final StreamController<MusicPlayerHandler> _handlerReadyController =
-    StreamController<MusicPlayerHandler>.broadcast();
+MusicPlayerHandler? get musicPlayerHandler => musicPlayerRuntime.handler;
 
-MusicPlayerHandler? get musicPlayerHandler => _handler;
-
-Future<void> Function()? musicPlayerExclusiveAudioHook;
-
-/// Flushes the current playback position if the player has been initialized.
-Future<void> persistCurrentPlaybackSession() async {
-  final handler = _handler;
-  if (handler == null) return;
-  await handler.persistCurrentSession();
-}
-
-Future<MusicPlayerHandler> initMusicPlayer() async {
-  if (_handler != null) return _handler!;
-  final existingFuture = _initFuture;
-  if (existingFuture != null) return existingFuture;
-
-  final future = _doInitMusicPlayer();
-  _initFuture = future;
-  return future;
-}
-
-Future<MusicPlayerHandler> _doInitMusicPlayer() async {
-  try {
-    final handler = await AudioService.init(
-      builder: () => MusicPlayerHandler(),
-      config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.zarz.spotiflac.playback',
-        androidNotificationChannelName: 'Playback',
-        androidNotificationOngoing: true,
-        androidStopForegroundOnPause: true,
-      ),
-    );
-    _handler = handler;
-    if (Platform.isAndroid || Platform.isIOS) {
-      PlayerWidgetService.instance.bind(handler);
-    }
-    _handlerReadyController.add(handler);
-    return handler;
-  } catch (_) {
-    _initFuture = null;
-    rethrow;
-  }
-}
+Future<MusicPlayerHandler> initMusicPlayer() => musicPlayerRuntime.initialize();
 
 /// Restores the last persisted playback session (if any) into a freshly
 /// initialized handler, paused. Entries whose plain file paths no longer
 /// exist are dropped; content URIs are kept and fail gracefully at play time.
-Future<void>? _restoreSessionFuture;
-
 Future<void> restorePersistedPlaybackSession() =>
-    _restoreSessionFuture ??= _restorePersistedPlaybackSession();
+    musicPlayerRuntime.restoreSession();
 
-Future<void> _restorePersistedPlaybackSession() async {
+Future<void> restorePlaybackSession(MusicPlayerRuntime runtime) async {
   try {
-    final session = await AppStateDatabase.instance.getPlaybackSession();
+    final database = runtime.dependencies.sessionDatabase;
+    final session = await database.getPlaybackSession();
     if (session == null) return;
 
     final rawMedia = session['media'];
     if (rawMedia is! List) {
-      await AppStateDatabase.instance.clearPlaybackSession();
+      await database.clearPlaybackSession();
       return;
     }
 
     final items = <PlayableMedia>[];
     final keptOriginalIndices = <int>[];
-    final iosDocumentsPath = Platform.isIOS
+    final iosDocumentsPath = runtime.dependencies.isIOS
         ? (await getApplicationDocumentsDirectory()).path
         : null;
     var artworkRelocated = false;
@@ -2053,13 +2131,15 @@ Future<void> _restorePersistedPlaybackSession() async {
         iosDocumentsPath: iosDocumentsPath,
       );
       if (media == null) continue;
-      if (!media.isContentUri && !await File(media.source).exists()) {
+      if (!media.isContentUri &&
+          !media.isNetwork &&
+          !await File(media.source).exists()) {
         continue;
       }
       final artwork = await resolveRestoredArtworkUri(
         media.artUri,
         loadLibraryCoverPath: () async {
-          final database = LibraryDatabase.instance;
+          final database = runtime.dependencies.libraryDatabase;
           final row = await database.getById(media.id);
           if (row != null) return row['coverPath'] as String?;
           final matches = await database.findByTrackAndArtist(
@@ -2083,7 +2163,7 @@ Future<void> _restorePersistedPlaybackSession() async {
       keptOriginalIndices.add(i);
     }
     if (items.isEmpty) {
-      await AppStateDatabase.instance.clearPlaybackSession();
+      await database.clearPlaybackSession();
       return;
     }
 
@@ -2101,7 +2181,7 @@ Future<void> _restorePersistedPlaybackSession() async {
       position = Duration.zero;
     }
 
-    final handler = await initMusicPlayer();
+    final handler = await runtime.initialize();
     await handler.restoreSession(
       items: items,
       index: index,
@@ -2126,46 +2206,9 @@ Future<void> _restorePersistedPlaybackSession() async {
   }
 }
 
-Stream<MediaItem?> musicPlayerMediaItemEvents() async* {
-  final existing = _handler;
-  if (existing != null) {
-    yield existing.mediaItem.value;
-    yield* existing.mediaItem;
-    return;
-  }
-  yield null;
-  await for (final handler in _handlerReadyController.stream) {
-    yield handler.mediaItem.value;
-    yield* handler.mediaItem;
-    return;
-  }
-}
-
-Stream<PlaybackState> musicPlayerPlaybackStateEvents() async* {
-  final existing = _handler;
-  if (existing != null) {
-    yield existing.playbackState.value;
-    yield* existing.playbackState;
-    return;
-  }
-  await for (final handler in _handlerReadyController.stream) {
-    yield handler.playbackState.value;
-    yield* handler.playbackState;
-    return;
-  }
-}
-
-Stream<List<MediaItem>> musicPlayerQueueEvents() async* {
-  final existing = _handler;
-  if (existing != null) {
-    yield existing.queue.value;
-    yield* existing.queue;
-    return;
-  }
-  yield const [];
-  await for (final handler in _handlerReadyController.stream) {
-    yield handler.queue.value;
-    yield* handler.queue;
-    return;
-  }
-}
+Stream<MediaItem?> musicPlayerMediaItemEvents() =>
+    musicPlayerRuntime.mediaItemEvents();
+Stream<PlaybackState> musicPlayerPlaybackStateEvents() =>
+    musicPlayerRuntime.playbackStateEvents();
+Stream<List<MediaItem>> musicPlayerQueueEvents() =>
+    musicPlayerRuntime.queueEvents();

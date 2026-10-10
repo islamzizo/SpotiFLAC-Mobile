@@ -75,7 +75,7 @@ impl ExtensionManager {
         {
             return Ok(original.to_string());
         }
-        match self.provider_operation(
+        match self.provider_operation_value(
             id,
             "enrichTrack",
             &json!([input]).to_string(),
@@ -83,9 +83,7 @@ impl ExtensionManager {
             timeout_ms,
             item_id,
         ) {
-            Ok(response) => {
-                let mut track: Value = serde_json::from_str(&response)
-                    .map_err(|failure| cause("invalid enriched track", failure))?;
+            Ok(mut track) => {
                 track["provider_id"] = original.get("provider_id").cloned().unwrap_or(json!(""));
                 Ok(track.to_string())
             }
@@ -129,15 +127,13 @@ impl ExtensionManager {
             }
         }
         let limit = search_limit(limit);
-        let response = self.provider_call(
+        let mut response = self.provider_call_value(
             id,
             "searchTracks",
             &json!([query, limit]).to_string(),
             None,
             timeout_ms,
         )?;
-        let mut response: Value =
-            serde_json::from_str(&response).map_err(|e| error(e.to_string()))?;
         let mut tracks = response["tracks"].take();
         if let Some(tracks) = tracks.as_array_mut() {
             tracks.truncate(limit);
@@ -173,6 +169,27 @@ impl ExtensionManager {
         timeout_ms: u64,
         request_lease: Option<Arc<RequestLease>>,
     ) -> Result<String, ManagerError> {
+        self.search_metadata_providers_value_with_lease(
+            query,
+            limit,
+            include_extensions,
+            item_id,
+            timeout_ms,
+            request_lease,
+        )
+        .map(|value| value.to_string())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn search_metadata_providers_value_with_lease(
+        &self,
+        query: &str,
+        limit: isize,
+        include_extensions: bool,
+        item_id: &str,
+        timeout_ms: u64,
+        request_lease: Option<Arc<RequestLease>>,
+    ) -> Result<Value, ManagerError> {
         self.check()?;
         let mut ordered = self
             .priorities
@@ -208,7 +225,7 @@ impl ExtensionManager {
             if !providers.contains(&id) {
                 continue;
             }
-            let response = self.provider_operation(
+            let response = self.provider_operation_value(
                 &id,
                 "searchTracks",
                 &json!([query, limit]).to_string(),
@@ -219,7 +236,7 @@ impl ExtensionManager {
             if let Some(lease) = &lease {
                 lease.check_active().map_err(|e| error(e.to_string()))?;
             }
-            let response = match response {
+            let mut response = match response {
                 Ok(response) => response,
                 Err(failure) if failure.0 == "download cancelled" => return Err(failure),
                 Err(failure) => {
@@ -234,14 +251,12 @@ impl ExtensionManager {
                     continue;
                 }
             };
-            let response: Value =
-                serde_json::from_str(&response).map_err(|e| error(e.to_string()))?;
-            if let Some(found) = response["tracks"].as_array() {
+            if let Value::Array(found) = response["tracks"].take() {
                 for track in found {
-                    if seen.insert(dedup_key(track)) {
-                        tracks.push(track.clone());
+                    if seen.insert(dedup_key(&track)) {
+                        tracks.push(track);
                         if tracks.len() >= limit {
-                            return Ok(json!(tracks).to_string());
+                            return Ok(tracks.into());
                         }
                     }
                 }
@@ -252,7 +267,7 @@ impl ExtensionManager {
         {
             return Err(failure);
         }
-        Ok(json!(tracks).to_string())
+        Ok(tracks.into())
     }
 }
 

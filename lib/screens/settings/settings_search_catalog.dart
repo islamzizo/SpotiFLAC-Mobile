@@ -227,6 +227,18 @@ class SettingsSearchCatalog {
       ],
       playback = [
         SettingsSearchEntry(
+          icon: Icons.insights_outlined,
+          title: l10n.listeningStats,
+          subtitle: l10n.listeningStatsDescription,
+          keywords: const ['wrapped', 'statistics', 'listening', 'stats'],
+        ),
+        SettingsSearchEntry(
+          icon: Icons.motion_photos_on_outlined,
+          title: l10n.motionArtwork,
+          subtitle: l10n.motionArtworkDescription,
+          keywords: const ['canvas', 'video', 'animation'],
+        ),
+        SettingsSearchEntry(
           icon: Icons.open_in_new,
           title: l10n.libraryExternalPlayer,
           subtitle: l10n.libraryExternalPlayerSubtitle,
@@ -245,10 +257,30 @@ class SettingsSearchCatalog {
           keywords: const ['replaygain', 'volume'],
         ),
         SettingsSearchEntry(
+          icon: Icons.volume_off_outlined,
+          title: l10n.playbackPauseOnMute,
+          subtitle: l10n.playbackPauseOnMuteDescription,
+          keywords: const ['mute', 'volume', 'pause', 'resume'],
+        ),
+        SettingsSearchEntry(
+          icon: Icons.headphones_outlined,
+          title: l10n.playbackOnHeadphonesConnected,
+          subtitle: l10n.playbackOnHeadphonesConnectedDescription,
+          keywords: const ['earphone', 'headphone', 'bluetooth', 'connect'],
+        ),
+        SettingsSearchEntry(
           icon: Icons.compare_arrows,
           title: 'AutoMix',
           subtitle: l10n.autoMixDescription,
-          keywords: const ['crossfade', 'beat matching'],
+          keywords: const [
+            'crossfade',
+            'beat matching',
+            'duration',
+            'pitch',
+            'echo',
+            'filter',
+            'speed',
+          ],
         ),
         if (androidAudio) ...[
           SettingsSearchEntry(

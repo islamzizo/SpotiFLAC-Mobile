@@ -34,6 +34,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import io.flutter.embedding.android.FlutterActivity;
@@ -131,6 +132,7 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
 
     private static final String CHANNEL_CLIENT = "com.ryanheise.audio_service.client.methods";
     private static final String CHANNEL_HANDLER = "com.ryanheise.audio_service.handler.methods";
+    private static final String DESCRIPTION_METADATA = "com.ryanheise.audio_service.metadata";
 
     private static final Set<ClientInterface> clientInterfaces = new HashSet<>();
     private static ClientInterface mainClientInterface;
@@ -520,6 +522,8 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
         public MethodChannel channel;
         private AudioTrack silenceAudioTrack;
         private final Handler handler = new Handler(Looper.getMainLooper());
+        private final ExecutorService mediaWorker = Executors.newSingleThreadExecutor();
+        private volatile boolean destroyed;
         private List<MethodInvocation> methodInvocationQueue = new LinkedList<MethodInvocation>();
 
         public AudioHandlerInterface(BinaryMessenger messenger) {
@@ -702,8 +706,8 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
         }
 
         @Override
-        public void onPlayMediaItem(MediaMetadataCompat metadata) {
-            invokeMethod("playMediaItem", mapOf("mediaItem", mediaMetadata2raw(metadata)));
+        public void onPlayMediaItem(MediaDescriptionCompat description) {
+            invokeMediaItemMethod("playMediaItem", description, null);
         }
 
         @Override
@@ -712,20 +716,48 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
         }
 
         @Override
-        public void onAddQueueItem(MediaMetadataCompat metadata) {
-            invokeMethod("addQueueItem", mapOf("mediaItem", mediaMetadata2raw(metadata)));
+        public void onAddQueueItem(MediaDescriptionCompat description) {
+            invokeMediaItemMethod("addQueueItem", description, null);
         }
 
         @Override
-        public void onAddQueueItemAt(MediaMetadataCompat metadata, int index) {
-            invokeMethod("insertQueueItem", mapOf(
-                        "mediaItem", mediaMetadata2raw(metadata),
-                        "index", index));
+        public void onAddQueueItemAt(MediaDescriptionCompat description, int index) {
+            invokeMediaItemMethod("insertQueueItem", description, index);
         }
 
         @Override
-        public void onRemoveQueueItem(MediaMetadataCompat metadata) {
-            invokeMethod("removeQueueItem", mapOf("mediaItem", mediaMetadata2raw(metadata)));
+        public void onRemoveQueueItem(MediaDescriptionCompat description) {
+            invokeMediaItemMethod("removeQueueItem", description, null);
+        }
+
+        private void invokeMediaItemMethod(String method, MediaDescriptionCompat description, Integer index) {
+            MediaMetadataCompat metadata = AudioService.getMediaMetadata(description.getMediaId());
+            if (metadata == null && description.getExtras() != null) {
+                metadata = description.getExtras().getParcelable(DESCRIPTION_METADATA);
+            }
+            if (metadata != null) {
+                sendMediaItemMethod(method, mediaMetadata2raw(metadata), index);
+                return;
+            }
+            // A browser can retain a description after its metadata leaves the
+            // recent cache. Resolve it through the same Dart API as onLoadItem.
+            invokeMethod("getMediaItem", mapOf("mediaId", description.getMediaId()), new Result() {
+                @Override
+                public void success(Object value) {
+                    if (destroyed || !(value instanceof Map)) return;
+                    Object item = ((Map<?, ?>)value).get("mediaItem");
+                    if (item instanceof Map) sendMediaItemMethod(method, (Map<?, ?>)item, index);
+                }
+                @Override
+                public void error(String code, String message, Object details) { }
+                @Override
+                public void notImplemented() { }
+            });
+        }
+
+        private void sendMediaItemMethod(String method, Map<?, ?> item, Integer index) {
+            invokeMethod(method, index == null ? mapOf("mediaItem", item)
+                    : mapOf("mediaItem", item, "index", index));
         }
 
         @Override
@@ -835,11 +867,15 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
                 Map<?, ?> args = (Map<?, ?>)call.arguments;
                 switch (call.method) {
                 case "setMediaItem": {
-                    Executors.newSingleThreadExecutor().execute(() -> {
+                    final AudioService service = AudioService.instance;
+                    mediaWorker.execute(() -> {
                         try {
+                            if (destroyed || service == null || AudioService.instance != service) {
+                                throw new IllegalStateException("Audio service is no longer attached");
+                            }
                             Map<?, ?> rawMediaItem = (Map<?, ?>)args.get("mediaItem");
-                            MediaMetadataCompat mediaMetadata = createMediaMetadata(rawMediaItem);
-                            AudioService.instance.setMetadata(mediaMetadata);
+                            MediaMetadataCompat mediaMetadata = createMediaMetadata(rawMediaItem, service);
+                            service.setMetadata(mediaMetadata);
                             handler.post(() -> result.success(null));
                         } catch (Exception e) {
                             handler.post(() -> {
@@ -850,11 +886,16 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
                     break;
                 }
                 case "setQueue": {
-                    Executors.newSingleThreadExecutor().execute(() -> {
+                    final AudioService service = AudioService.instance;
+                    mediaWorker.execute(() -> {
                         try {
+                            if (destroyed || service == null || AudioService.instance != service) {
+                                throw new IllegalStateException("Audio service is no longer attached");
+                            }
                             @SuppressWarnings("unchecked") List<Map<?, ?>> rawQueue = (List<Map<?, ?>>) args.get("queue");
-                            List<MediaSessionCompat.QueueItem> queue = raw2queue(rawQueue);
-                            AudioService.instance.setQueue(queue);
+                            Map<String, MediaMetadataCompat> metadata = new HashMap<>();
+                            List<MediaSessionCompat.QueueItem> queue = raw2queue(rawQueue, metadata, service);
+                            service.setQueue(queue, metadata);
                             handler.post(() -> result.success(null));
                         } catch (Exception e) {
                             handler.post(() -> {
@@ -1016,6 +1057,9 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
         }
 
         private void destroy() {
+            destroyed = true;
+            channel.setMethodCallHandler(null);
+            mediaWorker.shutdown();
             if (silenceAudioTrack != null)
                 silenceAudioTrack.release();
         }
@@ -1129,8 +1173,12 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
     }
 
     private static MediaMetadataCompat createMediaMetadata(Map<?, ?> rawMediaItem) {
+        return createMediaMetadata(rawMediaItem, AudioService.instance);
+    }
+
+    private static MediaMetadataCompat createMediaMetadata(Map<?, ?> rawMediaItem, AudioService service) {
        //noinspection unchecked
-       return AudioService.instance.createMediaMetadata(
+       return service.createMediaMetadata(
                 (String)rawMediaItem.get("id"),
                 (String)rawMediaItem.get("title"),
                 (String)rawMediaItem.get("album"),
@@ -1178,16 +1226,32 @@ public class AudioServicePlugin implements FlutterPlugin, ActivityAware {
 
     private static MediaBrowserCompat.MediaItem rawToMediaItem(Map<?, ?> rawMediaItem) {
         MediaMetadataCompat mediaMetadata = createMediaMetadata(rawMediaItem);
-        final MediaDescriptionCompat description = addExtrasToMediaDescription(mediaMetadata.getDescription(), (Map<?, ?>)rawMediaItem.get("extras"));
+        MediaDescriptionCompat description = addExtrasToMediaDescription(mediaMetadata.getDescription(), (Map<?, ?>)rawMediaItem.get("extras"));
+        // Browser descriptions can outlive the bounded server cache. Keep their
+        // metadata with the returned item instead of retaining every browsed ID.
+        Bundle extras = new Bundle();
+        if (description.getExtras() != null) extras.putAll(description.getExtras());
+        extras.putParcelable(DESCRIPTION_METADATA, mediaMetadata);
+        description = new MediaDescriptionCompat.Builder()
+                .setMediaId(description.getMediaId())
+                .setTitle(description.getTitle())
+                .setSubtitle(description.getSubtitle())
+                .setDescription(description.getDescription())
+                .setIconBitmap(description.getIconBitmap())
+                .setIconUri(description.getIconUri())
+                .setMediaUri(description.getMediaUri())
+                .setExtras(extras)
+                .build();
         final Boolean playable = (Boolean)rawMediaItem.get("playable");
         return new MediaBrowserCompat.MediaItem(description, playable ? MediaBrowserCompat.MediaItem.FLAG_PLAYABLE : MediaBrowserCompat.MediaItem.FLAG_BROWSABLE);
     }
 
-    private static List<MediaSessionCompat.QueueItem> raw2queue(List<Map<?, ?>> rawQueue) {
+    private static List<MediaSessionCompat.QueueItem> raw2queue(List<Map<?, ?>> rawQueue, Map<String, MediaMetadataCompat> metadata, AudioService service) {
         List<MediaSessionCompat.QueueItem> queue = new ArrayList<>();
         int i = 0;
         for (Map<?, ?> rawMediaItem : rawQueue) {
-            MediaMetadataCompat mediaMetadata = createMediaMetadata(rawMediaItem);
+            MediaMetadataCompat mediaMetadata = createMediaMetadata(rawMediaItem, service);
+            metadata.put(mediaMetadata.getString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID), mediaMetadata);
             MediaDescriptionCompat description = addExtrasToMediaDescription(mediaMetadata.getDescription(), (Map<?, ?>)rawMediaItem.get("extras"));
             queue.add(new MediaSessionCompat.QueueItem(description, i));
             i++;

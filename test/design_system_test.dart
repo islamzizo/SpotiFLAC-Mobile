@@ -8,8 +8,6 @@ import 'package:analyzer/source/line_info.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:liquid_glass_easy/liquid_glass_easy.dart'
-    show LiquidGlassTabBar;
 import 'package:spotiflac_android/l10n/app_localizations.dart';
 import 'package:spotiflac_android/theme/app_theme.dart';
 import 'package:spotiflac_android/theme/app_tokens.dart';
@@ -288,7 +286,10 @@ void main() {
           ),
         ),
       );
-      expect(find.byType(LiquidGlassTabBar), findsNothing);
+      expect(
+        tester.widget<AnimatedAlign>(find.byType(AnimatedAlign)).duration,
+        Duration.zero,
+      );
       expect(find.text('Dark'), findsOneWidget);
       await tester.tap(find.text('Dark'));
       await tester.pump();
@@ -390,25 +391,34 @@ void main() {
   });
 
   group('CoverPalette', () {
-    test('local cache identity changes when artwork is replaced in place', () {
-      final directory = Directory.systemTemp.createTempSync(
-        'spotiflac-cover-palette-',
-      );
-      final file = File('${directory.path}/cover.jpg');
-      try {
-        file.writeAsBytesSync(const [1, 2, 3]);
-        file.setLastModifiedSync(DateTime.utc(2026, 1, 1));
-        final before = CoverPalette.cacheKeyFor(file.path, Brightness.dark);
+    test(
+      'local cache identity changes when artwork is replaced in place',
+      () async {
+        final directory = Directory.systemTemp.createTempSync(
+          'spotiflac-cover-palette-',
+        );
+        final file = File('${directory.path}/cover.jpg');
+        try {
+          file.writeAsBytesSync(const [1, 2, 3]);
+          file.setLastModifiedSync(DateTime.utc(2026, 1, 1));
+          final before = await CoverPalette.cacheKeyFor(
+            file.path,
+            Brightness.dark,
+          );
 
-        file.writeAsBytesSync(const [4, 5, 6, 7]);
-        file.setLastModifiedSync(DateTime.utc(2026, 1, 2));
-        final after = CoverPalette.cacheKeyFor(file.path, Brightness.dark);
+          file.writeAsBytesSync(const [4, 5, 6, 7]);
+          file.setLastModifiedSync(DateTime.utc(2026, 1, 2));
+          final after = await CoverPalette.cacheKeyFor(
+            file.path,
+            Brightness.dark,
+          );
 
-        expect(after, isNot(before));
-      } finally {
-        directory.deleteSync(recursive: true);
-      }
-    });
+          expect(after, isNot(before));
+        } finally {
+          directory.deleteSync(recursive: true);
+        }
+      },
+    );
   });
 
   group('AlbumDetailHeader', () {

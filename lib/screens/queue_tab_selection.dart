@@ -1,6 +1,30 @@
 part of 'queue_tab.dart';
 
 extension _QueueTabSelectionActions on _QueueTabState {
+  void _selectDraggedTrack(
+    UnifiedLibraryItem item,
+    List<UnifiedLibraryItem> visibleItems,
+  ) {
+    // Holding an already-selected track drags the existing batch without
+    // extending the range back to the selection anchor.
+    if (_isSelectionMode && _selectedIds.contains(item.id)) return;
+    if (_isSelectionMode) {
+      _selectRangeTo(item.id, visibleItems);
+    } else {
+      _enterSelectionMode(item.id);
+    }
+  }
+
+  void _startLibraryTrackDrag() {
+    _setState(() => _isDraggingLibraryTrack = true);
+    _hideSelectionOverlay();
+  }
+
+  void _endLibraryTrackDrag() {
+    if (!mounted) return;
+    _setState(() => _isDraggingLibraryTrack = false);
+  }
+
   void _enterSelectionMode(String itemId) {
     HapticFeedback.mediumImpact();
     _setState(() {
@@ -71,6 +95,7 @@ extension _QueueTabSelectionActions on _QueueTabState {
   }) {
     if (!mounted) return;
     if (_suppressSelectionOverlay ||
+        _isDraggingLibraryTrack ||
         !_isSelectionMode ||
         _isPlaylistSelectionMode) {
       _hideSelectionOverlay();
@@ -238,15 +263,17 @@ extension _QueueTabSelectionActions on _QueueTabState {
         }
         return;
       }
-      for (final playlist in selectedPlaylists) {
-        final tracks = playlist.tracks.map((e) => e.track).toList();
-        queueNotifier.addMultipleToQueue(
-          tracks,
-          svc,
-          qualityOverride: qualityOverride,
-          playlistName: playlist.name,
-        );
-      }
+      queueNotifier.addBatchesToQueue(
+        [
+          for (final playlist in selectedPlaylists)
+            DownloadQueueBatch(
+              tracks: playlist.tracks.map((entry) => entry.track).toList(),
+              playlistName: playlist.name,
+            ),
+        ],
+        svc,
+        qualityOverride: qualityOverride,
+      );
     }
 
     if (settings.askQualityBeforeDownload || settings.allowQualityVariants) {
@@ -258,22 +285,18 @@ extension _QueueTabSelectionActions on _QueueTabState {
           enqueueAll(qualityOverride: quality, service: service);
           if (!mounted) return;
           _exitPlaylistSelectionMode();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                context.l10n.snackbarAddedTracksToQueue(totalTracks),
-              ),
-            ),
+          showAppSnackBar(
+            context,
+            content: Text(context.l10n.snackbarAddedTracksToQueue(totalTracks)),
           );
         },
       );
     } else {
       enqueueAll();
       _exitPlaylistSelectionMode();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(context.l10n.snackbarAddedTracksToQueue(totalTracks)),
-        ),
+      showAppSnackBar(
+        context,
+        content: Text(context.l10n.snackbarAddedTracksToQueue(totalTracks)),
       );
     }
   }
@@ -307,9 +330,7 @@ extension _QueueTabSelectionActions on _QueueTabState {
     if (confirmed != true || !context.mounted) return;
 
     final notifier = ref.read(libraryCollectionsProvider.notifier);
-    for (final id in _selectedPlaylistIds.toList()) {
-      await notifier.deletePlaylist(id);
-    }
+    await notifier.deletePlaylists(_selectedPlaylistIds);
 
     if (!context.mounted) return;
     _exitPlaylistSelectionMode();

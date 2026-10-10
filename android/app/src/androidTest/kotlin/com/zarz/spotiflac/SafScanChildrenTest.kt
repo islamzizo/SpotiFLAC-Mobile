@@ -48,6 +48,55 @@ class SafScanChildrenTest {
     }
 
     @Test
+    fun scanAcceptsReadableRemoteRootWithoutMimeMetadata() {
+        val root = reset(count = 3, mode = "root-empty-mime")
+        assertTrue(root.exists())
+        assertFalse(root.canRead()) // The old scan preflight rejected this.
+        val (_, resolved, children) = context.resolveReadableSafTreeOrThrow(treeUri.toString())
+        assertEquals(root.uri, resolved.uri)
+        assertEquals(5, children.size)
+        assertEquals(1, stats().getInt("children"))
+    }
+
+    @Test
+    fun scanAcceptsReadableRootAfterMetadataIsInvalidatedByReconnect() {
+        val root = reset(count = 3, mode = "root-metadata-empty")
+        assertFalse(root.exists())
+        val (_, resolved, children) = context.resolveReadableSafTreeOrThrow(treeUri.toString())
+        assertEquals(root.uri, resolved.uri)
+        assertEquals(5, children.size)
+        assertEquals(1, stats().getInt("children"))
+    }
+
+    @Test
+    fun loadingListingIsRetriedAndNeverReturnedAsAnEmptyScan() {
+        reset(count = 3, mode = "loading")
+        val (_, _, children) = context.resolveReadableSafTreeOrThrow(treeUri.toString())
+        assertEquals(5, children.size)
+        assertEquals(3, stats().getInt("children"))
+        assertEquals(3, stats().getInt("closed"))
+    }
+
+    @Test
+    fun loadingTimeoutAndUnconfirmedEmptyRootFailInsteadOfRemovingTracks() {
+        for (mode in listOf("always-loading", "root-unconfirmed")) {
+            reset(mode = mode)
+            assertThrows(IOException::class.java) {
+                context.resolveReadableSafTreeOrThrow(treeUri.toString())
+            }
+            assertEquals(3, stats().getInt("children"))
+        }
+    }
+
+    @Test
+    fun confirmedEmptyFolderStillScansSuccessfully() {
+        reset(mode = "empty")
+        val (_, _, children) = context.resolveReadableSafTreeOrThrow(treeUri.toString())
+        assertTrue(children.isEmpty())
+        assertEquals(1, stats().getInt("children"))
+    }
+
+    @Test
     fun richRowsContainFileMetadataAndTraversableChildrenWithoutNameQueries() {
         val root = reset(count = 2000)
         val children = context.listSafChildrenOrThrow(root)
