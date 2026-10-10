@@ -208,6 +208,38 @@ Future<void> navigateToArtist(
   }
 }
 
+/// Presents each credited artist separately so users can open the artist page.
+Future<void> navigateToArtistCredits(
+  BuildContext context, {
+  required String artistNames,
+}) async {
+  final artists = artistNames
+      .split(RegExp(r'\\s+(?:feat(?:ured|uring)?\\.?|ft\\.?|&|,|;|\\bx\\b)\\s+', caseSensitive: false))
+      .map((name) => name.trim())
+      .where((name) => name.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+  if (artists.isEmpty || !context.mounted) return;
+  final selected = await showModalBottomSheet<String>(
+    context: context,
+    builder: (sheetContext) => SafeArea(
+      child: ListView(
+        shrinkWrap: true,
+        children: [
+          for (final artist in artists)
+            ListTile(
+              title: Text(artist),
+              onTap: () => Navigator.of(sheetContext).pop(artist),
+            ),
+        ],
+      ),
+    ),
+  );
+  if (selected != null && context.mounted) {
+    await navigateToArtist(context, artistName: selected);
+  }
+}
+
 Future<void> navigateToAlbum(
   BuildContext context, {
   required String albumName,
