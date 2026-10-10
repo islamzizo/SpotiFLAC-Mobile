@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:ffmpeg_kit_flutter_new_audio/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new_full/ffmpeg_kit_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:spotiflac_android/services/ffmpeg_decryption.dart';
 import 'package:spotiflac_android/services/ffmpeg_models.dart';
