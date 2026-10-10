@@ -46,6 +46,15 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  Future<void> revealSupportRow(WidgetTester tester) async {
+    await tester.scrollUntilVisible(
+      find.text('Support Development'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+  }
+
   Map<String, Object?> goalConfig({
     double progress = 0.09,
     bool active = true,
@@ -78,6 +87,7 @@ void main() {
         service: service,
         theme: mornye ? MornyeTheme.build(Brightness.dark) : AppTheme.light(),
       );
+      await revealSupportRow(tester);
       final support = find.byWidgetPredicate(
         (widget) =>
             widget is SettingsItem && widget.title == 'Support Development',
@@ -119,6 +129,7 @@ void main() {
         ),
       );
       await pumpSettings(tester, service: service);
+      await revealSupportRow(tester);
       expect(find.text('9%'), findsNothing);
       expect(
         find.byType(LinearProgressIndicator),

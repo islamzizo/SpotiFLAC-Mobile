@@ -1125,6 +1125,25 @@ class _QueueTabState extends ConsumerState<QueueTab> {
                                   () => tempMetadata = 'has-replaygain',
                                 ),
                               ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context.l10n.libraryFilterIncompleteAlbums,
+                                ),
+                                selected: tempMetadata == incompleteAlbumFilter,
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata = incompleteAlbumFilter,
+                                ),
+                              ),
+                              AppChoiceChip(
+                                label: Text(
+                                  context.l10n.libraryAlbumCompletenessUnknown,
+                                ),
+                                selected:
+                                    tempMetadata == unknownAlbumCompletenessFilter,
+                                onSelected: (_) => setSheetState(
+                                  () => tempMetadata = unknownAlbumCompletenessFilter,
+                                ),
+                              ),
                             ],
                           ),
                           const SizedBox(height: 16),
