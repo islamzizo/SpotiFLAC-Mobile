@@ -214,7 +214,7 @@ Future<void> navigateToArtistCredits(
   required String artistNames,
 }) async {
   final artists = artistNames
-      .split(RegExp(r'\\s+(?:feat(?:ured|uring)?\\.?|ft\\.?|&|,|;|\\bx\\b)\\s+', caseSensitive: false))
+      .split(RegExp(r'\s+(?:feat(?:ured|uring)?\.?|ft\.?|&|,|;|\bx\b)\s+', caseSensitive: false))
       .map((name) => name.trim())
       .where((name) => name.isNotEmpty)
       .toSet()
