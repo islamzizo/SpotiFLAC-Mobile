@@ -165,11 +165,13 @@ class _MornyeLibraryScreenState extends ConsumerState<MornyeLibraryScreen> {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final searchingLibrary = _overview && _query.isNotEmpty;
-    final AsyncValue<List<LibraryBrowseEntry>> result = searchingLibrary
-        ? const AsyncData<List<LibraryBrowseEntry>>([])
+    final AsyncValue<LibraryBrowseState> result = searchingLibrary
+        ? const AsyncData<LibraryBrowseState>(
+            LibraryBrowseState([], hasMore: false),
+          )
         : ref.watch(libraryBrowseProvider(_request));
     _loading = result.isLoading;
-    if (result.hasValue) _rows = result.requireValue;
+    if (result.hasValue) _rows = result.requireValue.entries;
     final title =
         widget.artist ??
         (_overview
