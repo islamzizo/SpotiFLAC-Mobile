@@ -45,7 +45,7 @@ pub(crate) fn register<'js>(
                     } else {
                         None
                     };
-                    let network = direct_network.as_ref().unwrap_or(network.as_ref());
+                    let network = direct_network.as_deref().unwrap_or(network.as_ref());
                     let chunked = value("chunked")?;
                     let chunk_size = if chunked.as_bool() == Some(true) {
                         Some(1 << 20)
