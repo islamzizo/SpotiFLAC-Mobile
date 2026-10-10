@@ -770,6 +770,7 @@ class _MainShellState extends ConsumerState<MainShell>
 
   @override
   Widget build(BuildContext context) {
+    // The existing localization key for disabling shuffle is “Play in order”.
     ref.watch(
       playbackNotificationProvider((
         favorite: context.l10n.trackOptionAddToLoved,
