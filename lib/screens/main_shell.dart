@@ -775,7 +775,7 @@ class _MainShellState extends ConsumerState<MainShell>
         favorite: context.l10n.trackOptionAddToLoved,
         unfavorite: context.l10n.trackOptionRemoveFromLoved,
         shuffleOn: context.l10n.nowPlayingShuffleOn,
-        shuffleOff: context.l10n.nowPlayingShuffleOff,
+        shuffleOff: context.l10n.nowPlayingPlayInOrder,
       )),
     );
     ref.listen(settingsProvider.select((s) => s.playbackNormalization), (
