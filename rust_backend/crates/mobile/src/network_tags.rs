@@ -21,7 +21,7 @@ const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REQUESTS: usize = 80;
 const DEADLINE: Duration = Duration::from_secs(20);
 
-fn proxy_session(url: &str, timeout: Duration) -> Result<NetworkSession, String> {
+fn proxy_session(url: &str, timeout: Duration) -> Result<Arc<NetworkSession>, String> {
     let parsed = UrlParts::parse(url).ok_or("invalid network proxy URL")?;
     let token = parsed.path.strip_prefix(b"/").unwrap_or_default();
     if parsed.scheme != "http"
